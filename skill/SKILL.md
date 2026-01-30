@@ -23,9 +23,15 @@ allowed-tools:
 
 ## Agent Behavior Rules
 
-**DO NOT:** Switch git branches, stash changes, start dev servers, or assume what "before" is.
+**DO NOT:**
+- Switch git branches, stash changes, start dev servers, or assume what "before" is
+- Use `--full` unless user explicitly asks for full page / full scroll capture
 
-**DO:** Assume current state is **After**. If user provides only one URL or says "PR screenshots" without URLs, **ASK**: "What URL should I use for the 'before' state? (production URL, preview deployment, or another local port)"
+**DO:**
+- Use `--markdown` when user wants PR integration or markdown output
+- Use `--mobile` / `--tablet` if user mentions phone, mobile, tablet, responsive, etc.
+- Assume current state is **After**
+- If user provides only one URL or says "PR screenshots" without URLs, **ASK**: "What URL should I use for the 'before' state? (production URL, preview deployment, or another local port)"
 
 ## Execution Order (MUST follow)
 
@@ -52,7 +58,7 @@ before-and-after url1 url2 ".old-card" ".new-card"
 # Viewports
 before-and-after url1 url2 --mobile    # 375x812
 before-and-after url1 url2 --tablet    # 768x1024
-before-and-after url1 url2 --fullpage  # full scroll
+before-and-after url1 url2 --full      # full scroll
 
 # From existing images
 before-and-after before.png after.png --markdown
@@ -66,10 +72,11 @@ npx @jamesvclements/before-and-after url1 url2
 | `-m, --mobile` | Mobile viewport (375x812) |
 | `-t, --tablet` | Tablet viewport (768x1024) |
 | `--size <WxH>` | Custom viewport |
-| `-f, --fullpage` | Full scrollable page |
+| `-f, --full` | Full scrollable page |
 | `-s, --selector` | CSS selector to capture |
 | `-o, --output` | Output directory (default: ~/Downloads) |
-| `--markdown` | Output GitHub markdown table |
+| `--markdown` | Upload images & output markdown table |
+| `--upload-url <url>` | Custom upload endpoint (default: 0x0.st) |
 
 ## Image Upload
 
