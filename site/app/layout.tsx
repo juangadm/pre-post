@@ -23,6 +23,9 @@ const vanillaCream = localFont({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://jm.sv"),
+  alternates: {
+    canonical: "/before-and-after",
+  },
   title: "before-and-after",
   description: "Add before and after screenshots to your PRs. Install as a skill for your AI agent or use directly from the CLI.",
   openGraph: {
