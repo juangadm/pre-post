@@ -1,6 +1,6 @@
 # pre-post
 
-Visual diff tool that captures before/after screenshots for PRs. Use it as a Claude Code skill for automatic visual documentation, or run it directly from the CLI.
+Visual diff tool that captures pre/post screenshots for PRs. Use it as a Claude Code skill for automatic visual documentation, or run it directly from the CLI.
 
 > Forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) / Vercel Labs.
 
@@ -57,7 +57,7 @@ flowchart TD
 
     S --> T{Output}
     T -->|Default| U["Save to ~/Downloads"]
-    T -->|--markdown| V[Upload to 0x0.st]
+    T -->|--markdown| V[Commit to PR branch]
     V --> W[Markdown table for PR]
 
     style A fill:#4f46e5,color:#fff
@@ -85,7 +85,7 @@ npm i -g pre-post
 
 ### As a Claude Code Skill (recommended)
 
-After making visual UI changes, say `/pre-post` or "take before and after screenshots". Claude will:
+After making visual UI changes, say `/pre-post` or "take pre and post screenshots". Claude will:
 
 1. Detect affected routes from your git diff
 2. Propose routes for your approval
@@ -122,7 +122,7 @@ Outputs JSON with route paths, confidence levels, and source files.
 
 ### `compare` -- URL Comparison
 
-Compare before/after states across routes:
+Compare pre/post states across routes:
 
 ```bash
 pre-post compare --before-base https://prod.com --after-base http://localhost:3000
@@ -146,7 +146,7 @@ Capture a specific element using a CSS selector:
 pre-post url1 url2 ".hero"
 ```
 
-Use different selectors for before and after:
+Use different selectors for pre and post:
 
 ```bash
 pre-post url1 url2 ".old" ".new"
@@ -177,13 +177,13 @@ Save to a custom location:
 pre-post url1 url2 --output ./screenshots
 ```
 
-Upload to a custom image storage service:
+Override the default upload method:
 
 ```bash
 pre-post url1 url2 --upload my-s3-uploader
 ```
 
-By default, images are uploaded to [0x0.st](https://0x0.st). For heavy usage or sensitive captures, use your own upload handler.
+By default, screenshots are committed directly to the PR branch (under `.pre-post/`) and served via `raw.githubusercontent.com`. Use `--upload` to override with a custom storage service. Screenshots auto-append to the PR body, newest on top.
 
 ## Route Detection
 

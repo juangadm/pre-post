@@ -126,8 +126,8 @@ export function PreviewContent() {
       <table className="w-full border-collapse text-[7px] table-fixed">
         <thead>
           <tr>
-            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">Before</th>
-            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">After</th>
+            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">Pre</th>
+            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">Post</th>
           </tr>
         </thead>
         <tbody>
@@ -155,6 +155,6 @@ export const DEFAULT_TITLE = "# Update the homepage"
 // Default markdown for PR description
 export const DEFAULT_MARKDOWN = `${DEFAULT_TITLE}
 
-| Before | After |
-|:------:|:-----:|
-| ![Before](a.png) | ![After](b.png) |`
+| Pre | Post |
+|:---:|:----:|
+| ![Pre](a.png) | ![Post](b.png) |`

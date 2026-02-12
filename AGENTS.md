@@ -4,7 +4,7 @@ Guidelines for AI agents working on this project.
 
 ## Project Overview
 
-Pre-post is a library and Claude Code skill for capturing visual before/after comparisons of web pages. It detects affected routes from git diffs, screenshots URLs using Playwright, and generates PR-ready markdown with uploaded images.
+Pre-post is a library and Claude Code skill for capturing visual pre/post comparisons of web pages. It detects affected routes from git diffs, screenshots URLs using Playwright, and generates PR-ready markdown with uploaded images.
 
 Forked from [vercel-labs/before-and-after](https://github.com/vercel-labs/before-and-after) by James Clements.
 
@@ -26,7 +26,7 @@ pre-post/
 │   ├── viewport.ts           # Viewport presets (desktop, mobile, tablet)
 │   ├── filename.ts           # Semantic filename generation with timestamps
 │   ├── clipboard.ts          # Cross-platform clipboard access
-│   ├── upload.ts             # Upload adapters (0x0.st, Vercel Blob, S3)
+│   ├── upload.ts             # Upload: git-native default (uploadGitNative, commitAndPushScreenshots), adapter fallbacks
 │   └── bin/
 │       └── cli.ts            # CLI entry point (detect, compare, run subcommands)
 ├── tests/                     # Library tests (Vitest)
@@ -50,7 +50,7 @@ pre-post/
 │   ├── SKILL.md              # Skill instructions (orchestration brain)
 │   └── scripts/
 │       ├── upload-and-copy.sh # Upload images + copy markdown to clipboard
-│       └── adapters/         # Storage adapter scripts (0x0, vercel-blob, s3)
+│       └── adapters/         # Storage adapter scripts (git-native, 0x0st, blob, gist)
 ├── site/                      # Marketing website (Next.js)
 │   ├── app/                  # Next.js App Router pages
 │   ├── components/           # React components (hero, browser, logo, etc.)
@@ -109,11 +109,19 @@ npx pre-post detect
 
 ### Uploading for PR Comments
 
+By default, screenshots are committed directly to the PR branch under `.pre-post/` and served via `raw.githubusercontent.com` (git-native upload). This requires no external services.
+
 ```bash
 ./skill/scripts/upload-and-copy.sh before.png after.png --markdown
 ```
 
-Outputs centered markdown table and copies to clipboard.
+Outputs centered markdown table and copies to clipboard. Screenshots auto-append to the PR body, newest on top.
+
+To use an external adapter instead (e.g., 0x0.st):
+
+```bash
+IMAGE_ADAPTER=0x0st ./skill/scripts/upload-and-copy.sh before.png after.png --markdown
+```
 
 ### Adding New Storage Adapters
 
@@ -123,6 +131,8 @@ Outputs centered markdown table and copies to clipboard.
    - Print uploaded URL to stdout
    - Exit 0 on success, non-zero on failure
 3. Use via `IMAGE_ADAPTER=<name>`
+
+Available adapters: `git-native` (default), `0x0st`, `blob`, `gist`
 
 ## Testing
 
@@ -162,7 +172,7 @@ cd site && npx pnpm dev
 
 ## Conventions
 
-- Screenshots saved to `~/Downloads/` by default, with semantic filenames (e.g., `before-2025-02-11T18-00-00.png`)
+- Screenshots saved to `~/Downloads/` by default, with semantic filenames (e.g., `pre-2025-02-11T18-00-00.png`)
 - PR markdown uses centered alignment (`|:------:|`) for GitHub compatibility
 - All screenshots are 2x retina (`deviceScaleFactor: 2`), so image pixel width = 2 * viewport width
 - Adapters are standalone bash scripts with no dependencies beyond curl/gh

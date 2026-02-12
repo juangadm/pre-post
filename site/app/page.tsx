@@ -80,7 +80,7 @@ export default function Page() {
               <li>Pre-post reads your git diff and detects which pages changed</li>
               <li>It screenshots each route — production vs your new version</li>
               <li>You review the screenshots</li>
-              <li>Pre-post adds a before/after table to your PR</li>
+              <li>Pre-post adds a pre/post table to your PR</li>
             </ol>
             <p className="text-sm text-neutral-400">
               Works with localhost, Vercel preview deploys, Netlify, or any accessible URL.
@@ -129,7 +129,7 @@ export default function Page() {
           <section id="skill" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Add Skill</h2>
             <p className="text-sm">
-              Show Claude Code how and when to take before and afters. The skill
+              Show Claude Code how and when to take pre and post screenshots. The skill
               uses{" "}
               <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">
                 gh
@@ -183,7 +183,7 @@ export default function Page() {
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Use different selectors for before and after
+                    Use different selectors for pre and post
                   </p>
                   <Code>
                     pre-post url1 url2 &quot;.old&quot; &quot;.new&quot;
@@ -225,21 +225,15 @@ export default function Page() {
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Upload to a custom image storage service
+                    Override the default upload method
                   </p>
                   <Code>pre-post url1 url2 --upload-url my-s3-endpoint</Code>
                   <p className="text-sm mt-3">
-                    By default, images are uploaded to{" "}
-                    <a
-                      href="https://0x0.st"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-neutral-800 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 rounded-sm"
-                    >
-                      0x0.st
-                    </a>
-                    . For heavy usage or sensitive captures, use your own upload
-                    handler.
+                    By default, screenshots are committed directly to the PR
+                    branch (under <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post/</code>) and
+                    served via <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">raw.githubusercontent.com</code>.
+                    Use <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">--upload-url</code> to
+                    override with a custom storage service.
                   </p>
                 </div>
               </div>
