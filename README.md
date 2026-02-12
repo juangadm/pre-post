@@ -1,31 +1,92 @@
-# before-and-after
+# pre-post
 
-Before and after is a tool that adds before and after screenshots to your PRs. Add it as a skill for your agent to call automatically or use it directly from the command line.
+Visual diff tool that captures before/after screenshots for PRs. Use it as a Claude Code skill for automatic visual documentation, or run it directly from the CLI.
 
-![before-and-after](https://jm.sv/before-and-after/opengraph-image.png)
+> Forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) / Vercel Labs.
+
+## What Changed from the Original
+
+| Area | before-and-after | pre-post |
+|------|-----------------|----------|
+| Browser engine | `agent-browser` (Vercel-proprietary) | **Playwright** (direct dependency) |
+| Screenshot quality | 1x | **2x retina** (`deviceScaleFactor: 2`) |
+| Route detection | Manual | **Automatic** from `git diff` (Next.js App/Pages Router, Remix, SvelteKit) |
+| Responsive capture | Single viewport | **Desktop + mobile** per route (`--responsive`) |
+| CLI subcommands | URL pairs only | `detect`, `compare`, `run` subcommands |
+| Skill orchestration | Basic capture | Full workflow: route detection, Claude refinement, user approval, PR posting |
+| Font/animation handling | None | Waits for `document.fonts.ready`, disables CSS animations |
+
+## Prerequisites
+
+- **Node.js** 18+
+- **Chromium** (auto-installed on first run via Playwright)
+
+```bash
+# Install Chromium browser for Playwright (one-time setup)
+npx playwright install chromium
+```
 
 ## Install
 
-Install globally to use from anywhere:
-
 ```bash
-npm i -g @vercel/before-and-after
+npm i -g pre-post
 ```
 
 ## Basic Use
 
-Capture any two URLs, protocol is optional:
+### As a Claude Code Skill (recommended)
+
+After making visual UI changes, say `/pre-post` or "take before and after screenshots". Claude will:
+
+1. Detect affected routes from your git diff
+2. Propose routes for your approval
+3. Capture desktop + mobile screenshots (production vs localhost)
+4. Show you the screenshots for approval
+5. Upload and append markdown to your PR
+
+### From the CLI
+
+Capture any two URLs:
 
 ```bash
-before-and-after site.com localhost:3000
+pre-post site.com localhost:3000
 ```
 
-## Add Skill
-
-Show your agent how and when to take before and afters. The skill uses `gh` to detect the associated PR with your branch and (soon) `vercel` to bypass deployment protection when capturing from Vercel preview branches.
+Use existing images:
 
 ```bash
-npx skills add vercel-labs/before-and-after
+pre-post before.png after.png
+```
+
+## CLI Subcommands
+
+### `detect` -- Route Detection
+
+Detect affected routes from git changes:
+
+```bash
+pre-post detect                        # Auto-detect framework
+pre-post detect --framework nextjs     # Force framework
+```
+
+Outputs JSON with route paths, confidence levels, and source files.
+
+### `compare` -- URL Comparison
+
+Compare before/after states across routes:
+
+```bash
+pre-post compare --before-base https://prod.com --after-base http://localhost:3000
+pre-post compare --before-base URL --after-base URL --routes /dashboard,/settings
+pre-post compare --before-base URL --after-base URL --responsive  # Desktop + mobile
+```
+
+### `run` -- Full Auto
+
+Combines `detect` + `compare`:
+
+```bash
+pre-post run --before-base https://prod.com --after-base http://localhost:3000
 ```
 
 ## Options
@@ -33,56 +94,85 @@ npx skills add vercel-labs/before-and-after
 Capture a specific element using a CSS selector:
 
 ```bash
-before-and-after url1 url2 ".hero"
+pre-post url1 url2 ".hero"
 ```
 
 Use different selectors for before and after:
 
 ```bash
-before-and-after url1 url2 ".old" ".new"
+pre-post url1 url2 ".old" ".new"
 ```
 
-Capture at mobile (375×812), tablet (768×1024), or custom viewport:
+Capture at mobile (375x812), tablet (768x1024), or custom viewport:
 
 ```bash
-before-and-after url1 url2 --mobile
-before-and-after url1 url2 --size 1920x1080
+pre-post url1 url2 --mobile
+pre-post url1 url2 --size 1920x1080
 ```
 
 Capture the entire scrollable page:
 
 ```bash
-before-and-after url1 url2 --full
+pre-post url1 url2 --full
 ```
 
 Output a markdown table for PR descriptions:
 
 ```bash
-before-and-after url1 url2 --markdown
-```
-
-Use existing images instead of capturing URLs:
-
-```bash
-before-and-after before.png after.png
-```
-
-Mix URLs and images:
-
-```bash
-before-and-after before.png localhost:3000
+pre-post url1 url2 --markdown
 ```
 
 Save to a custom location:
 
 ```bash
-before-and-after url1 url2 --output ./screenshots
+pre-post url1 url2 --output ./screenshots
 ```
 
 Upload to a custom image storage service:
 
 ```bash
-before-and-after url1 url2 --upload my-s3-uploader
+pre-post url1 url2 --upload my-s3-uploader
 ```
 
 By default, images are uploaded to [0x0.st](https://0x0.st). For heavy usage or sensitive captures, use your own upload handler.
+
+## Route Detection
+
+Pre-post automatically maps `git diff --name-only` to affected UI routes:
+
+| Changed File | Detected Route | Confidence |
+|---|---|---|
+| `app/page.tsx` | `/` | high |
+| `app/dashboard/page.tsx` | `/dashboard` | high |
+| `app/(marketing)/about/page.tsx` | `/about` (strips route groups) | high |
+| `app/blog/[slug]/page.tsx` | `/blog/[slug]` | high |
+| `app/dashboard/layout.tsx` | `/dashboard` | medium |
+| `app/dashboard/components/Chart.tsx` | `/dashboard` | medium |
+| `globals.css`, `tailwind.config.ts` | `/` | low |
+| `app/api/*`, `middleware.ts` | Skipped (no visual) | -- |
+
+Supports:
+- **Next.js App Router** (route groups, dynamic segments, parallel routes, catch-all)
+- **Next.js Pages Router** (`pages/`, `_app.tsx`, `_document.tsx`)
+- **Remix** (`routes/` directory)
+- **SvelteKit** (`src/routes/+page.svelte`)
+- **Generic fallback** (defaults to `/`)
+
+## Add Skill
+
+Install as a Claude Code skill:
+
+```bash
+npx skills add juangadm/pre-post
+```
+
+The skill uses `gh` to detect the associated PR and Playwright for screenshots.
+
+## Credits
+
+- Original [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) at [Vercel Labs](https://github.com/vercel-labs)
+- Browser automation powered by [Playwright](https://playwright.dev/)
+
+## License
+
+MIT
