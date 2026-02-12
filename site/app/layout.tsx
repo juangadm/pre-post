@@ -38,16 +38,16 @@ export const metadata: Metadata = {
     canonical: "/",
   },
   title: "pre-post",
-  description: "Visual diff tool for PRs — captures before/after screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+  description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
   openGraph: {
     title: "pre-post",
-    description: "Visual diff tool for PRs — captures before/after screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+    description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "pre-post",
-    description: "Visual diff tool for PRs — captures before/after screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+    description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
   },
   icons: {
     icon: "/icon",

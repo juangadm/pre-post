@@ -18,16 +18,23 @@ export default function Icon() {
           justifyContent: 'center',
         }}
       >
-        <svg width="32" height="32" viewBox="0 0 32 32">
-          {/* Left half - gray */}
-          <path
-            d="M16 2 A14 14 0 0 0 16 30"
-            fill="#d4d4d4"
+        <svg width="32" height="32" viewBox="9.3 -3.03 81.4 81.4">
+          {/* Outlined triangle */}
+          <polygon
+            points="50,3.33 85.9,73.33 14.1,73.33"
+            fill="none"
+            stroke="#000000"
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
           />
-          {/* Right half - blue */}
-          <path
-            d="M16 2 A14 14 0 0 1 16 30"
-            fill="hsl(208, 100%, 66%)"
+          {/* Right half filled */}
+          <polygon
+            points="50,5.74 84.1,72.23 50,72.23"
+            fill="#000000"
+            stroke="#000000"
+            strokeWidth="0.8"
+            strokeLinejoin="round"
           />
         </svg>
       </div>

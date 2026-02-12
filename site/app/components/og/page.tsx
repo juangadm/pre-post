@@ -127,39 +127,64 @@ function Sparkle({ size, color }: { size: number; color: string }) {
   )
 }
 
+function TriangleLogo({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="9.3 -3.03 81.4 81.4">
+      <polygon
+        points="50,3.33 85.9,73.33 14.1,73.33"
+        fill="none"
+        stroke={colors.gray800}
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <polygon
+        points="50,5.74 84.1,72.23 50,72.23"
+        fill={colors.gray800}
+        stroke={colors.gray800}
+        strokeWidth="0.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function OgLogo() {
   return (
-    <div className="flex items-center gap-3">
-      <span
-        className="font-[family-name:var(--font-vanilla-cream)] text-[72px] leading-none tracking-wide"
-        style={{ color: colors.gray800, WebkitTextStroke: "0.5px #525252" }}
-      >
-        before
-      </span>
-      <span className="text-[45px] font-normal" style={{ color: colors.gray600 }}>and</span>
-      <span className="relative text-[45px] font-medium" style={{ color: colors.gray800 }}>
-        {/* top-left, larger */}
-        <span className="absolute -left-3 -top-3">
-          <Sparkle size={18} color={colors.gray400} />
+    <div className="flex items-center gap-4">
+      <TriangleLogo size={56} />
+      <div className="flex items-center gap-3">
+        <span
+          className="font-[family-name:var(--font-biro-script)] text-[72px] leading-none tracking-wide"
+          style={{ color: colors.gray800, WebkitTextStroke: "0.5px #525252" }}
+        >
+          PRE
         </span>
-        {/* top-right, small */}
-        <span className="absolute -right-1.5 -top-1.5">
-          <Sparkle size={9} color={colors.gray300} />
+        <span className="text-[32px] italic" style={{ color: colors.gray400 }}>vs</span>
+        <span className="relative text-[45px] font-medium font-[family-name:var(--font-departure)]" style={{ color: colors.gray800 }}>
+          {/* top-left, larger */}
+          <span className="absolute -left-3 -top-3">
+            <Sparkle size={18} color={colors.gray400} />
+          </span>
+          {/* top-right, small */}
+          <span className="absolute -right-1.5 -top-1.5">
+            <Sparkle size={9} color={colors.gray300} />
+          </span>
+          {/* right side, medium */}
+          <span className="absolute -right-4 top-2">
+            <Sparkle size={15} color={colors.gray400} />
+          </span>
+          {/* bottom-left, medium */}
+          <span className="absolute -left-1 -bottom-2">
+            <Sparkle size={15} color={colors.gray300} />
+          </span>
+          {/* bottom-right, tiny */}
+          <span className="absolute right-6 -bottom-3">
+            <Sparkle size={9} color={colors.gray400} />
+          </span>
+          Post
         </span>
-        {/* right side, medium */}
-        <span className="absolute -right-4 top-2">
-          <Sparkle size={15} color={colors.gray400} />
-        </span>
-        {/* bottom-left, medium */}
-        <span className="absolute -left-1 -bottom-2">
-          <Sparkle size={15} color={colors.gray300} />
-        </span>
-        {/* bottom-right, tiny */}
-        <span className="absolute right-6 -bottom-3">
-          <Sparkle size={9} color={colors.gray400} />
-        </span>
-        After
-      </span>
+      </div>
     </div>
   )
 }
@@ -185,7 +210,7 @@ export default function OgPreview() {
               className="mt-4 text-[24px] font-sans"
               style={{ color: colors.gray500 }}
             >
-              Automatically add before and after screenshots to PRs
+              Automatic visual diffs for PRs
             </p>
           </div>
 
