@@ -7,7 +7,7 @@
 #
 # Environment:
 #   IMAGE_ADAPTER    Storage adapter to use (default: git-native)
-#                    Available: git-native, 0x0st, gist, blob
+#                    Available: git-native, 0x0st, blob
 #
 # Adapter-specific environment variables:
 #   blob:  BLOB_UPLOAD_URL - Custom upload endpoint
@@ -51,7 +51,7 @@ if [[ -z "$BEFORE_FILE" || -z "$AFTER_FILE" ]]; then
     echo ""
     echo "Environment:"
     echo "  IMAGE_ADAPTER    Storage adapter (default: git-native)"
-    echo "                   Available: git-native, 0x0st, gist, blob"
+    echo "                   Available: git-native, 0x0st, blob"
     exit 1
 fi
 
@@ -78,23 +78,9 @@ if [[ ! -f "$ADAPTER_SCRIPT" ]]; then
     exit 1
 fi
 
-# Private repo detection: git-native URLs break on private repos — fallback to gist
-if [[ "$IMAGE_ADAPTER" == "git-native" ]] && command -v gh &>/dev/null; then
-    _REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-    _OWNER_REPO=$(echo "$_REMOTE_URL" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
-
-    if [[ -n "$_OWNER_REPO" && "$_OWNER_REPO" =~ / ]]; then
-        _VISIBILITY=$(gh api "repos/$_OWNER_REPO" --jq '.visibility' 2>/dev/null || true)
-
-        if [[ "$_VISIBILITY" == "private" || "$_VISIBILITY" == "internal" ]]; then
-            echo "Private repo detected — using gist adapter (raw.githubusercontent.com URLs won't render)." >&2
-            IMAGE_ADAPTER="gist"
-            ADAPTER_SCRIPT="$ADAPTERS_DIR/gist.sh"
-        fi
-    fi
-fi
-
 # Upload function using adapter
+# NOTE: git-native adapter returns a filename (not a URL) — the URL is
+# constructed below after commit+push, using the SHA for blob URLs.
 upload_file() {
     local file="$1"
     local filename=$(basename "$file")
@@ -105,16 +91,33 @@ upload_file() {
     "$ADAPTER_SCRIPT" "$file"
 }
 
-# Upload both files
+# Upload both files (adapter returns filename for git-native, URL for others)
 echo "=== Uploading Screenshots ==="
-BEFORE_URL=$(upload_file "$BEFORE_FILE")
-AFTER_URL=$(upload_file "$AFTER_FILE")
+BEFORE_RESULT=$(upload_file "$BEFORE_FILE")
+AFTER_RESULT=$(upload_file "$AFTER_FILE")
 
-# For git-native adapter: batch commit + push after both files are staged
+# For git-native: commit, push, then construct blob+SHA URLs.
+# Blob URLs work for both public and private repos (same-origin on GitHub).
 if [[ "$IMAGE_ADAPTER" == "git-native" ]]; then
     echo "Committing and pushing screenshots..." >&2
     git commit -m "chore: add pre/post screenshots"
     git push origin HEAD
+
+    SHA=$(git rev-parse HEAD)
+    if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "Error: Could not determine commit SHA after push (got: '$SHA')" >&2
+        exit 1
+    fi
+
+    REMOTE_URL=$(git remote get-url origin 2>/dev/null)
+    OWNER_REPO=$(echo "$REMOTE_URL" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+
+    BEFORE_URL="https://github.com/$OWNER_REPO/blob/$SHA/.pre-post/$BEFORE_RESULT?raw=true"
+    AFTER_URL="https://github.com/$OWNER_REPO/blob/$SHA/.pre-post/$AFTER_RESULT?raw=true"
+else
+    # Other adapters (0x0st, blob) return full URLs directly
+    BEFORE_URL="$BEFORE_RESULT"
+    AFTER_URL="$AFTER_RESULT"
 fi
 
 echo ""

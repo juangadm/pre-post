@@ -223,20 +223,15 @@ npx pre-post compare --before-base URL --after-base URL
 ## Image Upload
 
 Screenshots are committed to `.pre-post/` on the current PR branch and served via
-`raw.githubusercontent.com`. This is the default for **public repos**.
-
-**Private repos:** Automatically detected via `gh api`. Falls back to the **gist**
-adapter — screenshots are uploaded as GitHub Gists with permanent URLs. No extra
-configuration needed (uses existing `gh` authentication).
+GitHub blob URLs pinned to the commit SHA. This works for **both public and private
+repos** — blob URLs are same-origin on GitHub, so the markdown renderer resolves them
+with the viewer's authentication.
 
 ```bash
-# Default (git-native — commits to PR branch, public repos)
+# Default (git-native — commits to PR branch, works on any repo)
 ./scripts/upload-and-copy.sh before.png after.png --markdown
 
-# Automatic: private repos auto-fallback to gist (no manual flag needed)
-
-# Explicit overrides:
-IMAGE_ADAPTER=gist ./scripts/upload-and-copy.sh before.png after.png --markdown
+# Explicit override for external storage:
 IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
 ```
 
@@ -249,4 +244,4 @@ IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
 | 401/403 on production URL | See pre-flight section above |
 | Element not found | Verify selector exists on page |
 | No changed files detected | Specify routes manually with `--routes` |
-| Private repo, broken images | Auto-detected; falls back to gist adapter |
+| Could not determine commit SHA | Ensure `git push` succeeded and HEAD is valid |

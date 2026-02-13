@@ -231,7 +231,8 @@ export default function Page() {
                   <p className="text-sm mt-3">
                     By default, screenshots are committed directly to the PR
                     branch (under <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post/</code>) and
-                    served via <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">raw.githubusercontent.com</code>.
+                    served via GitHub blob URLs pinned to the commit SHA.
+                    Works for both public and private repos.
                     Use <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">--upload-url</code> to
                     override with a custom storage service.
                   </p>
