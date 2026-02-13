@@ -50,7 +50,7 @@ pre-post/
 │   ├── SKILL.md              # Skill instructions (orchestration brain)
 │   └── scripts/
 │       ├── upload-and-copy.sh # Upload images + copy markdown to clipboard
-│       └── adapters/         # Storage adapter scripts (git-native, 0x0st, blob, gist)
+│       └── adapters/         # Storage adapter scripts (git-native, 0x0st, blob)
 ├── site/                      # Marketing website (Next.js)
 │   ├── app/                  # Next.js App Router pages
 │   ├── components/           # React components (hero, browser, logo, etc.)
@@ -109,7 +109,7 @@ npx pre-post detect
 
 ### Uploading for PR Comments
 
-By default, screenshots are committed directly to the PR branch under `.pre-post/` and served via `raw.githubusercontent.com` (git-native upload). This requires no external services.
+By default, screenshots are committed directly to the PR branch under `.pre-post/` and served via GitHub blob URLs pinned to the commit SHA (git-native upload). This works for both public and private repos and requires no external services.
 
 ```bash
 ./skill/scripts/upload-and-copy.sh before.png after.png --markdown
@@ -132,7 +132,7 @@ IMAGE_ADAPTER=0x0st ./skill/scripts/upload-and-copy.sh before.png after.png --ma
    - Exit 0 on success, non-zero on failure
 3. Use via `IMAGE_ADAPTER=<name>`
 
-Available adapters: `git-native` (default), `0x0st`, `blob`, `gist`
+Available adapters: `git-native` (default), `0x0st`, `blob`
 
 ## Testing
 

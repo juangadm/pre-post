@@ -54,11 +54,9 @@ flowchart TD
     S --> T{Output}
     T -->|Default| U["Save to ~/Downloads"]
     T -->|--markdown| V{Upload}
-    V -->|Public repo| W["Commit to .pre-post/"]
-    V -->|Private repo| X["GitHub Gist (auto)"]
+    V -->|Default| W["Commit to .pre-post/ (blob+SHA URL)"]
     V -->|--upload-url| Y["Custom storage"]
     W --> Z[Markdown table for PR]
-    X --> Z
     Y --> Z
 
     style A fill:#4f46e5,color:#fff
@@ -183,7 +181,7 @@ Upload to a custom image storage service:
 pre-post url1 url2 --markdown --upload-url https://my-s3-bucket.amazonaws.com
 ```
 
-By default, `--markdown` commits screenshots to the PR branch (under `.pre-post/`) and serves them via `raw.githubusercontent.com`. For **private repos**, this is detected automatically and screenshots upload as GitHub Gists instead — no configuration needed. Use `--upload-url` to point at your own storage instead. It auto-detects the protocol for 0x0.st, Vercel Blob, and any generic PUT endpoint (like S3). Screenshots auto-append to the PR body, newest on top.
+By default, `--markdown` commits screenshots to the PR branch (under `.pre-post/`) and serves them via GitHub blob URLs pinned to the commit SHA. This works for both public and private repos. Use `--upload-url` to point at your own storage instead. It auto-detects the protocol for 0x0.st, Vercel Blob, and any generic PUT endpoint (like S3). Screenshots auto-append to the PR body, newest on top.
 
 ## Route Detection
 

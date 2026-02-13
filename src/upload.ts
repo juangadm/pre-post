@@ -1,12 +1,11 @@
 /**
  * Image upload for generating shareable URLs.
- * Default: git-native (commits to .pre-post/ on current branch).
+ * Default: git-native (commits to .pre-post/, serves via blob+SHA URLs).
  * Opt-in: 0x0.st, Vercel Blob, generic PUT via --upload-url.
  */
 
 import { execSync } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 const DEFAULT_UPLOAD_URL = 'https://0x0.st';
@@ -88,38 +87,14 @@ async function uploadGenericPut(image: Buffer, filename: string, url: string): P
 }
 
 /**
- * Check if the current GitHub repo is private via `gh api`.
- * Returns 'private', 'public', or 'unknown' on any failure.
+ * Write an image to .pre-post/ in the repo root and stage it.
+ * Returns filename + ownerRepo — caller constructs blob+SHA URL after commit.
  */
-export function checkRepoVisibility(): 'private' | 'public' | 'unknown' {
-  try {
-    const remoteUrl = execSync('git remote get-url origin', {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const ownerRepo = remoteUrl
-      .replace(/^(https?:\/\/github\.com\/|git@github\.com:)/, '')
-      .replace(/\.git$/, '');
-    if (!ownerRepo || !ownerRepo.includes('/')) return 'unknown';
-
-    const visibility = execSync(`gh api "repos/${ownerRepo}" --jq '.visibility'`, {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-
-    if (visibility === 'private' || visibility === 'internal') return 'private';
-    if (visibility === 'public') return 'public';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
-/**
- * Write an image to .pre-post/ in the repo root, stage it, and return
- * the raw.githubusercontent.com URL it will resolve to after push.
- */
-export function uploadGitNative(image: Buffer, filename: string): string {
+export function uploadGitNative(
+  image: Buffer,
+  filename: string,
+): { filename: string; ownerRepo: string } {
   const repoRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-  const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
   const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
 
   // Parse owner/repo from HTTPS or SSH remote URL
@@ -134,49 +109,37 @@ export function uploadGitNative(image: Buffer, filename: string): string {
   fs.writeFileSync(dest, image);
   execSync(`git add -f "${dest}"`);
 
-  return `https://raw.githubusercontent.com/${ownerRepo}/${branch}/.pre-post/${filename}`;
+  return { filename, ownerRepo };
 }
 
 /**
  * Commit and push all staged .pre-post/ screenshots in one batch.
+ * Returns the full 40-char commit SHA.
  */
-export function commitAndPushScreenshots(): void {
+export function commitAndPushScreenshots(): string {
   execSync('git commit -m "chore: add pre/post screenshots"');
   execSync('git push origin HEAD');
+
+  const sha = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`Failed to get commit SHA after push (got: "${sha}")`);
+  }
+  return sha;
 }
 
 /**
- * Upload image via GitHub Gist (gh CLI). Returns the raw URL.
- * Used as fallback when git-native won't work (private repos).
+ * Construct a GitHub blob URL with full SHA for an image in .pre-post/.
+ * Blob URLs are same-origin on GitHub — the markdown renderer resolves them
+ * with the viewer's auth, so they work for both public and private repos.
  */
-export function uploadToGist(image: Buffer, filename: string): string {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-'));
-  const tmpFile = path.join(tmpDir, filename);
-  fs.writeFileSync(tmpFile, image);
-
-  try {
-    const gistOutput = execSync(`gh gist create "${tmpFile}" --public`, {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-
-    const gistUrl = gistOutput.match(/https:\/\/gist\.github\.com\/\S+/)?.[0];
-    if (!gistUrl) throw new Error(`Failed to create gist: ${gistOutput}`);
-
-    const gistId = gistUrl.split('/').pop();
-    const rawUrl = execSync(`gh api "gists/${gistId}" --jq '.files["${filename}"].raw_url'`, {
-      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-
-    return rawUrl;
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
+function buildBlobUrl(ownerRepo: string, sha: string, filename: string): string {
+  return `https://github.com/${ownerRepo}/blob/${sha}/.pre-post/${filename}?raw=true`;
 }
 
 /**
  * Upload before/after images and return URLs.
  * When uploadUrl is provided, uses the HTTP-based upload path.
- * Otherwise, uses git-native (commit to .pre-post/).
+ * Otherwise, uses git-native (commit to .pre-post/) with blob+SHA URLs.
  */
 export async function uploadBeforeAfter(
   before: { image: Buffer; filename: string },
@@ -192,20 +155,15 @@ export async function uploadBeforeAfter(
     return { beforeUrl, afterUrl };
   }
 
-  // Default: git-native. But check if repo is private first.
-  if (checkRepoVisibility() === 'private') {
-    console.warn('Private repo detected — using gist upload (raw.githubusercontent.com URLs won\'t render).');
-    const [beforeUrl, afterUrl] = await Promise.all([
-      uploadToGist(before.image, before.filename),
-      uploadToGist(after.image, after.filename),
-    ]);
-    return { beforeUrl, afterUrl };
-  }
+  // Default: git-native with blob+SHA URLs.
+  // Works for both public and private repos — blob URLs are same-origin on GitHub,
+  // so the markdown renderer resolves them with the viewer's authentication context.
+  const beforeResult = uploadGitNative(before.image, before.filename);
+  const afterResult = uploadGitNative(after.image, after.filename);
+  const sha = commitAndPushScreenshots();
 
-  // Public repo — git-native
-  const beforeUrl = uploadGitNative(before.image, before.filename);
-  const afterUrl = uploadGitNative(after.image, after.filename);
-  commitAndPushScreenshots();
+  const beforeUrl = buildBlobUrl(beforeResult.ownerRepo, sha, beforeResult.filename);
+  const afterUrl = buildBlobUrl(afterResult.ownerRepo, sha, afterResult.filename);
 
   return { beforeUrl, afterUrl };
 }
