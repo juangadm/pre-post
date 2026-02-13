@@ -2,7 +2,7 @@
 
 Visual diff tool that captures pre/post screenshots for PRs. Use it as a Claude Code skill for automatic visual documentation, or run it directly from the CLI.
 
-> Forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) / Vercel Labs.
+> Originally forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) / Vercel Labs.
 
 ## TODO
 
