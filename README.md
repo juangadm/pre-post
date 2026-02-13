@@ -57,8 +57,13 @@ flowchart TD
 
     S --> T{Output}
     T -->|Default| U["Save to ~/Downloads"]
-    T -->|--markdown| V[Commit to PR branch]
-    V --> W[Markdown table for PR]
+    T -->|--markdown| V{Upload}
+    V -->|Public repo| W["Commit to .pre-post/"]
+    V -->|Private repo| X["GitHub Gist (auto)"]
+    V -->|--upload-url| Y["Custom storage"]
+    W --> Z[Markdown table for PR]
+    X --> Z
+    Y --> Z
 
     style A fill:#4f46e5,color:#fff
     style L fill:#2563eb,color:#fff
@@ -68,10 +73,9 @@ flowchart TD
 ## Prerequisites
 
 - **Node.js** 18+
-- **Chromium** (auto-installed on first run via Playwright)
+- **Chromium** — install once via Playwright:
 
 ```bash
-# Install Chromium browser for Playwright (one-time setup)
 npx playwright install chromium
 ```
 
@@ -115,7 +119,7 @@ Detect affected routes from git changes:
 
 ```bash
 pre-post detect                        # Auto-detect framework
-pre-post detect --framework nextjs     # Force framework
+pre-post detect --framework nextjs-app  # Force framework
 ```
 
 Outputs JSON with route paths, confidence levels, and source files.
@@ -177,13 +181,13 @@ Save to a custom location:
 pre-post url1 url2 --output ./screenshots
 ```
 
-Override the default upload method:
+Upload to a custom image storage service:
 
 ```bash
-pre-post url1 url2 --upload-url https://uploads.example.com
+pre-post url1 url2 --markdown --upload-url https://my-s3-bucket.amazonaws.com
 ```
 
-By default, screenshots are committed directly to the PR branch (under `.pre-post/`) and served via `raw.githubusercontent.com`. Use `--upload-url` to override with a custom storage service. Screenshots auto-append to the PR body, newest on top.
+By default, `--markdown` commits screenshots to the PR branch (under `.pre-post/`) and serves them via `raw.githubusercontent.com`. For **private repos**, this is detected automatically and screenshots upload as GitHub Gists instead — no configuration needed. Use `--upload-url` to point at your own storage instead. It auto-detects the protocol for 0x0.st, Vercel Blob, and any generic PUT endpoint (like S3). Screenshots auto-append to the PR body, newest on top.
 
 ## Route Detection
 
