@@ -6,6 +6,7 @@
 
 import { execSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 const DEFAULT_UPLOAD_URL = 'https://0x0.st';
@@ -87,6 +88,32 @@ async function uploadGenericPut(image: Buffer, filename: string, url: string): P
 }
 
 /**
+ * Check if the current GitHub repo is private via `gh api`.
+ * Returns 'private', 'public', or 'unknown' on any failure.
+ */
+export function checkRepoVisibility(): 'private' | 'public' | 'unknown' {
+  try {
+    const remoteUrl = execSync('git remote get-url origin', {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const ownerRepo = remoteUrl
+      .replace(/^(https?:\/\/github\.com\/|git@github\.com:)/, '')
+      .replace(/\.git$/, '');
+    if (!ownerRepo || !ownerRepo.includes('/')) return 'unknown';
+
+    const visibility = execSync(`gh api "repos/${ownerRepo}" --jq '.visibility'`, {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+
+    if (visibility === 'private' || visibility === 'internal') return 'private';
+    if (visibility === 'public') return 'public';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Write an image to .pre-post/ in the repo root, stage it, and return
  * the raw.githubusercontent.com URL it will resolve to after push.
  */
@@ -119,6 +146,34 @@ export function commitAndPushScreenshots(): void {
 }
 
 /**
+ * Upload image via GitHub Gist (gh CLI). Returns the raw URL.
+ * Used as fallback when git-native won't work (private repos).
+ */
+export function uploadToGist(image: Buffer, filename: string): string {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-'));
+  const tmpFile = path.join(tmpDir, filename);
+  fs.writeFileSync(tmpFile, image);
+
+  try {
+    const gistOutput = execSync(`gh gist create "${tmpFile}" --public`, {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+
+    const gistUrl = gistOutput.match(/https:\/\/gist\.github\.com\/\S+/)?.[0];
+    if (!gistUrl) throw new Error(`Failed to create gist: ${gistOutput}`);
+
+    const gistId = gistUrl.split('/').pop();
+    const rawUrl = execSync(`gh api "gists/${gistId}" --jq '.files["${filename}"].raw_url'`, {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+
+    return rawUrl;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Upload before/after images and return URLs.
  * When uploadUrl is provided, uses the HTTP-based upload path.
  * Otherwise, uses git-native (commit to .pre-post/).
@@ -137,7 +192,17 @@ export async function uploadBeforeAfter(
     return { beforeUrl, afterUrl };
   }
 
-  // Default: git-native — stage both, then commit+push once
+  // Default: git-native. But check if repo is private first.
+  if (checkRepoVisibility() === 'private') {
+    console.warn('Private repo detected — using gist upload (raw.githubusercontent.com URLs won\'t render).');
+    const [beforeUrl, afterUrl] = await Promise.all([
+      uploadToGist(before.image, before.filename),
+      uploadToGist(after.image, after.filename),
+    ]);
+    return { beforeUrl, afterUrl };
+  }
+
+  // Public repo — git-native
   const beforeUrl = uploadGitNative(before.image, before.filename);
   const afterUrl = uploadGitNative(after.image, after.filename);
   commitAndPushScreenshots();

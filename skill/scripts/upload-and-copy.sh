@@ -78,6 +78,22 @@ if [[ ! -f "$ADAPTER_SCRIPT" ]]; then
     exit 1
 fi
 
+# Private repo detection: git-native URLs break on private repos — fallback to gist
+if [[ "$IMAGE_ADAPTER" == "git-native" ]] && command -v gh &>/dev/null; then
+    _REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
+    _OWNER_REPO=$(echo "$_REMOTE_URL" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+
+    if [[ -n "$_OWNER_REPO" && "$_OWNER_REPO" =~ / ]]; then
+        _VISIBILITY=$(gh api "repos/$_OWNER_REPO" --jq '.visibility' 2>/dev/null || true)
+
+        if [[ "$_VISIBILITY" == "private" || "$_VISIBILITY" == "internal" ]]; then
+            echo "Private repo detected — using gist adapter (raw.githubusercontent.com URLs won't render)." >&2
+            IMAGE_ADAPTER="gist"
+            ADAPTER_SCRIPT="$ADAPTERS_DIR/gist.sh"
+        fi
+    fi
+fi
+
 # Upload function using adapter
 upload_file() {
     local file="$1"

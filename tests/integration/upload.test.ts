@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { uploadImage, uploadBeforeAfter } from '../../src/upload';
+import { execSync } from 'child_process';
+
+// Module-level mock for child_process (required for ESM)
+vi.mock('child_process', () => ({
+  execSync: vi.fn(),
+}));
+
+import { uploadImage, uploadBeforeAfter, checkRepoVisibility, uploadToGist } from '../../src/upload';
+
+const mockExecSync = vi.mocked(execSync);
 
 // Create a minimal valid PNG for testing
 function createMinimalPng(): Buffer {
@@ -208,13 +217,14 @@ describe('uploadBeforeAfter', () => {
   beforeEach(() => {
     global.fetch = mockFetch;
     mockFetch.mockReset();
+    mockExecSync.mockReset();
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
   });
 
-  it('uploads both images in parallel', async () => {
+  it('uploads both images in parallel via HTTP when uploadUrl provided', async () => {
     mockFetch
       .mockResolvedValueOnce({ text: async () => 'https://0x0.st/before.png' })
       .mockResolvedValueOnce({ text: async () => 'https://0x0.st/after.png' });
@@ -224,7 +234,8 @@ describe('uploadBeforeAfter', () => {
 
     const result = await uploadBeforeAfter(
       { image: beforeImage, filename: 'before.png' },
-      { image: afterImage, filename: 'after.png' }
+      { image: afterImage, filename: 'after.png' },
+      'https://0x0.st'
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -273,9 +284,155 @@ describe('uploadBeforeAfter', () => {
     await expect(
       uploadBeforeAfter(
         { image: beforeImage, filename: 'before.png' },
-        { image: afterImage, filename: 'after.png' }
+        { image: afterImage, filename: 'after.png' },
+        'https://0x0.st'
       )
     ).rejects.toThrow('Upload failed');
+  });
+});
+
+describe('private repo fallback', () => {
+  beforeEach(() => {
+    mockExecSync.mockReset();
+  });
+
+  describe('checkRepoVisibility', () => {
+    it('returns "private" for private repos', () => {
+      mockExecSync
+        .mockReturnValueOnce('https://github.com/owner/private-repo.git\n')
+        .mockReturnValueOnce('private\n');
+
+      expect(checkRepoVisibility()).toBe('private');
+    });
+
+    it('returns "private" for internal repos', () => {
+      mockExecSync
+        .mockReturnValueOnce('git@github.com:owner/internal-repo.git\n')
+        .mockReturnValueOnce('internal\n');
+
+      expect(checkRepoVisibility()).toBe('private');
+    });
+
+    it('returns "public" for public repos', () => {
+      mockExecSync
+        .mockReturnValueOnce('https://github.com/owner/public-repo.git\n')
+        .mockReturnValueOnce('public\n');
+
+      expect(checkRepoVisibility()).toBe('public');
+    });
+
+    it('returns "unknown" when git remote fails', () => {
+      mockExecSync.mockImplementation(() => { throw new Error('not a git repo'); });
+
+      expect(checkRepoVisibility()).toBe('unknown');
+    });
+
+    it('returns "unknown" when gh api fails', () => {
+      mockExecSync
+        .mockReturnValueOnce('https://github.com/owner/repo.git\n')
+        .mockImplementationOnce(() => { throw new Error('gh not found'); });
+
+      expect(checkRepoVisibility()).toBe('unknown');
+    });
+
+    it('returns "unknown" for non-GitHub remotes', () => {
+      mockExecSync
+        .mockReturnValueOnce('https://gitlab.com/owner/repo.git\n');
+
+      expect(checkRepoVisibility()).toBe('unknown');
+    });
+  });
+
+  describe('uploadBeforeAfter with private repo', () => {
+    const mockFetch = vi.fn();
+    const originalFetch = global.fetch;
+
+    beforeEach(() => {
+      global.fetch = mockFetch;
+      mockFetch.mockReset();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('falls back to gist when repo is private', async () => {
+      mockExecSync
+        // checkRepoVisibility
+        .mockReturnValueOnce('https://github.com/owner/private-repo.git\n')  // git remote get-url
+        .mockReturnValueOnce('private\n')  // gh api repos/... --jq .visibility
+        // uploadToGist for before image
+        .mockReturnValueOnce('https://gist.github.com/owner/abc123\n')  // gh gist create
+        .mockReturnValueOnce('https://gist.githubusercontent.com/owner/abc123/raw/before.png\n')  // gh api gists/...
+        // uploadToGist for after image
+        .mockReturnValueOnce('https://gist.github.com/owner/def456\n')
+        .mockReturnValueOnce('https://gist.githubusercontent.com/owner/def456/raw/after.png\n');
+
+      const result = await uploadBeforeAfter(
+        { image: createMinimalPng(), filename: 'before.png' },
+        { image: createMinimalPng(), filename: 'after.png' },
+      );
+
+      expect(result.beforeUrl).toContain('gist.githubusercontent.com');
+      expect(result.afterUrl).toContain('gist.githubusercontent.com');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('uses git-native when repo is public', async () => {
+      mockExecSync
+        // checkRepoVisibility
+        .mockReturnValueOnce('https://github.com/owner/public-repo.git\n')  // git remote get-url
+        .mockReturnValueOnce('public\n')  // gh api repos/... --jq .visibility
+        // uploadGitNative calls (before)
+        .mockReturnValueOnce('/tmp/repo\n')  // git rev-parse --show-toplevel
+        .mockReturnValueOnce('main\n')       // git rev-parse --abbrev-ref HEAD
+        .mockReturnValueOnce('https://github.com/owner/public-repo.git\n')  // git remote get-url
+        .mockReturnValueOnce('')             // git add
+        // uploadGitNative calls (after)
+        .mockReturnValueOnce('/tmp/repo\n')
+        .mockReturnValueOnce('main\n')
+        .mockReturnValueOnce('https://github.com/owner/public-repo.git\n')
+        .mockReturnValueOnce('')
+        // commitAndPushScreenshots
+        .mockReturnValueOnce('')  // git commit
+        .mockReturnValueOnce('');  // git push
+
+      const result = await uploadBeforeAfter(
+        { image: createMinimalPng(), filename: 'before.png' },
+        { image: createMinimalPng(), filename: 'after.png' },
+      );
+
+      expect(result.beforeUrl).toContain('raw.githubusercontent.com');
+      expect(result.afterUrl).toContain('raw.githubusercontent.com');
+    });
+
+    it('falls back to git-native when visibility is unknown', async () => {
+      mockExecSync
+        // checkRepoVisibility — gh api fails
+        .mockReturnValueOnce('https://github.com/owner/repo.git\n')  // git remote get-url
+        .mockImplementationOnce(() => { throw new Error('gh not authenticated'); })  // gh api fails
+        // uploadGitNative calls (before)
+        .mockReturnValueOnce('/tmp/repo\n')
+        .mockReturnValueOnce('main\n')
+        .mockReturnValueOnce('https://github.com/owner/repo.git\n')
+        .mockReturnValueOnce('')
+        // uploadGitNative calls (after)
+        .mockReturnValueOnce('/tmp/repo\n')
+        .mockReturnValueOnce('main\n')
+        .mockReturnValueOnce('https://github.com/owner/repo.git\n')
+        .mockReturnValueOnce('')
+        // commitAndPushScreenshots
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('');
+
+      const result = await uploadBeforeAfter(
+        { image: createMinimalPng(), filename: 'before.png' },
+        { image: createMinimalPng(), filename: 'after.png' },
+      );
+
+      expect(result.beforeUrl).toContain('raw.githubusercontent.com');
+      expect(result.afterUrl).toContain('raw.githubusercontent.com');
+    });
   });
 });
 
