@@ -107,7 +107,7 @@ export function Terminal({ lines, className, title = "Juan Gabriel's project" }:
 
   return (
     <div
-      className={cn("overflow-hidden flex flex-col", className)}
+      className={cn("overflow-hidden flex flex-col border border-neutral-200", className)}
       style={{
         background: "#faf9f7",
         borderRadius: "10px",
@@ -146,7 +146,7 @@ export function Terminal({ lines, className, title = "Juan Gabriel's project" }:
       {/* Body */}
       <div
         ref={scrollRef}
-        className="flex-1"
+        className="flex-1 scrollbar-hide"
         style={{
           padding: "12px 14px",
           fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Consolas, monospace',
