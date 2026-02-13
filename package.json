@@ -1,6 +1,6 @@
 {
   "name": "@juangadm/pre-post",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Visual diff tool for PRs — captures before/after screenshots of web pages",
   "author": "Juan Gabriel Delgado (forked from James Clements)",
   "license": "MIT",
