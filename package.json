@@ -1,5 +1,5 @@
 {
-  "name": "pre-post",
+  "name": "@juangadm/pre-post",
   "version": "0.1.0",
   "description": "Visual diff tool for PRs — captures before/after screenshots of web pages",
   "author": "Juan Gabriel Delgado (forked from James Clements)",
@@ -42,7 +42,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.pkg.json",
-    "prepublishOnly": "rm -rf dist && pnpm build && pnpm test:unit",
+    "prepublishOnly": "rm -rf dist && npm run build && npm run test:unit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
