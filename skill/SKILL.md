@@ -239,7 +239,7 @@ IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
 
 | Error | Fix |
 |-------|-----|
-| `command not found` | `npm install -g pre-post` |
+| `command not found` | `npm install -g @juangadm/pre-post` |
 | `browserType.launch: Executable doesn't exist` | `npx playwright install chromium` |
 | 401/403 on production URL | See pre-flight section above |
 | Element not found | Verify selector exists on page |

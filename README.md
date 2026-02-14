@@ -76,7 +76,7 @@ npx playwright install chromium
 ## Install
 
 ```bash
-npm i -g pre-post
+npm i -g @juangadm/pre-post
 ```
 
 ## Basic Use
