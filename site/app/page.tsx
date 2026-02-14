@@ -279,6 +279,40 @@ export default function Page() {
           </section>
         </div>
       </main>
+
+      <footer className="py-6 text-sm text-neutral-400 flex justify-center">
+        <div className="w-full max-w-[500px] px-4 flex justify-between items-center flex-wrap gap-4">
+          <div className="flex items-center gap-1.5">
+            <img
+              src="https://juangabriel.xyz/favicon.ico"
+              alt=""
+              width={16}
+              height={16}
+              className="rounded-sm"
+            />
+            Made by{" "}
+            <a
+              href="https://juangabriel.xyz"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-neutral-800 hover:underline hover:font-medium transition-all"
+            >
+              Juan Gabriel
+            </a>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-xs font-[family-name:var(--font-departure)]">v0.1.1</span>
+            <a
+              href="https://www.npmjs.com/package/@juangadm/pre-post"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-neutral-400 hover:text-neutral-800 transition-colors"
+            >
+              npm
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
