@@ -281,7 +281,7 @@ export default function Page() {
       </main>
 
       <footer className="py-6 text-sm text-neutral-400 flex justify-center">
-        <div className="w-full max-w-[500px] px-4 flex justify-between items-center flex-wrap gap-4">
+        <div className="w-full max-w-[640px] px-4 sm:px-6 flex justify-between items-center flex-wrap gap-4">
           <div className="flex items-center gap-1.5">
             <img
               src="https://juangabriel.xyz/favicon.ico"
