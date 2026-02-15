@@ -10,7 +10,7 @@ Visual diff tool that captures pre/post screenshots for PRs. Use it as a Claude 
 |------|-----------------|----------|
 | Browser engine | `agent-browser` (Vercel-proprietary) | **Playwright** (direct dependency) |
 | Screenshot quality | 1x | **2x retina** (`deviceScaleFactor: 2`) |
-| Route detection | Manual | **Automatic** from `git diff` (Next.js App/Pages Router, Remix, SvelteKit) |
+| Route detection | Manual | **Automatic** from `git diff` (Next.js App/Pages Router, generic fallback) |
 | Responsive capture | Single viewport | **Desktop + mobile** per route (`--responsive`) |
 | CLI subcommands | URL pairs only | `detect`, `compare`, `run` subcommands |
 | Skill orchestration | Basic capture | Full workflow: route detection, Claude refinement, user approval, PR posting |
@@ -23,41 +23,55 @@ flowchart TD
     A[pre-post] --> B{Mode?}
 
     B -->|Manual| C["pre-post url1 url2"]
-    B -->|Automatic| D["pre-post run"]
+    B -->|Subcommand| D{"detect | compare | run"}
     B -->|Claude Code Skill| E["/pre-post"]
 
-    D --> F["git diff --name-only"]
+    D -->|detect| F["Git: diff, staged, unstaged, untracked"]
+    D -->|compare| J
+    D -->|run| F
+
     F --> G{Detect framework}
     G -->|Next.js App Router| H[Map files → routes]
     G -->|Next.js Pages Router| H
-    G -->|Remix / SvelteKit| H
-    G -->|Unknown| I["Default to /"]
-    H --> J[Route list with confidence]
+    G -->|Generic| H
+    H --> I{Routes found?}
+    I -->|Yes| J[Route list with confidence]
+    I -->|No| J2["Default to /"]
+    J2 --> J
 
-    E --> F
-    E --> K[Claude refines routes]
-    K --> J
+    E --> E1[Pre-flight checks]
+    E1 --> F
+    E1 --> K[Claude refines routes]
+    K --> K1[User approves routes]
+    K1 --> J
 
     C --> L[Playwright]
     J --> L
 
-    L --> M{System Chrome?}
-    M -->|Found| N[Use system Chrome]
-    M -->|Not found| O[Use bundled Chromium]
-    N --> P[Capture screenshots]
-    O --> P
+    L --> M{Launch Chromium}
+    M -->|"PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"| M1[Custom path — fail hard if invalid]
+    M -->|Auto-detect| M2[System Chrome → Bundled → Cached]
+    M1 --> P[Navigate + wait for network idle]
+    M2 --> P
 
-    P --> Q[Disable animations]
-    Q --> R[Wait for fonts]
+    P --> Q[Disable CSS animations]
+    Q --> R[Wait for document.fonts.ready]
     R --> S[Take 2x retina screenshot]
 
-    S --> T{Output}
-    T -->|Default| U["Save to ~/Downloads"]
-    T -->|--markdown| V{Upload}
-    V -->|Default| W["Commit to .pre-post/ (blob+SHA URL)"]
-    V -->|--upload-url| Y["Custom storage"]
-    W --> Z[Markdown table for PR]
-    Y --> Z
+    S --> T[Save to ~/Downloads]
+    T --> T1{--markdown?}
+    T1 -->|No| U[Done]
+    T1 -->|Yes| V{Upload method}
+    V -->|Default| W["git-native: commit to .pre-post/"]
+    V -->|--upload-url| Y["HTTP: 0x0.st / Vercel Blob / PUT"]
+    W --> X[Build blob+SHA URL]
+    Y --> X
+    X --> Z[Markdown table]
+
+    Z --> Z1{Skill mode?}
+    Z1 -->|Yes| Z2[User approves screenshots]
+    Z2 --> Z3["gh pr edit — append to PR body"]
+    Z1 -->|No| Z4[Copy to clipboard]
 
     style A fill:#4f46e5,color:#fff
     style L fill:#2563eb,color:#fff
@@ -231,8 +245,6 @@ Pre-post automatically maps `git diff --name-only` to affected UI routes:
 Supports:
 - **Next.js App Router** (route groups, dynamic segments, parallel routes, catch-all)
 - **Next.js Pages Router** (`pages/`, `_app.tsx`, `_document.tsx`)
-- **Remix** (`routes/` directory)
-- **SvelteKit** (`src/routes/+page.svelte`)
 - **Generic fallback** (defaults to `/`)
 
 ## Add Skill
