@@ -9,6 +9,8 @@ export interface FilenameOptions {
   timestamp?: Date;
   /** Suffix (before/after/diff) */
   suffix?: 'before' | 'after' | 'diff';
+  /** Output format — determines file extension (default: 'png') */
+  format?: 'png' | 'gif';
 }
 
 /**
@@ -93,5 +95,6 @@ export function generateFilename(options: FilenameOptions): string {
     .replace(/[:.]/g, '-')
     .slice(0, 19);
 
-  return `${pageName}${elementPart}${suffixPart}-${timestamp}.png`;
+  const ext = options.format === 'gif' ? 'gif' : 'png';
+  return `${pageName}${elementPart}${suffixPart}-${timestamp}.${ext}`;
 }
