@@ -122,8 +122,8 @@ export default function Page() {
 
           <section id="install" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Install</h2>
-            <p className="text-sm">Install globally to use from anywhere</p>
-            <Code>npm i -g pre-post</Code>
+            <p className="text-sm">Install as a dev dependency</p>
+            <Code>npm install -D @juangadm/pre-post</Code>
           </section>
 
           <section id="skill" className="scroll-mt-8 space-y-3">
