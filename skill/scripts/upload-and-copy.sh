@@ -20,6 +20,49 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve owner/repo from env vars or git remote URL (supports proxy URLs)
+resolve_owner_repo() {
+    if [[ -n "${GH_REPO:-}" ]]; then echo "$GH_REPO"; return; fi
+    if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then echo "$GITHUB_REPOSITORY"; return; fi
+
+    local url
+    url=$(git remote get-url origin 2>/dev/null) || true
+
+    # Standard GitHub HTTPS/SSH
+    local std
+    std=$(echo "$url" | sed -nE 's#.*github\.com[/:]([^/]+/[^/]+?)(\.git)?$#\1#p')
+    if [[ -n "$std" ]]; then echo "$std"; return; fi
+
+    # Proxy fallback: last two path segments
+    local proxy
+    proxy=$(echo "$url" | sed -nE 's#.*/([^/]+/[^/]+?)(\.git)?$#\1#p')
+    if [[ -n "$proxy" ]]; then echo "$proxy"; return; fi
+
+    echo "Error: Cannot parse owner/repo. Set GH_REPO=owner/repo" >&2
+    exit 1
+}
+
+# Check if gh CLI is installed and authenticated
+gh_is_authenticated() {
+    command -v gh &>/dev/null && gh auth status &>/dev/null
+}
+
+# Copy text to system clipboard (macOS or Linux)
+copy_to_clipboard() {
+    local text="$1"
+    local label="${2:-Text}"
+    if command -v pbcopy &>/dev/null; then
+        echo "$text" | pbcopy
+        echo "$label copied to clipboard!"
+    elif command -v xclip &>/dev/null; then
+        echo "$text" | xclip -selection clipboard
+        echo "$label copied to clipboard!"
+    else
+        echo "(clipboard copy not available - install pbcopy or xclip)"
+    fi
+}
+
 ADAPTERS_DIR="$SCRIPT_DIR/adapters"
 
 # Default adapter
@@ -86,8 +129,6 @@ upload_file() {
     local filename=$(basename "$file")
 
     echo "Uploading: $filename (via $IMAGE_ADAPTER)" >&2
-
-    # Call the adapter script
     "$ADAPTER_SCRIPT" "$file"
 }
 
@@ -109,8 +150,7 @@ if [[ "$IMAGE_ADAPTER" == "git-native" ]]; then
         exit 1
     fi
 
-    REMOTE_URL=$(git remote get-url origin 2>/dev/null)
-    OWNER_REPO=$(echo "$REMOTE_URL" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+    OWNER_REPO=$(resolve_owner_repo)
 
     BEFORE_URL="https://github.com/$OWNER_REPO/blob/$SHA/.pre-post/$BEFORE_RESULT?raw=true"
     AFTER_URL="https://github.com/$OWNER_REPO/blob/$SHA/.pre-post/$AFTER_RESULT?raw=true"
@@ -125,36 +165,52 @@ echo "Before URL: $BEFORE_URL"
 echo "After URL: $AFTER_URL"
 echo ""
 
-if [[ "$MARKDOWN_MODE" == "true" ]]; then
-    # Build section with commit reference
-    SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    TIMESTAMP=$(date "+%Y-%m-%d %H:%M")
+if [[ "$MARKDOWN_MODE" != "true" ]]; then
+    copy_to_clipboard "Before: $BEFORE_URL
+After: $AFTER_URL" "URLs"
+    exit 0
+fi
 
-    SECTION="### Screenshots ($SHORT_SHA — $TIMESTAMP)
+# Build section with commit reference
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+TIMESTAMP=$(date "+%Y-%m-%d %H:%M")
+
+SECTION="### Screenshots ($SHORT_SHA — $TIMESTAMP)
 
 | Pre | Post |
 |:---:|:----:|
 | ![Pre]($BEFORE_URL) | ![Post]($AFTER_URL) |"
 
-    echo "=== PR Markdown ==="
-    echo "$SECTION"
-    echo ""
+echo "=== PR Markdown ==="
+echo "$SECTION"
+echo ""
 
-    # Auto-append to PR body if gh CLI available and PR exists
-    # Parse owner/repo from origin so this works correctly in forks
-    REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-    GH_REPO=$(echo "$REMOTE_URL" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+# Auto-append to PR body if gh CLI is available and authenticated
+GH_REPO=$(resolve_owner_repo)
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if ! gh_is_authenticated || [[ -z "$GH_REPO" ]] || [[ -z "$CURRENT_BRANCH" ]]; then
+    if command -v gh &>/dev/null && ! gh_is_authenticated; then
+        echo "(gh CLI found but not authenticated — run 'gh auth login' to enable auto PR updates)"
+    fi
+    echo "Paste the markdown above into your PR description."
+    copy_to_clipboard "$SECTION" "Markdown"
+    exit 0
+fi
 
-    if command -v gh &> /dev/null && [[ -n "$GH_REPO" ]] && [[ -n "$CURRENT_BRANCH" ]]; then
-        PR_JSON=$(gh pr view "$CURRENT_BRANCH" --repo "$GH_REPO" --json number,body 2>/dev/null || true)
-        if [[ -n "$PR_JSON" ]]; then
-            PR_NUMBER=$(echo "$PR_JSON" | grep -o '"number":[0-9]*' | grep -o '[0-9]*')
-            PR_BODY=$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || echo "")
+PR_JSON=$(gh pr view "$CURRENT_BRANCH" --repo "$GH_REPO" --json number,body 2>/dev/null || true)
 
-            # Stack: newest on top, right after ## Visual Changes header
-            NEW_BODY=$(python3 -c "
+if [[ -z "$PR_JSON" ]]; then
+    echo "(no PR found for branch '$CURRENT_BRANCH' — create a PR first, then paste the markdown above into the description)"
+    copy_to_clipboard "$SECTION" "Markdown"
+    exit 0
+fi
+
+PR_NUMBER=$(echo "$PR_JSON" | grep -o '"number":[0-9]*' | grep -o '[0-9]*')
+PR_BODY=$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || echo "")
+
+# Stack: newest on top, right after ## Visual Changes header
+NEW_BODY=$(python3 -c "
 import sys
 body = sys.argv[1]
 section = sys.argv[2]
@@ -168,35 +224,7 @@ else:
     print(body + '\n\n' + marker + '\n\n' + section)
 " "$PR_BODY" "$SECTION")
 
-            gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --body "$NEW_BODY"
-            echo "Screenshots appended to PR #$PR_NUMBER body"
-        else
-            echo "(no PR found for current branch — markdown copied to clipboard)"
-        fi
-    fi
+gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --body "$NEW_BODY"
+echo "Screenshots appended to PR #$PR_NUMBER body"
 
-    # Also copy to clipboard as fallback
-    if command -v pbcopy &> /dev/null; then
-        echo "$SECTION" | pbcopy
-        echo "Markdown copied to clipboard!"
-    elif command -v xclip &> /dev/null; then
-        echo "$SECTION" | xclip -selection clipboard
-        echo "Markdown copied to clipboard!"
-    else
-        echo "(clipboard copy not available - install pbcopy or xclip)"
-    fi
-else
-    # Copy URLs to clipboard
-    URLS="Before: $BEFORE_URL
-After: $AFTER_URL"
-
-    if command -v pbcopy &> /dev/null; then
-        echo "$URLS" | pbcopy
-        echo "URLs copied to clipboard!"
-    elif command -v xclip &> /dev/null; then
-        echo "$URLS" | xclip -selection clipboard
-        echo "URLs copied to clipboard!"
-    else
-        echo "(clipboard copy not available - install pbcopy or xclip)"
-    fi
-fi
+copy_to_clipboard "$SECTION" "Markdown"

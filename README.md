@@ -73,10 +73,40 @@ flowchart TD
 npx playwright install chromium
 ```
 
+## CI / Sandboxed Environments
+
+pre-post needs a Chromium binary. In restricted environments where `npx playwright install chromium` fails (CDN blocked):
+
+```bash
+# Point to a pre-installed Chrome/Chromium binary
+export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chrome
+
+# This is treated as an explicit override — pre-post will fail with a
+# clear error if the path is wrong, rather than silently falling back.
+```
+
+When no custom path is set, pre-post auto-detects in order: system Chrome, bundled Playwright Chromium, then any builds in `~/.cache/ms-playwright/`.
+
+If no browser is available at all, use image-only mode:
+
+```bash
+pre-post before.png after.png --markdown
+```
+
+**Proxy URLs**: If your git remote uses a proxy (e.g., `http://proxy@host/git/owner/repo`), set the repo explicitly:
+
+```bash
+export GH_REPO=owner/repo
+```
+
+**Google Fonts**: Container egress proxies typically block `fonts.googleapis.com`.
+Screenshots will render with system font fallbacks. This is cosmetic only —
+`document.fonts.ready` still resolves and layout is preserved.
+
 ## Install
 
 ```bash
-npm i -g @juangadm/pre-post
+npm install -D @juangadm/pre-post
 ```
 
 ## Basic Use

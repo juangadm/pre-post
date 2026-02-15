@@ -316,7 +316,12 @@ async function runDefault(): Promise<void> {
       });
 
       if (values.markdown) {
-        console.log(result.markdown);
+        await uploadAndOutputMarkdown(
+          result.beforeImage,
+          result.afterImage,
+          path.basename(first),
+          path.basename(second),
+        );
       } else {
         console.log(`Before: ${first}`);
         console.log(`After:  ${second}`);
@@ -380,29 +385,13 @@ async function runDefault(): Promise<void> {
     console.log(`\nSaved: ${beforePath}`);
     console.log(`Saved: ${afterPath}`);
 
-    // Output markdown if requested
     if (values.markdown) {
-      const uploadUrl = values['upload-url'] || process.env.UPLOAD_URL;
-      console.log(`\nUploading images${uploadUrl ? ` to ${uploadUrl}` : ''}...`);
-
-      const { beforeUrl: bUrl, afterUrl: aUrl } = await uploadBeforeAfter(
-        { image: result.before.image, filename: beforeFilename },
-        { image: result.after.image, filename: afterFilename },
-        uploadUrl
+      await uploadAndOutputMarkdown(
+        result.before.image,
+        result.after.image,
+        beforeFilename,
+        afterFilename,
       );
-
-      console.log(`Before: ${bUrl}`);
-      console.log(`After:  ${aUrl}`);
-
-      const markdown = `| Pre | Post |
-|:---:|:----:|
-| ![Pre](${bUrl}) | ![Post](${aUrl}) |`;
-
-      console.log(`\n${markdown}`);
-
-      if (copyToClipboard(markdown)) {
-        console.log(`\nMarkdown copied to clipboard`);
-      }
     }
   } finally {
     await closeBrowser();
@@ -411,6 +400,36 @@ async function runDefault(): Promise<void> {
 
 function formatTimestamp(date: Date): string {
   return date.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+function buildMarkdownTable(beforeUrl: string, afterUrl: string): string {
+  const header = '| Pre | Post |';
+  const divider = '|:---:|:----:|';
+  const row = `| ![Pre](${beforeUrl}) | ![Post](${afterUrl}) |`;
+  return `${header}\n${divider}\n${row}`;
+}
+
+async function uploadAndOutputMarkdown(
+  beforeImage: Buffer,
+  afterImage: Buffer,
+  beforeFilename: string,
+  afterFilename: string,
+): Promise<void> {
+  const uploadUrl = values['upload-url'] || process.env.UPLOAD_URL;
+  console.log(`Uploading images${uploadUrl ? ` to ${uploadUrl}` : ''}...`);
+
+  const { beforeUrl, afterUrl } = await uploadBeforeAfter(
+    { image: beforeImage, filename: beforeFilename },
+    { image: afterImage, filename: afterFilename },
+    uploadUrl,
+  );
+
+  const markdown = buildMarkdownTable(beforeUrl, afterUrl);
+  console.log(`\n${markdown}`);
+
+  if (copyToClipboard(markdown)) {
+    console.log('\nMarkdown copied to clipboard');
+  }
 }
 
 // ============================================================

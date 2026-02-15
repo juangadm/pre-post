@@ -87,6 +87,30 @@ async function uploadGenericPut(image: Buffer, filename: string, url: string): P
 }
 
 /**
+ * Resolve owner/repo from environment variables or git remote URL.
+ * Supports standard GitHub URLs, SSH URLs, and proxy/non-standard URLs.
+ */
+function resolveOwnerRepo(): string {
+  const envOwnerRepo = process.env.GH_REPO || process.env.GITHUB_REPOSITORY;
+  if (envOwnerRepo) return envOwnerRepo;
+
+  const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
+
+  // Standard GitHub: https://github.com/owner/repo.git or git@github.com:owner/repo.git
+  const githubMatch = remoteUrl.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (githubMatch) return githubMatch[1];
+
+  // Fallback: extract last two path segments from any URL (covers proxies, mirrors, etc.)
+  const fallbackMatch = remoteUrl.match(/\/([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (fallbackMatch) return fallbackMatch[1];
+
+  throw new Error(
+    `Cannot parse owner/repo from: ${remoteUrl}\n` +
+    'Fix: set GH_REPO=owner/repo'
+  );
+}
+
+/**
  * Write an image to .pre-post/ in the repo root and stage it.
  * Returns filename + ownerRepo — caller constructs blob+SHA URL after commit.
  */
@@ -95,12 +119,7 @@ export function uploadGitNative(
   filename: string,
 ): { filename: string; ownerRepo: string } {
   const repoRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-  const remoteUrl = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
-
-  // Parse owner/repo from HTTPS or SSH remote URL
-  const ownerRepo = remoteUrl
-    .replace(/^(https?:\/\/github\.com\/|git@github\.com:)/, '')
-    .replace(/\.git$/, '');
+  const ownerRepo = resolveOwnerRepo();
 
   const destDir = path.join(repoRoot, '.pre-post');
   fs.mkdirSync(destDir, { recursive: true });
