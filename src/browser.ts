@@ -11,6 +11,17 @@ import path from 'path';
 let browser: Browser | null = null;
 let page: Page | null = null;
 
+/**
+ * Get the shared Browser instance (creating it if needed).
+ * Used by video.ts to create fresh pages without animation-killing CSS.
+ */
+export async function getBrowser(): Promise<Browser> {
+  if (!browser) {
+    browser = await launchBrowser();
+  }
+  return browser;
+}
+
 export interface ScreenshotOptions {
   viewport: ViewportSize;
   fullPage?: boolean;
