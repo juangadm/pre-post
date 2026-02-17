@@ -51,9 +51,10 @@ async function upload0x0st(image: Buffer, filename: string, url: string): Promis
 }
 
 async function uploadVercelBlob(image: Buffer, filename: string, url: string): Promise<string> {
+  const contentType = filename.endsWith('.gif') ? 'image/gif' : 'image/png';
   const response = await fetch(`${url}/${filename}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'image/png' },
+    headers: { 'Content-Type': contentType },
     body: image,
   });
 
@@ -66,9 +67,10 @@ async function uploadVercelBlob(image: Buffer, filename: string, url: string): P
 }
 
 async function uploadGenericPut(image: Buffer, filename: string, url: string): Promise<string> {
+  const mimeType = filename.endsWith('.gif') ? 'image/gif' : 'image/png';
   const response = await fetch(`${url}/${filename}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'image/png' },
+    headers: { 'Content-Type': mimeType },
     body: image,
   });
 
@@ -118,6 +120,14 @@ export function uploadGitNative(
   image: Buffer,
   filename: string,
 ): { filename: string; ownerRepo: string } {
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+  if (image.length > MAX_FILE_SIZE) {
+    const sizeMB = (image.length / 1024 / 1024).toFixed(1);
+    throw new Error(
+      `File is ${sizeMB} MB (limit: 10 MB). Reduce --duration or --fps.`
+    );
+  }
+
   const repoRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
   const ownerRepo = resolveOwnerRepo();
 

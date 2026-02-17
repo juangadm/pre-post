@@ -79,6 +79,45 @@ describe('CLI', () => {
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain('Two arguments required');
     });
+
+    it('rejects malformed --duration in video mode', () => {
+      const { stderr, exitCode } = runCli([
+        'compare',
+        '--video',
+        '--duration', '2s',
+        '--before-base', 'https://example.com',
+        '--after-base', 'https://example.com',
+      ]);
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain('Invalid value for --duration');
+    });
+
+    it('rejects malformed --fps in video mode', () => {
+      const { stderr, exitCode } = runCli([
+        'compare',
+        '--video',
+        '--fps', '5fps',
+        '--before-base', 'https://example.com',
+        '--after-base', 'https://example.com',
+      ]);
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain('Invalid value for --fps');
+    });
+
+    it('rejects malformed --delay in video mode', () => {
+      const { stderr, exitCode } = runCli([
+        'compare',
+        '--video',
+        '--delay', '250ms',
+        '--before-base', 'https://example.com',
+        '--after-base', 'https://example.com',
+      ]);
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain('Invalid value for --delay');
+    });
   });
 
   describe('detect subcommand', () => {

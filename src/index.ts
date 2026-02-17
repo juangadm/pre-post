@@ -1,6 +1,7 @@
 export * from './types.js';
 export { resolveViewport } from './viewport.js';
 export { captureScreenshot, captureBeforeAfter, captureResponsive } from './capture.js';
+export { captureVideo, captureGif } from './video.js';
 export { generateFilename } from './filename.js';
 export { closeBrowser, readScreenshot } from './browser.js';
 export { detectRoutes, detectFramework, getChangedFiles } from './routes.js';

@@ -134,3 +134,37 @@ export interface CompareOptions {
   /** Generate markdown output */
   markdown?: boolean;
 }
+
+// ============================================================
+// Video/GIF Capture
+// ============================================================
+
+export interface VideoOptions {
+  /** Viewport size for the capture */
+  viewport: ViewportSize;
+  /** Recording duration in seconds (default: 3, max: 10) */
+  duration?: number;
+  /** Target frames per second (default: 5, max: 10) */
+  fps?: number;
+  /** Milliseconds to wait after page load before recording (default: 0) */
+  delay?: number;
+  /** CSS selector — scroll element into view before recording */
+  selector?: string;
+}
+
+export interface VideoResult {
+  /** Raw GIF data */
+  gif: Buffer;
+  /** Output format identifier */
+  format: 'gif';
+  /** Viewport used for capture */
+  viewport: ViewportSize;
+  /** URL that was captured */
+  url: string;
+  /** Actual recording duration in seconds */
+  duration: number;
+  /** Number of frames in the GIF */
+  frameCount: number;
+  /** CSS selector used, if any */
+  selector?: string;
+}
