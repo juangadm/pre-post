@@ -249,13 +249,19 @@ Supports:
 
 ## Add Skill
 
-Install as a Claude Code skill:
+Install as an agent skill using the [`skills` CLI](https://github.com/vercel-labs/skills):
 
 ```bash
-npx skills add juangadm/pre-post
+npx skills add juangadm/pre-post          # interactive — pick your agent(s)
+npx skills add juangadm/pre-post -y       # auto-install to all universal agents
+npx skills add juangadm/pre-post -y -g    # install globally (all projects)
 ```
 
+This copies `skill/SKILL.md` into the appropriate directory for your agent (e.g., `.claude/skills/` for Claude Code, `.agents/skills/` for Amp/Codex/Gemini CLI, etc.).
+
 The skill uses `gh` to detect the associated PR and Playwright for screenshots.
+
+> **Note:** The npm package (`@juangadm/pre-post`) is published on [npmjs.com](https://www.npmjs.com/package/@juangadm/pre-post), not GitHub Packages — so the "Packages" section on the GitHub repo page will show none.
 
 ## Credits
 
