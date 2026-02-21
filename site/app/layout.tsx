@@ -32,26 +32,86 @@ const biroScript = localFont({
   variable: "--font-biro-script",
 })
 
+const siteUrl = "https://site-puce-rho.vercel.app"
+const description =
+  "pre-post is a visual diff tool that captures before-and-after screenshots of web pages for pull requests. Reads your git diff, detects changed routes, and screenshots them automatically. Use as a Claude Code skill or CLI tool."
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://site-puce-rho.vercel.app"),
+  metadataBase: new URL(siteUrl),
   alternates: {
     canonical: "/",
   },
-  title: "pre-post",
-  description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+  title: "pre-post — visual diff tool for PRs",
+  description,
+  keywords: [
+    "visual diff",
+    "screenshot comparison",
+    "PR screenshots",
+    "before and after",
+    "Claude Code skill",
+    "visual regression",
+    "web screenshot tool",
+    "pull request screenshots",
+    "Playwright screenshots",
+    "pre-post",
+  ],
+  authors: [{ name: "Juan Gabriel", url: "https://juangabriel.xyz" }],
+  creator: "Juan Gabriel",
   openGraph: {
-    title: "pre-post",
-    description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+    title: "pre-post — visual diff tool for PRs",
+    description,
+    url: siteUrl,
+    siteName: "pre-post",
+    locale: "en_US",
     type: "website",
+    images: [
+      {
+        url: "/opengraph-image.png",
+        width: 1200,
+        height: 630,
+        alt: "pre-post — visual diff tool for PRs",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "pre-post",
-    description: "Visual diff tool for PRs — captures pre/post screenshots of web pages. Use as a Claude Code skill or from the CLI.",
+    title: "pre-post — visual diff tool for PRs",
+    description,
+    images: ["/opengraph-image.png"],
   },
   icons: {
     icon: "/icon",
   },
+}
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      name: "pre-post",
+      url: siteUrl,
+      description,
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "pre-post",
+      description,
+      url: siteUrl,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Cross-platform",
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "USD",
+      },
+      author: {
+        "@type": "Person",
+        name: "Juan Gabriel",
+        url: "https://juangabriel.xyz",
+      },
+    },
+  ],
 }
 
 export default function RootLayout({
@@ -62,6 +122,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${departureMono.variable} ${vanillaCream.variable} ${biroScript.variable} font-sans antialiased`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
         {children}
       </body>
     </html>

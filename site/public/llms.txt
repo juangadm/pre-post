@@ -1,0 +1,49 @@
+# pre-post
+
+> Visual diff tool for PRs — captures before-and-after screenshots of web pages automatically.
+
+## Links
+
+- [Homepage](https://site-puce-rho.vercel.app): Overview, install instructions, usage examples
+- [GitHub](https://github.com/juangadm/pre-post): Source code and issues
+- [npm](https://www.npmjs.com/package/@juangadm/pre-post): Package registry
+
+## What it does
+
+pre-post reads your git diff, detects which routes changed, and screenshots them — production vs your new version. Desktop and mobile, at 2x retina quality. It then adds a before/after comparison table directly to your pull request.
+
+## How it works
+
+1. Make your UI changes
+2. Say `/pre-post` in Claude Code
+3. pre-post reads your git diff and detects which pages changed
+4. It screenshots each route — production vs your new version
+5. You review the screenshots
+6. pre-post adds a pre/post table to your PR
+
+## Install
+
+```
+npm install -D @juangadm/pre-post
+```
+
+## Add as a Claude Code Skill
+
+```
+npx skills add juangadm/pre-post
+```
+
+## Key features
+
+- Automatic route detection from git diff
+- Desktop and mobile screenshots at 2x retina
+- Playwright-based — waits for fonts, freezes CSS animations
+- Works with localhost, Vercel preview deploys, Netlify, or any URL
+- Markdown table output for PR descriptions
+- CSS selector targeting for specific elements
+- Custom viewport sizes
+- Full-page scrollable captures
+
+## Built on
+
+Fork of Vercel Labs' before-and-after by James Clements. pre-post adds automatic route detection, responsive captures, and Playwright-based screenshot consistency.

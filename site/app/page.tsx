@@ -6,6 +6,7 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-[#FBFBFB] text-neutral-500">
       <main className="py-10 sm:py-16">
+        <article>
         {/* Header - constrained width */}
         <div className="max-w-[640px] mx-auto px-4 sm:px-6">
           <div className="flex items-center justify-between mb-4">
@@ -278,6 +279,41 @@ export default function Page() {
             </p>
           </section>
         </div>
+        </article>
+
+        {/* FAQ — visually hidden, structured for AI search extraction */}
+        <section className="sr-only" aria-label="Frequently asked questions">
+          <h2>FAQ</h2>
+          <dl>
+            <dt>What is pre-post?</dt>
+            <dd>
+              pre-post is a visual diff tool that captures before-and-after
+              screenshots of web pages for pull requests. It reads your git diff,
+              detects which routes changed, and screenshots them automatically at
+              desktop and mobile viewports in 2x retina quality.
+            </dd>
+            <dt>How do I install pre-post?</dt>
+            <dd>
+              Install as a dev dependency with npm install -D @juangadm/pre-post.
+              To add it as a Claude Code skill, run npx skills add juangadm/pre-post.
+            </dd>
+            <dt>How does pre-post work?</dt>
+            <dd>
+              Make your UI changes, then say /pre-post in Claude Code. It reads
+              your git diff, detects which pages changed, screenshots each route
+              comparing production vs your new version, and adds a comparison table
+              to your PR.
+            </dd>
+            <dt>What makes pre-post different from before-and-after?</dt>
+            <dd>
+              pre-post is a fork of Vercel Labs' before-and-after. The original
+              required manually passing two URLs. pre-post reads your git diff
+              automatically, captures desktop and mobile at 2x retina, and uses
+              Playwright for consistent screenshots with font loading and CSS
+              animation freezing.
+            </dd>
+          </dl>
+        </section>
       </main>
 
       <footer className="py-6 text-sm text-neutral-400 flex justify-center">
