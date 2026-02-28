@@ -37,8 +37,6 @@ function findCachedChromium(): string[] {
   const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH
     || path.join(home, '.cache', 'ms-playwright');
 
-  if (!fs.existsSync(cacheDir)) return [];
-
   let entries: string[];
   try {
     entries = fs.readdirSync(cacheDir);

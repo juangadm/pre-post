@@ -69,7 +69,7 @@ async function decodeImageToRgba(
   const pg = decoderPage;
   const base64 = imageBuffer.toString('base64');
 
-  const rawPixels = await pg.evaluate(
+  const base64Rgba = await pg.evaluate(
     async ({ b64, w, h }: { b64: string; w: number; h: number }) => {
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
@@ -83,13 +83,18 @@ async function decodeImageToRgba(
       canvas.height = h;
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(img, 0, 0, w, h);
-      const imageData = ctx.getImageData(0, 0, w, h);
-      return Array.from(imageData.data);
+      const bytes = ctx.getImageData(0, 0, w, h).data;
+      // Transfer as base64 instead of JSON array (~5MB vs ~12MB per frame)
+      const parts: string[] = [];
+      for (let i = 0; i < bytes.length; i += 8192) {
+        parts.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+      }
+      return btoa(parts.join(''));
     },
     { b64: base64, w: width, h: height },
   );
 
-  return new Uint8Array(rawPixels);
+  return new Uint8Array(Buffer.from(base64Rgba, 'base64'));
 }
 
 // ============================================================
@@ -306,22 +311,26 @@ async function encodeGif(
 }
 
 function buildPaletteSample(frames: Uint8Array[]): Uint8Array {
+  if (frames.length === 0) return new Uint8Array(0);
   const stride = 4 * 4;
-  const sample: number[] = [];
+  const samplesPerFrame = Math.ceil(frames[0].length / stride);
+  const sample = new Uint8Array(samplesPerFrame * frames.length * 4);
+  let offset = 0;
 
   for (const frame of frames) {
     for (let i = 0; i < frame.length; i += stride) {
-      sample.push(frame[i], frame[i + 1], frame[i + 2], frame[i + 3]);
+      sample[offset++] = frame[i];
+      sample[offset++] = frame[i + 1];
+      sample[offset++] = frame[i + 2];
+      sample[offset++] = frame[i + 3];
     }
   }
 
-  return new Uint8Array(sample);
+  return sample;
 }
 
 function indexedEquals(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+  return Buffer.from(a.buffer, a.byteOffset, a.byteLength)
+    .equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
 }

@@ -4,13 +4,13 @@ import { parseArgs } from 'node:util';
 import path from 'path';
 import fs from 'fs';
 import { BeforeAndAfter, generateFilename } from '../index.js';
-import { ViewportConfig, VIEWPORT_PRESETS } from '../types.js';
+import { ViewportConfig, ViewportSize, VIEWPORT_PRESETS, VideoOptions } from '../types.js';
 import { closeBrowser } from '../browser.js';
-import { captureScreenshot, captureResponsive } from '../capture.js';
+import { captureScreenshot } from '../capture.js';
 import { captureVideo } from '../video.js';
 import { uploadBeforeAfter } from '../upload.js';
 import { copyToClipboard } from '../clipboard.js';
-import { detectRoutes, getChangedFiles, detectFramework } from '../routes.js';
+import { Framework, detectRoutes, getChangedFiles, detectFramework } from '../routes.js';
 import { resolveViewport } from '../viewport.js';
 
 // Determine subcommand
@@ -178,34 +178,43 @@ function parseStrictInteger(value: string, flag: string): number {
   return parsed;
 }
 
+interface ParsedVideoOptions {
+  duration?: number;
+  fps?: number;
+  delay?: number;
+}
+
 /**
  * Validate --video flag combinations and parse video-related options.
+ * Returns parsed options if --video is set, undefined otherwise.
  */
-function validateVideoFlags(): void {
-  if (!values.video) return;
+function validateVideoFlags(): ParsedVideoOptions | undefined {
+  if (!values.video) return undefined;
 
   if (values.full) {
     console.error('--full (fullPage) is not supported with --video');
     process.exit(1);
   }
 
-  const duration = values.duration ? parseStrictNumber(values.duration, '--duration') : 3;
-  if (!Number.isFinite(duration) || duration <= 0 || duration > 10) {
+  const duration = values.duration ? parseStrictNumber(values.duration, '--duration') : undefined;
+  if (duration !== undefined && (duration <= 0 || duration > 10)) {
     console.error('Duration must be between 0.1 and 10 seconds');
     process.exit(1);
   }
 
-  const fps = values.fps ? parseStrictInteger(values.fps, '--fps') : 5;
-  if (!Number.isFinite(fps) || fps < 1 || fps > 10) {
+  const fps = values.fps ? parseStrictInteger(values.fps, '--fps') : undefined;
+  if (fps !== undefined && (fps < 1 || fps > 10)) {
     console.error('FPS must be between 1 and 10');
     process.exit(1);
   }
 
-  const delay = values.delay ? parseStrictInteger(values.delay, '--delay') : 0;
-  if (!Number.isFinite(delay) || delay < 0) {
+  const delay = values.delay ? parseStrictInteger(values.delay, '--delay') : undefined;
+  if (delay !== undefined && delay < 0) {
     console.error('Delay must be a non-negative integer in milliseconds');
     process.exit(1);
   }
+
+  return { duration, fps, delay };
 }
 
 function resolveViewportFlag(): ViewportConfig {
@@ -226,7 +235,7 @@ function resolveViewportFlag(): ViewportConfig {
 // Subcommand: detect
 // ============================================================
 async function runDetect(): Promise<void> {
-  const framework = values.framework as 'nextjs-app' | 'nextjs-pages' | 'generic' | undefined;
+  const framework = values.framework as Framework | undefined;
   const maxRoutes = values['max-routes'] ? parseInt(values['max-routes']) : undefined;
 
   const changedFiles = getChangedFiles();
@@ -248,7 +257,7 @@ async function runDetect(): Promise<void> {
 // ============================================================
 // Subcommand: compare
 // ============================================================
-async function runCompare(): Promise<void> {
+async function runCompare(routeOverrides?: string[], videoOpts?: ParsedVideoOptions): Promise<void> {
   const beforeBase = values['before-base'];
   const afterBase = values['after-base'];
 
@@ -257,20 +266,20 @@ async function runCompare(): Promise<void> {
     process.exit(1);
   }
 
-  const routeList = values.routes
-    ? values.routes.split(',').map(r => r.trim())
-    : ['/'];
-
+  const routeList = routeOverrides
+    ?? (values.routes ? values.routes.split(',').map(r => r.trim()) : ['/']);
   const responsive = values.responsive ?? false;
-  const viewport = resolveViewportFlag();
+  const isVideo = values.video ?? false;
+  const ext = isVideo ? 'gif' : 'png';
+  const captureType = isVideo ? 'GIF' : 'screenshot';
   const outputDir = values.output || path.join(process.env.HOME || '~', 'Downloads');
   fs.mkdirSync(outputDir, { recursive: true });
 
   const timestamp = new Date();
 
-  const isVideo = values.video ?? false;
-  const ext = isVideo ? 'gif' : 'png';
-  const captureType = isVideo ? 'GIF' : 'screenshot';
+  const viewports: Array<{ label?: string; size: ViewportSize }> = responsive
+    ? (['desktop', 'mobile'] as const).map(p => ({ label: p, size: VIEWPORT_PRESETS[p] }))
+    : [{ size: resolveViewport(resolveViewportFlag()) }];
 
   try {
     for (const route of routeList) {
@@ -278,81 +287,28 @@ async function runCompare(): Promise<void> {
       const afterUrl = normalizeUrl(afterBase.replace(/\/$/, '') + route);
       const routeSlug = route === '/' ? 'home' : route.replace(/^\//, '').replace(/\//g, '-');
 
-      if (responsive) {
-        // Capture desktop + mobile for each route
-        for (const preset of ['desktop', 'mobile'] as const) {
-          const vp = VIEWPORT_PRESETS[preset];
-          console.log(`Capturing ${captureType} ${route} @ ${preset} (${vp.width}x${vp.height})...`);
+      for (const { label: presetLabel, size: vp } of viewports) {
+        const logSuffix = presetLabel ? ` @ ${presetLabel} (${vp.width}x${vp.height})` : '';
+        console.log(`Capturing ${captureType} ${route}${logSuffix}...`);
 
-          if (isVideo) {
-            const videoOpts = {
-              viewport: vp,
-              duration: values.duration ? parseFloat(values.duration) : undefined,
-              fps: values.fps ? parseInt(values.fps) : undefined,
-              delay: values.delay ? parseInt(values.delay) : undefined,
-              selector: values.selector,
-            };
-
-            const beforeResult = await captureVideo(beforeUrl, videoOpts);
-            const afterResult = await captureVideo(afterUrl, videoOpts);
-
-            const beforeFilename = `${routeSlug}-${preset}-before-${formatTimestamp(timestamp)}.${ext}`;
-            const afterFilename = `${routeSlug}-${preset}-after-${formatTimestamp(timestamp)}.${ext}`;
-
-            fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.gif);
-            fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.gif);
-            console.log(`  Saved: ${beforeFilename} (${beforeResult.frameCount}f), ${afterFilename} (${afterResult.frameCount}f)`);
-          } else {
-            const beforeResult = await captureScreenshot({
-              url: beforeUrl,
-              viewport: preset,
-              fullPage: values.full,
-              selector: values.selector,
-            });
-            const afterResult = await captureScreenshot({
-              url: afterUrl,
-              viewport: preset,
-              fullPage: values.full,
-              selector: values.selector,
-            });
-
-            const beforeFilename = `${routeSlug}-${preset}-before-${formatTimestamp(timestamp)}.${ext}`;
-            const afterFilename = `${routeSlug}-${preset}-after-${formatTimestamp(timestamp)}.${ext}`;
-
-            fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.image);
-            fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.image);
-            console.log(`  Saved: ${beforeFilename}, ${afterFilename}`);
-          }
-        }
-      } else {
-        console.log(`Capturing ${captureType} ${route}...`);
+        const filePrefix = presetLabel ? `${routeSlug}-${presetLabel}` : routeSlug;
+        const beforeFilename = `${filePrefix}-before-${formatTimestamp(timestamp)}.${ext}`;
+        const afterFilename = `${filePrefix}-after-${formatTimestamp(timestamp)}.${ext}`;
 
         if (isVideo) {
-          const resolvedVp = resolveViewport(viewport);
-          const videoOpts = {
-            viewport: resolvedVp,
-            duration: values.duration ? parseFloat(values.duration) : undefined,
-            fps: values.fps ? parseInt(values.fps) : undefined,
-            delay: values.delay ? parseInt(values.delay) : undefined,
-            selector: values.selector,
-          };
-
-          const beforeResult = await captureVideo(beforeUrl, videoOpts);
-          const afterResult = await captureVideo(afterUrl, videoOpts);
-
-          const beforeFilename = `${routeSlug}-before-${formatTimestamp(timestamp)}.${ext}`;
-          const afterFilename = `${routeSlug}-after-${formatTimestamp(timestamp)}.${ext}`;
-
+          const opts: VideoOptions = { viewport: vp, ...videoOpts, selector: values.selector };
+          const beforeResult = await captureVideo(beforeUrl, opts);
+          const afterResult = await captureVideo(afterUrl, opts);
           fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.gif);
           fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.gif);
           console.log(`  Saved: ${beforeFilename} (${beforeResult.frameCount}f), ${afterFilename} (${afterResult.frameCount}f)`);
         } else {
-          const beforeResult = await captureScreenshot({ url: beforeUrl, viewport, fullPage: values.full });
-          const afterResult = await captureScreenshot({ url: afterUrl, viewport, fullPage: values.full });
-
-          const beforeFilename = `${routeSlug}-before-${formatTimestamp(timestamp)}.${ext}`;
-          const afterFilename = `${routeSlug}-after-${formatTimestamp(timestamp)}.${ext}`;
-
+          const beforeResult = await captureScreenshot({
+            url: beforeUrl, viewport: vp, fullPage: values.full, selector: values.selector,
+          });
+          const afterResult = await captureScreenshot({
+            url: afterUrl, viewport: vp, fullPage: values.full, selector: values.selector,
+          });
           fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.image);
           fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.image);
           console.log(`  Saved: ${beforeFilename}, ${afterFilename}`);
@@ -369,7 +325,7 @@ async function runCompare(): Promise<void> {
 // ============================================================
 // Subcommand: run (detect + compare)
 // ============================================================
-async function runFull(): Promise<void> {
+async function runFull(videoOpts?: ParsedVideoOptions): Promise<void> {
   const beforeBase = values['before-base'];
   const afterBase = values['after-base'];
 
@@ -378,8 +334,7 @@ async function runFull(): Promise<void> {
     process.exit(1);
   }
 
-  // Detect routes
-  const framework = values.framework as 'nextjs-app' | 'nextjs-pages' | 'generic' | undefined;
+  const framework = values.framework as Framework | undefined;
   const maxRoutes = values['max-routes'] ? parseInt(values['max-routes']) : undefined;
 
   const changedFiles = getChangedFiles();
@@ -401,15 +356,13 @@ async function runFull(): Promise<void> {
     routeList = ['/'];
   }
 
-  // Override routes in values for compare to pick up
-  values.routes = routeList.join(',');
-  await runCompare();
+  await runCompare(routeList, videoOpts);
 }
 
 // ============================================================
 // Default mode (original before-and-after behavior)
 // ============================================================
-async function runDefault(): Promise<void> {
+async function runDefault(videoOpts?: ParsedVideoOptions): Promise<void> {
   if (values.help) {
     printHelp();
     return;
@@ -473,16 +426,14 @@ async function runDefault(): Promise<void> {
     if (isVideo) {
       // Video/GIF mode
       const resolvedViewport = resolveViewport(viewport);
-      const videoOpts = {
+      const opts: VideoOptions = {
         viewport: resolvedViewport,
-        duration: values.duration ? parseFloat(values.duration) : undefined,
-        fps: values.fps ? parseInt(values.fps) : undefined,
-        delay: values.delay ? parseInt(values.delay) : undefined,
+        ...videoOpts,
         selector: beforeSelector,
       };
 
-      const beforeResult = await captureVideo(beforeUrl, videoOpts);
-      const afterResult = await captureVideo(afterUrl, { ...videoOpts, selector: afterSelector });
+      const beforeResult = await captureVideo(beforeUrl, opts);
+      const afterResult = await captureVideo(afterUrl, { ...opts, selector: afterSelector });
 
       const timestamp = new Date();
       const beforeFilename = generateFilename({ url: beforeUrl, suffix: 'before', timestamp, format: 'gif' });
@@ -581,17 +532,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  validateVideoFlags();
+  const videoOpts = validateVideoFlags();
 
   switch (subcommand) {
     case 'detect':
       return runDetect();
     case 'compare':
-      return runCompare();
+      return runCompare(undefined, videoOpts);
     case 'run':
-      return runFull();
+      return runFull(videoOpts);
     default:
-      return runDefault();
+      return runDefault(videoOpts);
   }
 }
 

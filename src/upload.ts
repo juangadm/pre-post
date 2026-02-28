@@ -10,6 +10,10 @@ import path from 'path';
 
 const DEFAULT_UPLOAD_URL = 'https://0x0.st';
 
+function mimeForFilename(filename: string): string {
+  return filename.endsWith('.gif') ? 'image/gif' : 'image/png';
+}
+
 /**
  * Upload an image and return a public URL.
  * Auto-detects upload method from URL pattern.
@@ -51,7 +55,7 @@ async function upload0x0st(image: Buffer, filename: string, url: string): Promis
 }
 
 async function uploadVercelBlob(image: Buffer, filename: string, url: string): Promise<string> {
-  const contentType = filename.endsWith('.gif') ? 'image/gif' : 'image/png';
+  const contentType = mimeForFilename(filename);
   const response = await fetch(`${url}/${filename}`, {
     method: 'PUT',
     headers: { 'Content-Type': contentType },
@@ -67,7 +71,7 @@ async function uploadVercelBlob(image: Buffer, filename: string, url: string): P
 }
 
 async function uploadGenericPut(image: Buffer, filename: string, url: string): Promise<string> {
-  const mimeType = filename.endsWith('.gif') ? 'image/gif' : 'image/png';
+  const mimeType = mimeForFilename(filename);
   const response = await fetch(`${url}/${filename}`, {
     method: 'PUT',
     headers: { 'Content-Type': mimeType },
