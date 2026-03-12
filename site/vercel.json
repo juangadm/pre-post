@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "destination": "https://prepost.juangabriel.org/$1",
+      "statusCode": 301,
+      "has": [{ "type": "header", "key": "host", "value": "prepost.juangabriel.xyz" }]
+    }
+  ]
+}
