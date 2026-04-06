@@ -48,9 +48,11 @@ export async function captureBeforeAfter(
     afterOpts.viewport = sharedViewport;
   }
 
-  // Capture sequentially to reuse browser session
-  const before = await captureScreenshot(beforeOpts);
-  const after = await captureScreenshot(afterOpts);
+  // Capture in parallel — each gets its own page from the pool
+  const [before, after] = await Promise.all([
+    captureScreenshot(beforeOpts),
+    captureScreenshot(afterOpts),
+  ]);
 
   return { before, after };
 }
@@ -63,13 +65,12 @@ export async function captureResponsive(
   url: string,
   viewports: ViewportConfig[] = ['desktop', 'mobile'],
 ): Promise<Map<string, CaptureResult>> {
-  const results = new Map<string, CaptureResult>();
-
-  for (const vp of viewports) {
-    const label = typeof vp === 'string' ? vp : `${vp.width}x${vp.height}`;
-    const result = await captureScreenshot({ url, viewport: vp });
-    results.set(label, result);
-  }
-
-  return results;
+  const entries = await Promise.all(
+    viewports.map(async (vp) => {
+      const label = typeof vp === 'string' ? vp : `${vp.width}x${vp.height}`;
+      const result = await captureScreenshot({ url, viewport: vp });
+      return [label, result] as const;
+    }),
+  );
+  return new Map(entries);
 }

@@ -281,39 +281,73 @@ async function runCompare(routeOverrides?: string[], videoOpts?: ParsedVideoOpti
     ? (['desktop', 'mobile'] as const).map(p => ({ label: p, size: VIEWPORT_PRESETS[p] }))
     : [{ size: resolveViewport(resolveViewportFlag()) }];
 
+  // Build task list for parallel execution
+  interface CompareTask {
+    route: string;
+    presetLabel?: string;
+    vp: ViewportSize;
+    beforeUrl: string;
+    afterUrl: string;
+    beforeFilename: string;
+    afterFilename: string;
+  }
+
+  const tasks: CompareTask[] = [];
+  for (const route of routeList) {
+    const beforeUrl = normalizeUrl(beforeBase.replace(/\/$/, '') + route);
+    const afterUrl = normalizeUrl(afterBase.replace(/\/$/, '') + route);
+    const routeSlug = route === '/' ? 'home' : route.replace(/^\//, '').replace(/\//g, '-');
+
+    for (const { label: presetLabel, size: vp } of viewports) {
+      const filePrefix = presetLabel ? `${routeSlug}-${presetLabel}` : routeSlug;
+      tasks.push({
+        route,
+        presetLabel,
+        vp,
+        beforeUrl,
+        afterUrl,
+        beforeFilename: `${filePrefix}-before-${formatTimestamp(timestamp)}.${ext}`,
+        afterFilename: `${filePrefix}-after-${formatTimestamp(timestamp)}.${ext}`,
+      });
+    }
+  }
+
+  const totalCaptures = tasks.length * 2;
+  console.log(`Capturing ${totalCaptures} ${captureType}s across ${routeList.length} route(s)...`);
+
   try {
-    for (const route of routeList) {
-      const beforeUrl = normalizeUrl(beforeBase.replace(/\/$/, '') + route);
-      const afterUrl = normalizeUrl(afterBase.replace(/\/$/, '') + route);
-      const routeSlug = route === '/' ? 'home' : route.replace(/^\//, '').replace(/\//g, '-');
-
-      for (const { label: presetLabel, size: vp } of viewports) {
-        const logSuffix = presetLabel ? ` @ ${presetLabel} (${vp.width}x${vp.height})` : '';
-        console.log(`Capturing ${captureType} ${route}${logSuffix}...`);
-
-        const filePrefix = presetLabel ? `${routeSlug}-${presetLabel}` : routeSlug;
-        const beforeFilename = `${filePrefix}-before-${formatTimestamp(timestamp)}.${ext}`;
-        const afterFilename = `${filePrefix}-after-${formatTimestamp(timestamp)}.${ext}`;
-
+    // Execute all tasks in parallel (pool limits concurrency)
+    const results = await Promise.allSettled(
+      tasks.map(async (task) => {
         if (isVideo) {
-          const opts: VideoOptions = { viewport: vp, ...videoOpts, selector: values.selector };
-          const beforeResult = await captureVideo(beforeUrl, opts);
-          const afterResult = await captureVideo(afterUrl, opts);
-          fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.gif);
-          fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.gif);
-          console.log(`  Saved: ${beforeFilename} (${beforeResult.frameCount}f), ${afterFilename} (${afterResult.frameCount}f)`);
+          const opts: VideoOptions = { viewport: task.vp, ...videoOpts, selector: values.selector };
+          const [beforeResult, afterResult] = await Promise.all([
+            captureVideo(task.beforeUrl, opts),
+            captureVideo(task.afterUrl, opts),
+          ]);
+          fs.writeFileSync(path.join(outputDir, task.beforeFilename), beforeResult.gif);
+          fs.writeFileSync(path.join(outputDir, task.afterFilename), afterResult.gif);
+          console.log(`  Done: ${task.route}${task.presetLabel ? ` @ ${task.presetLabel}` : ''} (${beforeResult.frameCount}f + ${afterResult.frameCount}f)`);
         } else {
-          const beforeResult = await captureScreenshot({
-            url: beforeUrl, viewport: vp, fullPage: values.full, selector: values.selector,
-          });
-          const afterResult = await captureScreenshot({
-            url: afterUrl, viewport: vp, fullPage: values.full, selector: values.selector,
-          });
-          fs.writeFileSync(path.join(outputDir, beforeFilename), beforeResult.image);
-          fs.writeFileSync(path.join(outputDir, afterFilename), afterResult.image);
-          console.log(`  Saved: ${beforeFilename}, ${afterFilename}`);
+          const [beforeResult, afterResult] = await Promise.all([
+            captureScreenshot({
+              url: task.beforeUrl, viewport: task.vp, fullPage: values.full, selector: values.selector,
+            }),
+            captureScreenshot({
+              url: task.afterUrl, viewport: task.vp, fullPage: values.full, selector: values.selector,
+            }),
+          ]);
+          fs.writeFileSync(path.join(outputDir, task.beforeFilename), beforeResult.image);
+          fs.writeFileSync(path.join(outputDir, task.afterFilename), afterResult.image);
+          console.log(`  Done: ${task.route}${task.presetLabel ? ` @ ${task.presetLabel}` : ''}`);
         }
-      }
+      }),
+    );
+
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failures.length > 0) {
+      for (const f of failures) console.error(`  Failed: ${f.reason}`);
+      if (failures.length === results.length) throw new Error('All captures failed');
     }
 
     console.log(`\nAll ${captureType}s saved to: ${outputDir}`);
