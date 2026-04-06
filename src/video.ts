@@ -117,15 +117,22 @@ export async function captureGif(
   const frameInterval = Math.round(1000 / fps);
 
   // Navigate — do NOT kill animations
-  const response = await page.goto(url, { waitUntil: 'networkidle' });
+  const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await Promise.race([
+    page.waitForLoadState('networkidle'),
+    page.waitForTimeout(3000),
+  ]);
 
   // Warn on HTTP errors (but continue — page may still have content)
   if (response && response.status() >= 400) {
     console.warn(`Warning: ${url} returned HTTP ${response.status()}`);
   }
 
-  // Wait for fonts
-  await page.evaluate(() => document.fonts.ready);
+  // Wait for fonts (capped at 2s)
+  await Promise.race([
+    page.evaluate(() => document.fonts.ready),
+    page.waitForTimeout(2000),
+  ]);
 
   // Optional delay before recording
   if (delay > 0) {
@@ -140,7 +147,6 @@ export async function captureGif(
       throw new Error(`Element not found: ${options.selector}`);
     }
     await locator.first().scrollIntoViewIfNeeded();
-    await page.waitForTimeout(100);
   }
 
   // Capture PNG frames

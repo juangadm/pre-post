@@ -9,7 +9,10 @@ import fs from 'fs';
 import path from 'path';
 
 let browser: Browser | null = null;
-let page: Page | null = null;
+
+const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 4;
+let activePages = 0;
+const pageQueue: Array<(value: void) => void> = [];
 
 /**
  * Get the shared Browser instance (creating it if needed).
@@ -20,6 +23,29 @@ export async function getBrowser(): Promise<Browser> {
     browser = await launchBrowser();
   }
   return browser;
+}
+
+/**
+ * Acquire a page from the pool. Blocks if MAX_CONCURRENT_PAGES are in use.
+ * Each page gets its own viewport and deviceScaleFactor.
+ */
+export async function acquirePage(viewport: ViewportSize): Promise<Page> {
+  if (activePages >= MAX_CONCURRENT_PAGES) {
+    await new Promise<void>(resolve => pageQueue.push(resolve));
+  }
+  activePages++;
+  const b = await getBrowser();
+  return b.newPage({ viewport, deviceScaleFactor: 2 });
+}
+
+/**
+ * Release a page back to the pool (closes it).
+ */
+export async function releasePage(pg: Page): Promise<void> {
+  activePages--;
+  if (!pg.isClosed()) await pg.close();
+  const next = pageQueue.shift();
+  if (next) next();
 }
 
 export interface ScreenshotOptions {
@@ -116,71 +142,61 @@ async function launchBrowser(): Promise<Browser> {
 }
 
 /**
- * Get or create a Playwright page with the given viewport.
- * Reuses the browser instance across calls for performance.
- */
-async function getPage(viewport: ViewportSize): Promise<Page> {
-  if (!browser) {
-    browser = await launchBrowser();
-  }
-  if (!page) {
-    page = await browser.newPage({
-      viewport,
-      deviceScaleFactor: 2,
-    });
-  } else {
-    await page.setViewportSize(viewport);
-  }
-  return page;
-}
-
-/**
  * Capture a screenshot using Playwright.
- * Returns the screenshot as a Buffer.
+ * Acquires a page from the pool, captures, and releases.
+ * Safe to call concurrently — pool limits parallelism.
  */
 export async function captureScreenshot(
   url: string,
   options: ScreenshotOptions
 ): Promise<Buffer> {
-  const pg = await getPage(options.viewport);
+  const pg = await acquirePage(options.viewport);
 
-  await pg.goto(url, { waitUntil: 'networkidle' });
+  try {
+    await pg.goto(url, { waitUntil: 'domcontentloaded' });
+    await Promise.race([
+      pg.waitForLoadState('networkidle'),
+      pg.waitForTimeout(3000),
+    ]);
 
-  // Disable animations and transitions for consistent captures
-  await pg.addStyleTag({
-    content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }',
-  });
+    // Disable animations and transitions for consistent captures
+    await pg.addStyleTag({
+      content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }',
+    });
 
-  // Wait for web fonts to finish loading
-  await pg.evaluate(() => document.fonts.ready);
+    // Wait for web fonts (capped at 2s to avoid slow CDN hangs)
+    await Promise.race([
+      pg.evaluate(() => document.fonts.ready),
+      pg.waitForTimeout(2000),
+    ]);
 
-  // If selector specified, scroll it into view
-  if (options.selector) {
-    const locator = pg.locator(options.selector);
-    const count = await locator.count();
-    if (count === 0) {
-      throw new Error(`Element not found: ${options.selector}`);
+    // If selector specified, scroll it into view
+    if (options.selector) {
+      const locator = pg.locator(options.selector);
+      const count = await locator.count();
+      if (count === 0) {
+        throw new Error(`Element not found: ${options.selector}`);
+      }
+      await locator.first().scrollIntoViewIfNeeded();
     }
-    await locator.first().scrollIntoViewIfNeeded();
-    await pg.waitForTimeout(200);
-  }
 
-  const screenshot = await pg.screenshot({ fullPage: options.fullPage ?? false });
-  return Buffer.from(screenshot);
+    const screenshot = await pg.screenshot({ fullPage: options.fullPage ?? false });
+    return Buffer.from(screenshot);
+  } finally {
+    await releasePage(pg);
+  }
 }
 
 /**
  * Close the browser session and clean up resources.
  */
 export async function closeBrowser(): Promise<void> {
-  if (page) {
-    await page.close();
-    page = null;
-  }
   if (browser) {
     await browser.close();
     browser = null;
   }
+  activePages = 0;
+  pageQueue.length = 0;
 }
 
 /**
