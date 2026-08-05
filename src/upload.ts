@@ -38,6 +38,17 @@ export async function uploadImage(
 }
 
 async function upload0x0st(image: Buffer, filename: string, url: string): Promise<string> {
+  // 0x0.st is a public, unauthenticated file host (files retained ~365 days,
+  // anyone with the URL can view them). Screenshots can contain sensitive
+  // data, so this path refuses to run without explicit opt-in.
+  if (process.env.PREPOST_ALLOW_PUBLIC_UPLOAD !== '1') {
+    throw new Error(
+      '0x0.st is a PUBLIC, unauthenticated file host (files retained ~365 days).\n' +
+      'Use GitHub storage instead (the default git-native path, works on private repos).\n' +
+      'If nothing sensitive is on screen, opt in explicitly with PREPOST_ALLOW_PUBLIC_UPLOAD=1'
+    );
+  }
+
   const formData = new FormData();
   formData.append('file', new Blob([image]), filename);
 
@@ -150,10 +161,13 @@ export function uploadGitNative(
  * Returns the full 40-char commit SHA.
  */
 export function commitAndPushScreenshots(): string {
-  execSync('git commit -m "chore: add pre/post screenshots"');
-  execSync('git push origin HEAD');
+  const repoRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
+  // Pathspec-scoped commit: only .pre-post/ goes in, never the rest of the
+  // user's staged index.
+  execSync('git commit -m "chore: add pre/post screenshots" -- .pre-post', { cwd: repoRoot });
+  execSync('git push origin HEAD', { cwd: repoRoot });
 
-  const sha = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  const sha = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: repoRoot }).trim();
   if (!/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error(`Failed to get commit SHA after push (got: "${sha}")`);
   }

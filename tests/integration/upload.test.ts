@@ -44,6 +44,22 @@ describe('uploadImage', () => {
   });
 
   describe('0x0.st upload', () => {
+    beforeEach(() => {
+      process.env.PREPOST_ALLOW_PUBLIC_UPLOAD = '1';
+    });
+
+    afterEach(() => {
+      delete process.env.PREPOST_ALLOW_PUBLIC_UPLOAD;
+    });
+
+    it('refuses to upload without PREPOST_ALLOW_PUBLIC_UPLOAD=1', async () => {
+      delete process.env.PREPOST_ALLOW_PUBLIC_UPLOAD;
+
+      const image = createMinimalPng();
+      await expect(uploadImage(image, 'test.png')).rejects.toThrow('PUBLIC');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('uploads to 0x0.st by default', async () => {
       mockFetch.mockResolvedValueOnce({
         text: async () => 'https://0x0.st/abcd.png',
@@ -218,10 +234,13 @@ describe('uploadBeforeAfter', () => {
     global.fetch = mockFetch;
     mockFetch.mockReset();
     mockExecSync.mockReset();
+    // The 0x0.st tests below opt in to the public-host gate explicitly
+    process.env.PREPOST_ALLOW_PUBLIC_UPLOAD = '1';
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    delete process.env.PREPOST_ALLOW_PUBLIC_UPLOAD;
   });
 
   it('uploads both images in parallel via HTTP when uploadUrl provided', async () => {
@@ -308,9 +327,10 @@ describe('git-native blob+SHA URLs', () => {
       .mockReturnValueOnce(`https://github.com/${ownerRepo}.git\n`)
       .mockReturnValueOnce('')
       // commitAndPushScreenshots
-      .mockReturnValueOnce('')          // git commit
-      .mockReturnValueOnce('')          // git push
-      .mockReturnValueOnce(sha + '\n'); // git rev-parse HEAD
+      .mockReturnValueOnce('/tmp/repo\n') // git rev-parse --show-toplevel
+      .mockReturnValueOnce('')            // git commit
+      .mockReturnValueOnce('')            // git push
+      .mockReturnValueOnce(sha + '\n');   // git rev-parse HEAD
   }
 
   it('produces blob+SHA URLs (works for any repo, public or private)', async () => {
@@ -327,6 +347,21 @@ describe('git-native blob+SHA URLs', () => {
     );
     expect(result.afterUrl).toBe(
       `https://github.com/owner/repo/blob/${sha}/.pre-post/after.png?raw=true`
+    );
+  });
+
+  it('commits with a .pre-post pathspec so other staged work never rides along', async () => {
+    const sha = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    mockGitNativeFlow('owner/repo', sha);
+
+    await uploadBeforeAfter(
+      { image: createMinimalPng(), filename: 'before.png' },
+      { image: createMinimalPng(), filename: 'after.png' },
+    );
+
+    expect(mockExecSync).toHaveBeenCalledWith(
+      'git commit -m "chore: add pre/post screenshots" -- .pre-post',
+      expect.objectContaining({ cwd: '/tmp/repo' })
     );
   });
 
@@ -354,9 +389,10 @@ describe('git-native blob+SHA URLs', () => {
       .mockReturnValueOnce('/tmp/repo\n')
       .mockReturnValueOnce('git@github.com:org/project.git\n')
       .mockReturnValueOnce('')
-      .mockReturnValueOnce('')
-      .mockReturnValueOnce('')
-      .mockReturnValueOnce(sha + '\n');
+      .mockReturnValueOnce('/tmp/repo\n') // git rev-parse --show-toplevel
+      .mockReturnValueOnce('')            // git commit
+      .mockReturnValueOnce('')            // git push
+      .mockReturnValueOnce(sha + '\n');   // git rev-parse HEAD
 
     const result = await uploadBeforeAfter(
       { image: createMinimalPng(), filename: 'before.png' },
@@ -374,9 +410,10 @@ describe('git-native blob+SHA URLs', () => {
       .mockReturnValueOnce('/tmp/repo\n')
       .mockReturnValueOnce('https://github.com/owner/repo.git\n')
       .mockReturnValueOnce('')
-      .mockReturnValueOnce('')   // git commit
-      .mockReturnValueOnce('')   // git push
-      .mockReturnValueOnce('\n'); // empty SHA
+      .mockReturnValueOnce('/tmp/repo\n') // git rev-parse --show-toplevel
+      .mockReturnValueOnce('')            // git commit
+      .mockReturnValueOnce('')            // git push
+      .mockReturnValueOnce('\n');         // empty SHA
 
     await expect(
       uploadBeforeAfter(

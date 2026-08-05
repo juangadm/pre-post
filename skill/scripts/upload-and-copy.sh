@@ -6,7 +6,10 @@
 #   --markdown    Generate PR markdown table and copy to clipboard
 #
 # Environment:
-#   IMAGE_ADAPTER    Storage adapter to use (default: git-native)
+#   IMAGE_ADAPTER    Storage adapter to use (default: git-native — GitHub storage;
+#                    auto-falls back to 0x0st ONLY when no git repo/origin remote
+#                    exists, and 0x0st additionally requires
+#                    PREPOST_ALLOW_PUBLIC_UPLOAD=1 since it is a public host)
 #                    Available: git-native, 0x0st, blob
 #
 # Adapter-specific environment variables:
@@ -65,8 +68,18 @@ copy_to_clipboard() {
 
 ADAPTERS_DIR="$SCRIPT_DIR/adapters"
 
-# Default adapter
-IMAGE_ADAPTER="${IMAGE_ADAPTER:-git-native}"
+# Default adapter: GitHub storage (git-native). Fall back to 0x0.st ONLY when
+# GitHub isn't usable here (not a git repo, or no origin remote) — and the
+# 0x0st adapter itself still requires PREPOST_ALLOW_PUBLIC_UPLOAD=1.
+if [[ -z "${IMAGE_ADAPTER:-}" ]]; then
+    if git rev-parse --is-inside-work-tree &>/dev/null && git remote get-url origin &>/dev/null; then
+        IMAGE_ADAPTER="git-native"
+    else
+        echo "Warning: no git repo with an 'origin' remote — GitHub storage unavailable." >&2
+        echo "Falling back to 0x0.st, a PUBLIC file host (requires PREPOST_ALLOW_PUBLIC_UPLOAD=1)." >&2
+        IMAGE_ADAPTER="0x0st"
+    fi
+fi
 
 BEFORE_FILE="$1"
 AFTER_FILE="$2"
@@ -141,7 +154,10 @@ AFTER_RESULT=$(upload_file "$AFTER_FILE")
 # Blob URLs work for both public and private repos (same-origin on GitHub).
 if [[ "$IMAGE_ADAPTER" == "git-native" ]]; then
     echo "Committing and pushing screenshots..." >&2
-    git commit -m "chore: add pre/post screenshots"
+    REPO_ROOT=$(git rev-parse --show-toplevel)
+    # Pathspec-scoped commit: only .pre-post/ goes in, never the rest of the
+    # user's staged index.
+    git -C "$REPO_ROOT" commit -m "chore: add pre/post screenshots" -- .pre-post
     git push origin HEAD
 
     SHA=$(git rev-parse HEAD)

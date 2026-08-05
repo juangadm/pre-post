@@ -24,6 +24,17 @@ if [[ ! -f "$FILE" ]]; then
     exit 1
 fi
 
+# Public-host guard: 0x0.st is an unauthenticated public file host (files
+# retained ~365 days, URL accessible to anyone). Screenshots can contain
+# sensitive data, so this adapter refuses to run without explicit opt-in.
+if [[ "${PREPOST_ALLOW_PUBLIC_UPLOAD:-}" != "1" ]]; then
+    echo "Error: 0x0.st is a PUBLIC, unauthenticated file host (files retained ~365 days)." >&2
+    echo "Use GitHub storage instead (default git-native adapter, works on private repos)." >&2
+    echo "If you have no GitHub account and the screenshots contain nothing sensitive," >&2
+    echo "opt in explicitly with: PREPOST_ALLOW_PUBLIC_UPLOAD=1" >&2
+    exit 1
+fi
+
 # Upload to 0x0.st - returns the URL directly
 URL=$(curl -s -A "before-after-cli/1.0" -F "file=@$FILE" https://0x0.st)
 

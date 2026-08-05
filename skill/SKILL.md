@@ -5,9 +5,6 @@ allowed-tools:
   - Bash(npx pre-post *)
   - Bash(pre-post *)
   - Bash(*/upload-and-copy.sh *)
-  - Bash(git add *)
-  - Bash(git commit -m *)
-  - Bash(git push origin *)
   - Bash(curl -s -o /dev/null -w *)
   - Bash(gh pr view *)
   - Bash(gh pr edit *)
@@ -222,17 +219,25 @@ npx pre-post compare --before-base URL --after-base URL
 
 ## Image Upload
 
-Screenshots are committed to `.pre-post/` on the current PR branch and served via
-GitHub blob URLs pinned to the commit SHA. This works for **both public and private
-repos** — blob URLs are same-origin on GitHub, so the markdown renderer resolves them
-with the viewer's authentication.
+**Policy: GitHub storage first, always.** Screenshots are committed to `.pre-post/`
+on the current PR branch and served via GitHub blob URLs pinned to the commit SHA.
+This works for **both public and private repos** — blob URLs are same-origin on
+GitHub, so the markdown renderer resolves them with the viewer's authentication.
+The commit is pathspec-scoped to `.pre-post/` only — it never picks up other
+staged changes from the user's index.
+
+0x0.st is a **public, unauthenticated file host** (files retained ~365 days,
+anyone with the URL can view them). It exists only as a fallback for users with
+no GitHub repo/remote, and the adapter refuses to run unless
+`PREPOST_ALLOW_PUBLIC_UPLOAD=1` is set. Never use it when screenshots could
+contain private, customer, or on-prem data.
 
 ```bash
 # Default (git-native — commits to PR branch, works on any repo)
 ./scripts/upload-and-copy.sh before.png after.png --markdown
 
-# Explicit override for external storage:
-IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
+# Fallback ONLY when no GitHub repo/remote exists AND screenshots are non-sensitive:
+PREPOST_ALLOW_PUBLIC_UPLOAD=1 IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
 ```
 
 ## Error Reference
@@ -245,3 +250,4 @@ IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
 | Element not found | Verify selector exists on page |
 | No changed files detected | Specify routes manually with `--routes` |
 | Could not determine commit SHA | Ensure `git push` succeeded and HEAD is valid |
+| `0x0.st is a PUBLIC ... file host` | Use GitHub storage (default). Only set `PREPOST_ALLOW_PUBLIC_UPLOAD=1` if there is no GitHub remote and nothing sensitive is on screen |
