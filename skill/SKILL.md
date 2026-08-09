@@ -126,11 +126,9 @@ mkdir -p /tmp/pre-post
 ./scripts/upload-and-copy.sh /tmp/pre-post/before.png /tmp/pre-post/after.png --markdown
 ```
 
-Or use the CLI's built-in upload:
-
-```bash
-npx pre-post <before.png> <after.png> --markdown
-```
+**Always upload via the bundled `upload-and-copy.sh` above — never `npx pre-post --markdown`.**
+The bundled script enforces GitHub storage, a pathspec-scoped commit, and the gated
+public-host fallback; the published npm CLI may lag behind these guarantees.
 
 For multi-route PRs, generate this format:
 
@@ -192,8 +190,8 @@ pre-post compare --before-base URL --after-base URL --routes /dashboard,/setting
 # Responsive (desktop + mobile)
 pre-post compare --before-base URL --after-base URL --responsive
 
-# From existing images
-pre-post before.png after.png --markdown
+# From existing images — use the bundled script, not the CLI (see Image Upload)
+./scripts/upload-and-copy.sh before.png after.png --markdown
 
 # Via npx
 npx pre-post detect

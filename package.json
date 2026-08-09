@@ -42,6 +42,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.pkg.json",
+    "prepare": "npm run build",
     "prepublishOnly": "rm -rf dist && npm run build && npm run test:unit",
     "test": "vitest run",
     "test:watch": "vitest",
