@@ -68,7 +68,7 @@ export interface PullRequestRef {
   number: number;
   html_url: string;
   head: { sha: string; ref: string };
-  base: { ref: string };
+  base: { ref: string; sha: string };
   title: string;
 }
 
