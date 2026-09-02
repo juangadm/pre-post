@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ARTIFACT_KINDS, ArtifactSet, Framework, PrRunResult } from '../types.js';
-import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
+import { CONFIG_FILENAME, loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
@@ -17,6 +17,7 @@ import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { readPackage } from '../pkg.js';
 import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
+import { deploymentUrlForSha } from '../deployments.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -37,6 +38,21 @@ export interface PrCommandOptions extends Partial<Settings> {
   log?: (msg: string) => void;
 }
 
+/** Where a base URL came from, so failures can name the thing to change. */
+export type UrlSource = 'flag' | 'config' | 'deployment' | 'dev-server' | 'homepage';
+
+const SOURCE_FIX: Record<UrlSource, string> = {
+  flag: 'Check the URL you passed.',
+  config: `Check "before" in ${CONFIG_FILENAME}.`,
+  deployment: 'That URL came from the deployment GitHub has for this commit — the deploy may have been removed, or your network may not reach it.',
+  'dev-server': 'Is the dev server still running?',
+  homepage: 'That URL came from "homepage" in package.json. Pass --before to override it.',
+};
+
+function unreachable(side: string, url: string, source: UrlSource): string {
+  return `Cannot reach ${url} (${side}). ${SOURCE_FIX[source]}`;
+}
+
 function packageHomepage(root: string): string | undefined {
   const hp = readPackage(root)?.homepage;
   return typeof hp === 'string' && /^https?:\/\//.test(hp) && !/github\.com/.test(hp) ? hp : undefined;
@@ -55,8 +71,61 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const ownerRepo = resolveOwnerRepo(root);
   const branch = currentBranch(root);
 
-  // --- Production URL --------------------------------------------------------
-  const beforeRaw = opts.before || config.before || packageHomepage(root);
+  // --- GitHub access (checked before any time is spent) -----------------------
+  const gh = opts.dryRun ? null : new GitHub(requireToken());
+
+  // --- Start the slow, independent things now; they overlap route detection ----
+  const browserReady = ensureBrowser();
+  const prLookup = gh
+    ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
+    : Promise.resolve(null);
+  // Local detection runs regardless: it is cheap, and it is the fallback when
+  // the PR has no preview deployment.
+  const devServer = opts.after || config.after ? Promise.resolve(opts.after || config.after!) : detectDevServer();
+
+  const pr = await prLookup;
+
+  // --- "Post": the branch under review ----------------------------------------
+  // A preview deployment is preferred over a local dev server so that anyone on
+  // the team can screenshot a PR without checking the branch out.
+  let after: string;
+  let afterSource: UrlSource;
+  const afterOverride = opts.after || config.after;
+  const preview = !afterOverride && gh && pr ? await deploymentUrlForSha(gh, ownerRepo, pr.head.sha, { production: false }) : null;
+  if (afterOverride) {
+    after = normalizeUrl(afterOverride);
+    afterSource = opts.after ? 'flag' : 'config';
+  } else if (preview) {
+    after = normalizeUrl(preview.url);
+    afterSource = 'deployment';
+    log(`Post: ${after} (${preview.environment} deployment for ${pr!.head.sha.slice(0, 7)})`);
+  } else {
+    const local = await devServer;
+    if (!local) {
+      throw new NeedsHumanError(
+        'No preview deployment for this commit and no dev server on the usual ports (3000, 5173, ...). Start the dev server (e.g. npm run dev), then re-run — or pass --after http://localhost:PORT.',
+      );
+    }
+    after = normalizeUrl(local);
+    afterSource = 'dev-server';
+    log(`Post: ${after} (local dev server)`);
+  }
+
+  // --- "Pre": what this branch forked from ------------------------------------
+  let beforeRaw = opts.before || config.before;
+  let beforeSource: UrlSource = opts.before ? 'flag' : beforeRaw ? 'config' : 'flag';
+  if (!beforeRaw && gh && pr) {
+    const baseline = await deploymentUrlForSha(gh, ownerRepo, pr.base.sha, { production: true });
+    if (baseline) {
+      beforeRaw = baseline.url;
+      beforeSource = 'deployment';
+      log(`Pre: ${beforeRaw} (${baseline.environment} deployment for ${pr.base.sha.slice(0, 7)})`);
+    }
+  }
+  if (!beforeRaw) {
+    beforeRaw = packageHomepage(root);
+    if (beforeRaw) beforeSource = 'homepage';
+  }
   if (!beforeRaw) {
     throw new NeedsHumanError(
       'No production URL known for the "before" state. Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).',
@@ -67,16 +136,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     updateConfig(root, { before });
     log('Saved production URL to .pre-post.json');
   }
-
-  // --- GitHub access (checked before any time is spent) -----------------------
-  const gh = opts.dryRun ? null : new GitHub(requireToken());
-
-  // --- Start the slow, independent things now; they overlap route detection ----
-  const browserReady = ensureBrowser();
-  const prLookup = gh
-    ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
-    : Promise.resolve(null);
-  const devServer = opts.after || config.after ? Promise.resolve(opts.after || config.after!) : detectDevServer();
 
   // Headers alone are enough to probe production; cookies need the final URL list.
   const headers = resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [before] })?.headers ?? {};
@@ -100,20 +159,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     }
   }
 
-  // --- Dev server and reachability --------------------------------------------
-  const afterRaw = await devServer;
-  if (!afterRaw) {
-    throw new NeedsHumanError(
-      'No dev server found on the usual ports (3000, 5173, ...). Start it (e.g. npm run dev), then re-run — or pass --after http://localhost:PORT.',
-    );
-  }
-  const after = normalizeUrl(afterRaw);
-  if (!opts.after && !config.after) log(`Dev server: ${after}`);
-
+  // --- Reachability --------------------------------------------------------------
   const [probe, afterProbe] = await Promise.all([beforeProbe, probeUrl(after, headers)]);
-  if (probe.status === null) throw new NeedsHumanError(`Cannot reach ${before}. Check the URL (or your VPN) and re-run.`);
+  if (probe.status === null) throw new NeedsHumanError(unreachable('Pre', before, beforeSource));
   if (probe.status === 401 || probe.status === 403) throw new NeedsHumanError(authHint({ url: before, vercel: probe.vercel }));
-  if (afterProbe.status === null) throw new NeedsHumanError(`Cannot reach ${after}. Is the dev server running?`);
+  if (afterProbe.status === null) throw new NeedsHumanError(unreachable('Post', after, afterSource));
+  if (afterProbe.status === 401 || afterProbe.status === 403) throw new NeedsHumanError(authHint({ url: after, vercel: afterProbe.vercel }));
 
   const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
 
@@ -140,7 +191,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   }
 
   // --- Publish -------------------------------------------------------------------
-  const pr = await prLookup;
   const changed = outcomes.filter(o => o.status === 'changed' && o.files);
   if (gh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
