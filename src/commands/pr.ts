@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ArtifactSet, Framework, PrRunResult } from '../types.js';
+import { ArtifactSet, Framework, PrePostConfig, PrRunResult } from '../types.js';
 import { CONFIG_FILENAME, loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
@@ -17,7 +17,7 @@ import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { readPackage } from '../pkg.js';
 import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
-import { deploymentUrlForSha } from '../deployments.js';
+import { deploymentUrlForSha, previewUrlFromComments } from '../deployments.js';
 import { LocalBaseline, serveBaseCommit } from '../baseline.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
@@ -55,6 +55,12 @@ const SOURCE_FIX: Record<UrlSource, string> = {
 
 function unreachable(side: string, url: string, source: UrlSource): string {
   return `Cannot reach ${url} (${side}). ${SOURCE_FIX[source]}`;
+}
+
+/** Where the app's package.json lives, relative to the repo root. */
+function detectAppPrefix(root: string, config: PrePostConfig, opts: PrCommandOptions): string | undefined {
+  const { appRoot } = detectRoutesForRepo({ cwd: root, config, maxRoutes: opts.maxRoutes, framework: opts.framework });
+  return path.relative(root, appRoot) || undefined;
 }
 
 /**
@@ -104,7 +110,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   let after: string;
   let afterSource: UrlSource;
   const afterOverride = opts.after || config.after;
-  const preview = !afterOverride && gh && pr ? await deploymentUrlForSha(gh, ownerRepo, pr.head.sha, { production: false }) : null;
+  const preview = !afterOverride && gh && pr
+    ? (await deploymentUrlForSha(gh, ownerRepo, pr.head.sha, { production: false }))
+      ?? (await previewUrlFromComments(gh, ownerRepo, pr.number, { appPrefix: detectAppPrefix(root, config, opts) }))
+    : null;
   if (afterOverride) {
     after = normalizeUrl(afterOverride);
     afterSource = opts.after ? 'flag' : 'config';
@@ -157,8 +166,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
   const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
-  // Where the app's package.json lives — the local baseline needs it to install and boot.
-  const appPrefix = path.relative(root, detection.appRoot) || undefined;
   let routes: string[];
   let skippedDynamic: string[] = [];
   if (opts.routes?.length) {
@@ -182,7 +189,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // inside a sandbox or behind an egress allowlist.
   if (probe.status === null && pr && opts.localBaseline !== false) {
     log(`Cannot reach ${before}; rebuilding the baseline from the base commit instead.`);
-    baseline = await serveBaseCommit({ repoRoot: root, sha: pr.base.sha, appPrefix, log });
+    baseline = await serveBaseCommit({ repoRoot: root, sha: pr.base.sha, appPrefix: detectAppPrefix(root, config, opts), log });
     if (baseline) {
       before = normalizeUrl(baseline.url);
       beforeSource = 'local-base';

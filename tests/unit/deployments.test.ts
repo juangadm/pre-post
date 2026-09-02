@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deploymentUrlForSha } from '../../src/deployments';
+import { deploymentUrlForSha, previewUrlFromComments } from '../../src/deployments';
 import { GitHub } from '../../src/github';
 
 /** A GitHub client whose responses are canned per path fragment. */
@@ -80,5 +80,36 @@ describe('deploymentUrlForSha', () => {
     );
     expect(await deploymentUrlForSha(gh, 'o/r', 'abc', { production: false })).toBeNull();
     expect(calls.filter(c => c.includes('/statuses'))).toHaveLength(5);
+  });
+});
+
+describe('previewUrlFromComments', () => {
+  // The exact comment vercel[bot] posted on juangadm/pre-post#16.
+  const VERCEL_BODY = "[vc]: #6eUMzLg0RZ5WiZtXBX6sLZ/l68B2IzvlTuw/Js2hqiI=:eyJpc01vbm9yZXBvIjp0cnVlLCJ0eXBlIjoiZ2l0aHViIiwicHJvamVjdHMiOlt7Im5hbWUiOiJwcmVwb3N0IiwicHJvamVjdElkIjoicHJqX3dyYkk1SUlvWVJwSGk4SnF3cUpmSnBNZk1HTUYiLCJyb290RGlyZWN0b3J5Ijoic2l0ZSIsImluc3BlY3RvclVybCI6Imh0dHBzOi8vdmVyY2VsLmNvbS9qdWFuZ2FicmllbGRlbGdhZG8tNjY4MXMtcHJvamVjdHMvcHJlcG9zdC84bkJTd1FrYVRiUDVmVVduWWlVTWtiVG5vcUpVIiwicHJldmlld1VybCI6InByZXBvc3QtZ2l0LWNsYXVkZS1wcmUtOWU3ZDY5LWp1YW5nYWJyaWVsZGVsZ2Fkby02Njgxcy1wcm9qZWN0cy52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIiwibGl2ZUZlZWRiYWNrIjp7InJlc29sdmVkIjowLCJ1bnJlc29sdmVkIjowLCJ0b3RhbCI6MCwibGluayI6InByZXBvc3QtZ2l0LWNsYXVkZS1wcmUtOWU3ZDY5LWp1YW5nYWJyaWVsZGVsZ2Fkby02Njgxcy1wcm9qZWN0cy52ZXJjZWwuYXBwIn19XX0=\nThe latest updates on your projects.";
+  const ghWith = (comments: unknown) => fakeGh({ '/issues/': comments });
+
+  it('reads the preview URL out of the real Vercel comment', async () => {
+    const found = await previewUrlFromComments(ghWith([{ body: VERCEL_BODY, user: { login: 'vercel[bot]' } }]), 'o/r', 16, { appPrefix: 'site' });
+    expect(found?.url).toBe('https://prepost-git-claude-pre-9e7d69-juangabrieldelgado-6681s-projects.vercel.app');
+  });
+
+  it('ignores an identical comment from a non-bot author', async () => {
+    const spoofed = [{ body: VERCEL_BODY, user: { login: 'passer-by' } }];
+    expect(await previewUrlFromComments(ghWith(spoofed), 'o/r', 16, { appPrefix: 'site' })).toBeNull();
+  });
+
+  it('refuses a project whose root directory is a different app', async () => {
+    const comments = [{ body: VERCEL_BODY, user: { login: 'vercel[bot]' } }];
+    expect(await previewUrlFromComments(ghWith(comments), 'o/r', 16, { appPrefix: 'docs' })).toBeNull();
+  });
+
+  it('falls back to a named Deploy Preview link', async () => {
+    const comments = [{ body: 'Deploy log · [Deploy Preview](https://deploy-preview-3--site.netlify.app) ready', user: { login: 'netlify[bot]' } }];
+    const found = await previewUrlFromComments(ghWith(comments), 'o/r', 3);
+    expect(found?.url).toBe('https://deploy-preview-3--site.netlify.app');
+  });
+
+  it('returns null when no bot has commented', async () => {
+    expect(await previewUrlFromComments(ghWith([]), 'o/r', 16)).toBeNull();
   });
 });

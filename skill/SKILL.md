@@ -15,8 +15,9 @@ posts or updates a single comment on the open PR. The human reviews on GitHub.
 
 It picks both sides itself:
 
-- **Post** (this branch) — the PR's preview deployment when one exists (Vercel, Cloudflare
-  Pages, Netlify and Render all report these to GitHub), otherwise a local dev server.
+- **Post** (this branch) — the PR's preview deployment when one exists, read from the GitHub
+  Deployments API or, for providers that only comment (Vercel's GitHub app does), from the
+  deployment bot's PR comment. Otherwise a local dev server.
 - **Pre** (the baseline) — `before` from `.pre-post.json`, otherwise the production
   deployment for the commit this branch forked from, otherwise that base commit itself,
   checked out into a throwaway worktree and served locally.

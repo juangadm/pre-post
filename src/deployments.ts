@@ -8,6 +8,14 @@
 
 import { GitHub } from './github.js';
 
+/**
+ * Bots whose PR comments may be read for a preview URL. A comment is only
+ * trusted when GitHub reports its author as one of these apps: anyone can post
+ * a comment that looks like Vercel's, and following it would point a capture at
+ * a URL a stranger chose.
+ */
+const TRUSTED_BOTS = new Set(['vercel[bot]', 'netlify[bot]']);
+
 interface Deployment {
   id: number;
   environment: string;
@@ -70,6 +78,83 @@ export async function deploymentUrlForSha(
     if (!Array.isArray(statuses)) continue;
     const ready = statuses.find(s => s.state === 'success' && s.environment_url);
     if (ready?.environment_url) return { url: ready.environment_url, environment: deployment.environment };
+  }
+  return null;
+}
+
+
+interface IssueComment {
+  body: string | null;
+  user: { login: string; type?: string } | null;
+}
+
+/** Vercel embeds this base64 payload at the top of its PR comment. */
+interface VercelPayload {
+  projects?: Array<{ name?: string; rootDirectory?: string; previewUrl?: string; nextCommitStatus?: string }>;
+}
+
+function decodeVercelPayload(body: string): VercelPayload | null {
+  const marker = /^\[vc\]: #[^:\n]+:(\S+)/m.exec(body);
+  if (!marker) return null;
+  try {
+    const json = JSON.parse(Buffer.from(marker[1], 'base64').toString('utf8'));
+    return json && typeof json === 'object' ? (json as VercelPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+const withScheme = (url: string): string => (/^https?:\/\//.test(url) ? url : `https://${url}`);
+
+/**
+ * The preview URL a deployment bot posted on the PR.
+ *
+ * Not every provider records a GitHub Deployment — Vercel's GitHub app reports
+ * a commit status and a comment, and the commit status only links to its own
+ * dashboard. The comment is where the deployed URL actually appears, so this is
+ * the fallback when `deploymentUrlForSha` finds nothing.
+ *
+ * `appPrefix` disambiguates a monorepo comment listing several projects, by
+ * matching the project whose root directory is the app being captured.
+ */
+export async function previewUrlFromComments(
+  gh: GitHub,
+  ownerRepo: string,
+  prNumber: number,
+  opts: { appPrefix?: string } = {},
+): Promise<DeploymentUrl | null> {
+  let comments: IssueComment[];
+  try {
+    comments = await gh.request<IssueComment[]>('GET', `/repos/${ownerRepo}/issues/${prNumber}/comments?per_page=100`);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(comments)) return null;
+
+  // Newest first: a re-run posts an updated URL.
+  for (const comment of [...comments].reverse()) {
+    const body = comment.body ?? '';
+    if (!comment.user || !TRUSTED_BOTS.has(comment.user.login)) continue;
+
+    const payload = decodeVercelPayload(body);
+    const projects = (payload?.projects ?? []).filter(p => p.previewUrl);
+    if (projects.length) {
+      // Only projects that could be the app being captured. A project that
+      // declares a different root directory is a different app, so falling back
+      // to it would screenshot the wrong site.
+      const norm = (dir?: string) => (dir ?? '').replace(/^\.?\//, '').replace(/\/$/, '');
+      const candidates = projects.filter(p => !opts.appPrefix || !p.rootDirectory || norm(p.rootDirectory) === opts.appPrefix);
+      const chosen = candidates.length === 1 ? candidates[0] : undefined;
+      // A build still running has a URL that does not serve the branch yet.
+      if (chosen && (chosen.nextCommitStatus ?? 'DEPLOYED') === 'DEPLOYED') {
+        return { url: withScheme(chosen.previewUrl!), environment: chosen.name ? `Preview (${chosen.name})` : 'Preview' };
+      }
+      continue;
+    }
+
+    // Providers without a structured payload still link the preview by name.
+    const link = /\[(?:Preview|Deploy Preview)\]\((https?:\/\/[^\s)]+)\)/i.exec(body);
+    if (link) return { url: link[1], environment: 'Preview' };
   }
   return null;
 }
