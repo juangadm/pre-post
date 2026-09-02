@@ -167,53 +167,43 @@ export default function Page() {
               <div className="mt-4 space-y-6">
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture responsive screenshots (desktop + mobile)
+                    First run in a repo — the production URL is saved to{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post.json</code>
                   </p>
-                  <Code>pre-post compare --before-base url1 --after-base url2 --responsive</Code>
+                  <Code>pre-post pr --before https://acme.com</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Compare specific routes
+                    Skip detection and name the routes yourself
                   </p>
-                  <Code>pre-post compare --before-base url1 --after-base url2 --routes /dashboard,/settings</Code>
+                  <Code>pre-post pr --routes /pricing,/docs</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture a specific element using a CSS selector
+                    Custom viewports (default is desktop + mobile)
                   </p>
-                  <Code>pre-post url1 url2 &quot;.hero&quot;</Code>
+                  <Code>pre-post pr --viewports desktop,1440x900</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Use different selectors for pre and post
+                    Capture and diff locally without posting anything
                   </p>
-                  <Code>
-                    pre-post url1 url2 &quot;.old&quot; &quot;.new&quot;
-                  </Code>
+                  <Code>pre-post pr --dry-run</Code>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm">Machine-readable output</p>
+                  <Code>pre-post pr --json</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture at mobile (375x812), tablet (768x1024), or custom
-                    viewport
+                    Compare any two URLs, no PR involved
                   </p>
-                  <Code>pre-post url1 url2 --mobile</Code>
-                  <Code>pre-post url1 url2 --size 1920x1080</Code>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm">Capture the entire scrollable page</p>
-                  <Code>pre-post url1 url2 --full</Code>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm">
-                    Output a markdown table for PR descriptions
-                  </p>
-                  <Code>pre-post url1 url2 --markdown</Code>
+                  <Code>pre-post https://acme.com http://localhost:3000 --routes /pricing</Code>
                 </div>
 
                 <div className="space-y-2">
@@ -224,22 +214,31 @@ export default function Page() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-sm">Save to a custom location</p>
-                  <Code>pre-post url1 url2 --output ./screenshots</Code>
+                  <p className="text-sm">
+                    Check which routes this branch touches, or why a run cannot start
+                  </p>
+                  <Code>pre-post detect</Code>
+                  <Code>pre-post doctor</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Override the default upload method
+                    Sign in once to a protected site — the session is reused
                   </p>
-                  <Code>pre-post url1 url2 --upload-url my-s3-endpoint</Code>
+                  <Code>pre-post login https://staging.acme.com</Code>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm">Clean up old screenshots</p>
+                  <Code>pre-post prune --days 90</Code>
                   <p className="text-sm mt-3">
-                    By default, screenshots are committed directly to the PR
-                    branch (under <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post/</code>) and
-                    served via GitHub blob URLs pinned to the commit SHA.
-                    Works for both public and private repos.
-                    Use <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">--upload-url</code> to
-                    override with a custom storage service.
+                    Screenshots are published to a{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">pre-post-assets</code>{" "}
+                    branch in the same repository, one commit per run, and served via
+                    GitHub blob URLs. Nothing is committed to the PR branch, so no CI
+                    runs, and the images render on private repos.{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">prune</code>{" "}
+                    removes images for PRs closed more than 90 days ago.
                   </p>
                 </div>
               </div>
