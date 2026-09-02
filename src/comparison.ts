@@ -14,7 +14,7 @@
 
 import { GitHub } from './github.js';
 import { deploymentUrlForSha, previewUrlFromComments } from './deployments.js';
-import { LocalBaseline, serveBaseCommit } from './baseline.js';
+import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { ProbeResult } from './doctor.js';
 import { normalizeUrl } from './run.js';
 import { PrePostConfig } from './types.js';
@@ -62,6 +62,8 @@ export interface ResolveContext {
   allowLocalBaseline?: boolean;
   /** Injectable for tests; defaults to a real git worktree + dev server. */
   serveBaseline?: typeof serveBaseCommit;
+  /** Injectable for tests; defaults to booting this checkout's dev server. */
+  servePost?: typeof serveWorkingTree;
   log: (msg: string) => void;
 }
 
@@ -154,26 +156,37 @@ export async function resolveComparison(ctx: ResolveContext): Promise<Comparison
 
   // 3. Both sides local — same browser, same machine, no network.
   const local = await ctx.devServer;
-  const after: Side | null = ctx.after
+  let after: Side | null = ctx.after
     ? { url: normalizeUrl(ctx.after), source: 'flag', detail: 'passed with --after' }
     : local
       ? { url: normalizeUrl(local), source: 'dev-server', detail: 'local dev server' }
       : null;
+
+  // Nothing deployed and nothing running is not a reason to stop: this is the
+  // command you hit on the way out of a PR, so it starts the dev server itself
+  // rather than handing back a chore.
+  let postServer: LocalBaseline | null = null;
+  if (!after && ctx.allowLocalBaseline !== false) {
+    const serve = ctx.servePost ?? serveWorkingTree;
+    postServer = await serve({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, log: ctx.log });
+    if (postServer) after = { url: normalizeUrl(postServer.url), source: 'dev-server', detail: 'working tree, served locally' };
+  }
   if (!after) {
     throw new NoPostError();
   }
+  const stopPost = postServer ? postServer.stop : noop;
 
   // A baseline the caller pinned wins even if it is remote; they asked for it.
   const pinned = ctx.before ?? ctx.config.before;
   if (pinned && ctx.before) {
     const before: Side = { url: normalizeUrl(pinned), source: 'flag', detail: 'passed with --before' };
-    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: noop };
+    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: stopPost };
   }
 
   if (ctx.allowLocalBaseline === false) {
     if (!pinned) throw new NoBaselineError();
     const before: Side = { url: normalizeUrl(pinned), source: 'config', detail: 'from .pre-post.json' };
-    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: noop };
+    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: stopPost };
   }
 
   let baseline: LocalBaseline | null = null;
@@ -183,14 +196,15 @@ export async function resolveComparison(ctx: ResolveContext): Promise<Comparison
   }
   if (baseline) {
     const before: Side = { url: normalizeUrl(baseline.url), source: 'local-base', detail: `base commit ${ctx.pr!.base.sha.slice(0, 7)}, served locally` };
-    return { strategy: 'local', before, after, mixed: false, stop: baseline.stop };
+    return { strategy: 'local', before, after, mixed: false, stop: async () => { await baseline!.stop(); await stopPost(); } };
   }
 
   // Nothing local could be built; a pinned URL is better than no comparison.
   if (pinned) {
     const before: Side = { url: normalizeUrl(pinned), source: 'config', detail: 'from .pre-post.json' };
-    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: noop };
+    return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: stopPost };
   }
+  await stopPost();
   throw new NoBaselineError();
 }
 

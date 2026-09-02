@@ -86,8 +86,8 @@ async function waitForServer(url: string, timeoutMs: number, alive: () => boolea
 
 export interface BaselineOptions {
   repoRoot: string;
-  /** Commit to serve — the PR's base. */
-  sha: string;
+  /** Commit to serve. Omit to serve the working tree as it stands. */
+  sha?: string;
   /** Directory holding the app's package.json, relative to the repo root. */
   appPrefix?: string;
   /** Budget for install + boot. */
@@ -103,11 +103,27 @@ export interface BaselineOptions {
  * so every failure path cleans up after itself and stays quiet.
  */
 export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBaseline | null> {
+  return serveLocally(opts);
+}
+
+/**
+ * Boot this repository's dev server without one already running.
+ *
+ * The working tree is what the author is looking at, uncommitted edits and all,
+ * so it is the honest "Post" when nothing is deployed. Serving it needs no
+ * worktree and usually no install, which is why it is cheaper than the base
+ * side it gets paired with.
+ */
+export async function serveWorkingTree(opts: Omit<BaselineOptions, 'sha'>): Promise<LocalBaseline | null> {
+  return serveLocally({ ...opts, sha: undefined });
+}
+
+async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null> {
   const log = opts.log ?? (() => undefined);
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
 
-  const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-base-'));
+  const worktree = opts.sha ? fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-base-')) : opts.repoRoot;
   let child: ChildProcess | null = null;
   let stopped = false;
 
@@ -127,6 +143,7 @@ export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBasel
     if (child && child.exitCode === null) {
       try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
     }
+    if (!opts.sha) return; // the working tree is the user's; never remove it
     try {
       execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: opts.repoRoot, stdio: 'ignore' });
     } catch {
@@ -134,11 +151,13 @@ export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBasel
     }
   };
 
-  try {
-    execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
-  } catch {
-    await cleanup();
-    return null;
+  if (opts.sha) {
+    try {
+      execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
+    } catch {
+      await cleanup();
+      return null;
+    }
   }
 
   const appDir = opts.appPrefix ? path.join(worktree, opts.appPrefix) : worktree;
@@ -149,12 +168,15 @@ export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBasel
   }
 
   const pm = detectPackageManager(appDir, worktree);
-  log(`Pre: building ${opts.sha.slice(0, 7)} locally (${pm.bin} ${script}) ...`);
-  try {
-    execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
-  } catch {
-    await cleanup();
-    return null;
+  const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';
+  log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
+  if (!fs.existsSync(path.join(appDir, 'node_modules'))) {
+    try {
+      execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
+    } catch {
+      await cleanup();
+      return null;
+    }
   }
 
   const port = await freePort();

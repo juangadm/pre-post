@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveComparison, describeComparison, NoPostError, ResolveContext } from '../../src/comparison';
+import { resolveComparison, describeComparison, NoBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
 const PR = { number: 7, head: { sha: 'head1234567' }, base: { sha: 'base7654321' } };
@@ -27,6 +27,7 @@ function ctx(over: Partial<ResolveContext> = {}): ResolveContext {
     devServer: Promise.resolve(null),
     probe: async () => ({ status: 200, vercel: false }),
     serveBaseline: async () => null,
+    servePost: async () => null,
     log: () => undefined,
     ...over,
   };
@@ -112,8 +113,29 @@ describe('resolveComparison', () => {
     expect(c.after.url).toBe('https://fresh-preview.vercel.app');
   });
 
-  it('stops with one instruction when there is no Post at all', async () => {
+  it('starts a dev server itself rather than asking the user to', async () => {
+    const c = await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => undefined }),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => undefined }),
+    }));
+    expect(c.strategy).toBe('local');
+    expect(c.after.url).toBe('http://localhost:42222');
+    expect(c.before.url).toBe('http://localhost:41111');
+    expect(c.mixed).toBe(false);
+  });
+
+  it('stops with one instruction only when it cannot serve the branch at all', async () => {
     await expect(resolveComparison(ctx({ gh: gh({ '/deployments?sha=': [] }) }))).rejects.toBeInstanceOf(NoPostError);
+  });
+
+  it('shuts down a dev server it started when no baseline can be built', async () => {
+    let stopped = false;
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => { stopped = true; } }),
+    }))).rejects.toBeInstanceOf(NoBaselineError);
+    expect(stopped).toBe(true);
   });
 
   it('keeps a pinned --before even against a local Post, and says it is mixed', async () => {

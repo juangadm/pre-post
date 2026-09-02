@@ -17,13 +17,19 @@ It picks both sides itself:
 
 - **Post** (this branch) — the PR's preview deployment when one exists, read from the GitHub
   Deployments API or, for providers that only comment (Vercel's GitHub app does), from the
-  deployment bot's PR comment. Otherwise a local dev server.
+  deployment bot's PR comment. Otherwise a dev server: one already running, or one it starts
+  and stops itself.
 - **Pre** (the baseline) — `before` from `.pre-post.json`, otherwise the production
   deployment for the commit this branch forked from, otherwise that base commit itself,
   checked out into a throwaway worktree and served locally.
 
+Both sides always come from the same kind of environment. Pairing a deployment against a
+dev server would compare different builds — a dev server renders Next.js's dev badge that
+production never shows — so a diff would carry changes the branch never made.
+
 So on a PR with a preview deployment, no dev server and no checkout are needed — anyone on
-the team can run it against anyone's PR.
+the team can run it against anyone's PR. With nothing deployed and nothing running, it
+serves both sides itself.
 
 The last baseline needs no network at all, so the tool still works inside a sandbox, a CI
 container, or behind an egress allowlist where no deployment URL is reachable. It also
@@ -53,8 +59,8 @@ a `<details>`. That pairing is the comparison; there is no diff overlay and no p
 
 - Run the command once. Do not open, read, or describe the screenshot files; the PR
   comment is the deliverable. Report the summary the command prints, plus the comment link.
-- Do not switch branches or use a browser tool yourself. Do not start a dev server unless
-  the command asks for one — with a preview deployment it does not need it.
+- Do not switch branches, start dev servers, or use a browser tool yourself. The command
+  handles all three.
 - Exit code 3 means a human must do one thing (log in, start the dev server, pass
   `--before`). Relay that one sentence verbatim and stop.
 - Do not use `--dry-run` unless the user asks to preview without posting.
