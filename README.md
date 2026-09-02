@@ -1,9 +1,25 @@
 # pre-post
 
 Before/after screenshots for pull requests. One command detects the routes your branch
-changed, captures them on production ("Pre") and on your dev server ("Post"), pixel-diffs
-them, uploads the images to GitHub, and posts a single comment on the PR that a reviewer
-can judge at a glance.
+changed, captures each one before and after, uploads the images to GitHub, and puts them at
+the top of the PR description where a reviewer can judge them at a glance.
+
+It works out both sides itself, cheapest option first:
+
+| | Pre (the baseline) | Post (this branch) |
+|---|---|---|
+| 1 | `--before` | `--after` |
+| 2 | `before` in `.pre-post.json` | the PR's preview deployment |
+| 3 | the production deployment for the base commit | a local dev server |
+| 4 | the base commit, served locally | |
+
+Deployments come from the GitHub Deployments API, so Vercel, Cloudflare Pages, Netlify and
+Render all work with no extra token and nothing to configure.
+
+The last baseline needs no network at all: it checks the base commit into a throwaway
+worktree and boots its dev script. That keeps pre-post working inside a sandboxed agent
+container, a CI job, or behind an egress allowlist — and it compares against exactly what
+the branch forked from, rendered in the same browser as the Post side.
 
 > Originally forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by James Clements / Vercel Labs.
 
@@ -66,7 +82,8 @@ Then say `/pre-post` after making UI changes.
 
 ```bash
 pre-post pr                                  # everything, on the current branch's PR
-pre-post pr --before https://acme.com        # first run in a repo (saved to .pre-post.json)
+pre-post pr --before https://acme.com        # pin the baseline (saved to .pre-post.json)
+pre-post pr --no-local-baseline              # never build the base commit locally
 pre-post pr --routes /pricing,/docs          # explicit routes
 pre-post pr --viewports desktop,1440x900     # custom viewports
 pre-post pr --dry-run                        # capture + diff locally, post nothing
@@ -82,6 +99,10 @@ pre-post doctor                              # browser, token, dev server, confi
 
 When something needs a human, the CLI exits with code 3 and one sentence saying what to do
 (log in, start the dev server, pass `--before`). Re-running picks up where it left off.
+
+Results go into a delimited block at the top of the PR description, which re-runs replace in
+place, leaving your own text untouched. If the PR cannot be edited — a fork, a read-only
+token — it falls back to a single sticky comment.
 
 ## Configuration
 
@@ -110,7 +131,7 @@ Environment:
 | Variable | Purpose |
 |---|---|
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (default: `gh auth token`) |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on the production URL |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on preview and production URLs |
 | `PRE_POST_CONCURRENCY` | Parallel pages (default 6) |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use a specific Chromium binary |
 | `GH_REPO` | `owner/repo` when the remote URL cannot be parsed |

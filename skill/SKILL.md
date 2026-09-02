@@ -9,10 +9,32 @@ allowed-tools:
 
 # pre-post
 
-One command does everything: detects the routes this branch changed, screenshots them on
-production ("Pre") and on the local dev server ("Post") at desktop and mobile, pixel-diffs
-them, uploads the images to a `pre-post-assets` branch, and posts or updates a single
-comment on the open PR. The human reviews on GitHub.
+One command does everything: detects the routes this branch changed, screenshots them at
+desktop and mobile, pixel-diffs them, uploads the images to a `pre-post-assets` branch, and
+posts or updates a single comment on the open PR. The human reviews on GitHub.
+
+It picks both sides itself:
+
+- **Post** (this branch) — the PR's preview deployment when one exists, read from the GitHub
+  Deployments API or, for providers that only comment (Vercel's GitHub app does), from the
+  deployment bot's PR comment. Otherwise a dev server: one already running, or one it starts
+  and stops itself.
+- **Pre** (the baseline) — `before` from `.pre-post.json`, otherwise the production
+  deployment for the commit this branch forked from, otherwise that base commit itself,
+  checked out into a throwaway worktree and served locally.
+
+Both sides always come from the same kind of environment. Pairing a deployment against a
+dev server would compare different builds — a dev server renders Next.js's dev badge that
+production never shows — so a diff would carry changes the branch never made.
+
+So on a PR with a preview deployment, no dev server and no checkout are needed — anyone on
+the team can run it against anyone's PR. With nothing deployed and nothing running, it
+serves both sides itself.
+
+The last baseline needs no network at all, so the tool still works inside a sandbox, a CI
+container, or behind an egress allowlist where no deployment URL is reachable. It also
+compares against exactly what the branch forked from, rendered in the same environment as
+the Post side. Pass `--no-local-baseline` to turn it off.
 
 ## Run
 
@@ -20,14 +42,25 @@ comment on the open PR. The human reviews on GitHub.
 npx -y @juangadm/pre-post@latest pr
 ```
 
-Add `--before https://production-url` the first time in a repo (it is saved to
-`.pre-post.json`). Add `--routes /a,/b` when the user names pages explicitly.
+Add `--routes /a,/b` when the user names pages explicitly. Add
+`--before https://production-url` only if the run reports it cannot work out the baseline
+(it is then saved to `.pre-post.json` for next time).
+
+## What it posts
+
+The visual changes go at the **top of the PR description**, in a delimited block that
+re-runs replace in place — the author's own text is never touched. If the PR cannot be
+edited (a fork, a read-only token) it falls back to a single sticky comment.
+
+Each changed route shows **Pre beside Post**, per viewport, with the full pages folded into
+a `<details>`. That pairing is the comparison; there is no diff overlay and no percentage.
 
 ## Rules
 
 - Run the command once. Do not open, read, or describe the screenshot files; the PR
   comment is the deliverable. Report the summary the command prints, plus the comment link.
-- Do not start dev servers, switch branches, or use a browser tool yourself.
+- Do not switch branches, start dev servers, or use a browser tool yourself. The command
+  handles all three.
 - Exit code 3 means a human must do one thing (log in, start the dev server, pass
   `--before`). Relay that one sentence verbatim and stop.
 - Do not use `--dry-run` unless the user asks to preview without posting.

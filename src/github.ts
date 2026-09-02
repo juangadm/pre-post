@@ -68,7 +68,7 @@ export interface PullRequestRef {
   number: number;
   html_url: string;
   head: { sha: string; ref: string };
-  base: { ref: string };
+  base: { ref: string; sha: string };
   title: string;
 }
 
@@ -209,6 +209,47 @@ export async function upsertStickyComment(
   }
   const created = await gh.request<{ id: number; html_url: string }>('POST', `/repos/${ownerRepo}/issues/${prNumber}/comments`, { body });
   return { html_url: created.html_url, created: true };
+}
+
+export interface DescriptionResult {
+  html_url: string;
+  /** False when the PR body could not be edited and nothing was written. */
+  updated: boolean;
+}
+
+/**
+ * Write `body` into a marked block in the PR description, replacing the block
+ * from a previous run. The description is where reviewers look first, so this
+ * is preferred over a comment.
+ *
+ * Returns updated: false when the token cannot edit the PR (a fork, or no write
+ * access), so the caller can fall back to a comment instead of failing.
+ */
+export async function upsertPrDescription(
+  gh: GitHub,
+  ownerRepo: string,
+  prNumber: number,
+  body: string,
+  marker: string,
+): Promise<DescriptionResult> {
+  const open = `<!-- ${marker}:start -->`;
+  const close = `<!-- ${marker}:end -->`;
+  const pr = await gh.request<{ body: string | null; html_url: string }>('GET', `/repos/${ownerRepo}/pulls/${prNumber}`);
+  const section = `${open}\n${body}\n${close}`;
+  const existing = pr.body ?? '';
+  const start = existing.indexOf(open);
+  const end = existing.indexOf(close);
+  // Prepend: the screenshots are the first thing a reviewer should see.
+  const next = start !== -1 && end > start
+    ? existing.slice(0, start) + section + existing.slice(end + close.length)
+    : section + (existing.trim() ? '\n\n' + existing.trimStart() : '');
+  if (next === existing) return { html_url: pr.html_url, updated: true };
+  try {
+    await gh.request('PATCH', `/repos/${ownerRepo}/pulls/${prNumber}`, { body: next });
+  } catch {
+    return { html_url: pr.html_url, updated: false };
+  }
+  return { html_url: pr.html_url, updated: true };
 }
 
 export interface PruneResult {

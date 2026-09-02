@@ -19,7 +19,7 @@ import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFi
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
 import { hasDependency } from './pkg.js';
-import { CONFIG_DEFAULTS } from './config.js';
+import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
 export type { Framework };
 
@@ -272,16 +272,21 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
 
   const ignore = (config.ignore || []).map(p => p.replace(/^\.?\//, ''));
   const allChanged = (options.changedFiles ?? gitChangedFiles(root, options.diffTarget))
+    // Our own config file is written mid-run; it never affects which routes changed.
+    .filter(f => f !== CONFIG_FILENAME)
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
 
   // Choose the app root that owns the most changed files (deepest wins ties).
+  // The repo root contains every changed file, so it would always match at least
+  // as many as any app nested inside it. Score the nested app roots only, and
+  // fall back to the repo root when none of them owns a changed file.
   let appRoot = root;
-  let best = -1;
+  let best = 0;
   for (const candidate of findAppRoots(root)) {
     const rel = toPosix(path.relative(root, candidate));
-    const prefix = rel ? rel + '/' : '';
-    const count = allChanged.filter(f => f.startsWith(prefix)).length;
-    if (count > best || (count === best && candidate.length > appRoot.length)) {
+    if (!rel) continue;
+    const count = allChanged.filter(f => f.startsWith(rel + '/')).length;
+    if (count > best || (count === best && count > 0 && candidate.length > appRoot.length)) {
       best = count;
       appRoot = candidate;
     }

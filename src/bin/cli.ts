@@ -38,6 +38,7 @@ const { values, positionals } = parseArgs({
     routes: { type: 'string' },
     'max-routes': { type: 'string' },
     framework: { type: 'string' },
+    'no-local-baseline': { type: 'boolean' },
     viewports: { type: 'string' },
     mobile: { type: 'boolean', short: 'm' },
     tablet: { type: 'boolean', short: 't' },
@@ -87,6 +88,7 @@ OPTIONS
   --header k=v              Extra request header (repeatable)
   --cookie name=value       Cookie for the production host (repeatable)
   -o, --output <dir>        Where to write images (default: temp dir)
+  --no-local-baseline       Do not rebuild the baseline from the base commit
   --dry-run                 Capture and diff only; no upload, no comment
   --no-comment              Publish images but do not touch the PR
   --pr <number>             Target a specific PR
@@ -189,6 +191,7 @@ async function main(): Promise<void> {
         framework: values.framework as Framework | undefined,
         cookies,
         dryRun: values['dry-run'],
+        localBaseline: !values['no-local-baseline'],
         comment: !values['no-comment'],
         pr: num(values.pr, '--pr'),
         version: VERSION,

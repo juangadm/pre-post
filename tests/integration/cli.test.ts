@@ -64,12 +64,30 @@ describe('CLI', () => {
     expect(parsed).toHaveProperty('routes');
   });
 
-  it('pr --dry-run stops with one instruction when no production URL is known', async () => {
+  it('pr --dry-run stops with one instruction when there is nothing to capture', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-cli-'));
     try {
       execFileSync('git', ['init', '-q'], { cwd: root });
       execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
       const { exitCode, stderr } = await runCli(['pr', '--dry-run'], root);
+      expect(exitCode).toBe(3);
+      // With no deployment and no dev server there is no "Post" side at all, so
+      // that is the one thing to fix — naming the baseline first would send the
+      // reader to solve the second problem.
+      expect(stderr).toMatch(/dev server/i);
+      expect(stderr).toContain('--after');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('pr --dry-run asks for a baseline once a Post side exists', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-cli-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+      // --after supplies Post; nothing supplies Pre, and there is no PR to build one from.
+      const { exitCode, stderr } = await runCli(['pr', '--dry-run', '--after', 'http://localhost:9', '--no-local-baseline'], root);
       expect(exitCode).toBe(3);
       expect(stderr).toContain('--before');
     } finally {

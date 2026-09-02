@@ -4,16 +4,9 @@
  */
 
 import { PrRunResult, RouteCaptureOutcome } from './types.js';
-import { hostOf } from './run.js';
+import { hostOf, isLocalUrl } from './run.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
-
-function pct(ratio: number | undefined): string {
-  if (ratio === undefined) return '';
-  if (ratio === 0) return '0%';
-  if (ratio < 0.0001) return '<0.01%';
-  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}%`;
-}
 
 function code(s: string): string {
   return `\`${s}\``;
@@ -41,29 +34,28 @@ export interface CommentOptions {
 export function buildComment(result: PrRunResult, options: CommentOptions = {}): string {
   const lines: string[] = [STICKY_MARKER, '## Visual changes', ''];
   const routes = groupByRoute(result.outcomes);
-  const viewportCount = new Set(result.outcomes.map(o => o.viewport)).size;
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
   const errors = result.outcomes.filter(o => o.status === 'error');
 
-  const summary = changed.length === 0
-    ? `No visual changes detected across ${routes.size} route${routes.size === 1 ? '' : 's'} and ${viewportCount} viewport${viewportCount === 1 ? '' : 's'}.`
-    : `${changed.length} of ${result.outcomes.length} captures changed across ${routes.size} route${routes.size === 1 ? '' : 's'}.`;
-  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = this branch · ${summary}`, '');
+  // Both sides can now be a deployment, so name the actual hosts rather than
+  // assuming Post is the reader's own checkout.
+  const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
+  const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
+  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>`, '');
+  if (changed.length === 0) lines.push('No visual changes.', '');
 
   for (const [route, outcomes] of routes) {
     const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
     if (changedHere.length === 0) continue;
     for (const o of changedHere) {
       const u = o.urls ?? o.files!;
-      const note = [o.sizeChanged ? 'page height changed' : '', o.note || ''].filter(Boolean).map(n => ` · ${n}`).join('');
-      lines.push(`### ${code(route)} — ${viewportLabel(o.viewport)} · ${pct(o.changedRatio)} of pixels changed${note}`, '');
+      lines.push(`### ${code(route)} — ${viewportLabel(o.viewport)}`, '');
       const pre = u.cropBefore ?? u.before;
       const post = u.cropAfter ?? u.after;
       lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
-      lines.push('<details>', `<summary>Full page and diff</summary>`, '');
-      const diffCol = u.diff ? ` ![Diff](${u.diff}) |` : '';
-      lines.push(`| Pre (full) | Post (full) |${u.diff ? ' Diff |' : ''}`, `|:---:|:---:|${u.diff ? ':---:|' : ''}`, `| ![Pre full](${u.before}) | ![Post full](${u.after}) |${diffCol}`, '');
+      lines.push('<details>', `<summary>Full page</summary>`, '');
+      lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
       lines.push('</details>', '');
     }
   }
@@ -87,9 +79,6 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     );
   }
 
-  const stamp = (options.now ?? new Date()).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-  const sha = options.headSha ? ` · ${code(options.headSha.slice(0, 7))}` : '';
-  lines.push('---', `<sub>Captured by <a href="https://github.com/juangadm/pre-post">pre-post</a>${options.version ? ` v${options.version}` : ''}${sha} · ${stamp} · ${(result.durationMs / 1000).toFixed(1)}s</sub>`);
   return lines.join('\n');
 }
 
@@ -109,8 +98,8 @@ export function buildSummary(result: PrRunResult): string {
   const rows = result.outcomes.map(o => [
     o.route,
     o.viewport,
-    o.status === 'error' ? 'error' : o.status === 'changed' ? `${pct(o.changedRatio)} changed` : 'no change',
-    o.status === 'error' ? (o.error ?? '') : [o.sizeChanged ? 'height changed' : '', o.note || ''].filter(Boolean).join(', '),
+    o.status === 'error' ? 'error' : o.status === 'changed' ? 'changed' : 'no change',
+    o.status === 'error' ? (o.error ?? '') : (o.note || ''),
   ]);
   const widths = [0, 1, 2].map(i => Math.max(...rows.map(r => r[i].length), 0));
   for (const r of rows) {

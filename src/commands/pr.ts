@@ -5,18 +5,18 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ARTIFACT_KINDS, ArtifactSet, Framework, PrRunResult } from '../types.js';
+import { ArtifactSet, Framework, PrePostConfig, PrRunResult } from '../types.js';
 import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertStickyComment } from '../github.js';
+import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
-import { readPackage } from '../pkg.js';
-import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
+import { CaptureTask, joinUrl, routeSlug, runTasks } from '../run.js';
+import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -33,13 +33,21 @@ export interface PrCommandOptions extends Partial<Settings> {
   /** Publish assets but do not touch the PR */
   comment?: boolean;
   pr?: number;
+  /** Rebuild the baseline from the base commit when no URL is reachable. Default true. */
+  localBaseline?: boolean;
   version?: string;
   log?: (msg: string) => void;
 }
 
-function packageHomepage(root: string): string | undefined {
-  const hp = readPackage(root)?.homepage;
-  return typeof hp === 'string' && /^https?:\/\//.test(hp) && !/github\.com/.test(hp) ? hp : undefined;
+/**
+ * What ends up on the assets branch. The diff overlay is an intermediate used
+ * to locate the changed region; Pre beside Post is the comparison a reviewer
+ * reads, so shipping the overlay is upload time and storage for nothing.
+ */
+const PUBLISHED_KINDS = ['before', 'after', 'cropBefore', 'cropAfter'] as const;
+
+function headersFor(config: PrePostConfig, opts: PrCommandOptions): Record<string, string> {
+  return resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [] })?.headers ?? {};
 }
 
 function runId(now: Date): string {
@@ -54,19 +62,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const settings = resolveSettings(config, opts);
   const ownerRepo = resolveOwnerRepo(root);
   const branch = currentBranch(root);
-
-  // --- Production URL --------------------------------------------------------
-  const beforeRaw = opts.before || config.before || packageHomepage(root);
-  if (!beforeRaw) {
-    throw new NeedsHumanError(
-      'No production URL known for the "before" state. Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).',
-    );
-  }
-  const before = normalizeUrl(beforeRaw);
-  if (opts.before && config.before !== before) {
-    updateConfig(root, { before });
-    log('Saved production URL to .pre-post.json');
-  }
+  /** Tears down anything resolution started (a local dev server). */
+  let cleanupComparison: () => Promise<void> = async () => undefined;
 
   // --- GitHub access (checked before any time is spent) -----------------------
   const gh = opts.dryRun ? null : new GitHub(requireToken());
@@ -76,11 +73,34 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const prLookup = gh
     ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
     : Promise.resolve(null);
-  const devServer = opts.after || config.after ? Promise.resolve(opts.after || config.after!) : detectDevServer();
+  // Local detection runs regardless: it is cheap, and it is the fallback when
+  // the PR has no preview deployment.
+  const explicitAfter = opts.after ?? config.after;
+  const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
 
-  // Headers alone are enough to probe production; cookies need the final URL list.
-  const headers = resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [before] })?.headers ?? {};
-  const beforeProbe = probeUrl(before, headers);
+  // Detection is synchronous git + fs work, so run it while the PR lookup is in
+  // flight rather than after it.
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
+  const appPrefix = path.relative(root, detection.appRoot) || undefined;
+  const pr = await prLookup;
+
+  // --- What are we comparing? ---------------------------------------------------
+  const headers = headersFor(config, opts);
+  const comparison: Comparison = await resolveComparison({
+    gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+    before: opts.before, after: explicitAfter,
+    devServer, probe: url => probeUrl(url, headers),
+    allowLocalBaseline: opts.localBaseline, log,
+  });
+  cleanupComparison = comparison.stop;
+  for (const line of describeComparison(comparison)) log(line);
+
+  const before = comparison.before.url;
+  const after = comparison.after.url;
+  if (opts.before && config.before !== before) {
+    updateConfig(root, { before });
+    log('Saved production URL to .pre-post.json');
+  }
 
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
@@ -89,7 +109,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   if (opts.routes?.length) {
     routes = opts.routes;
   } else {
-    const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
     routes = detection.routes.map(r => r.path);
     skippedDynamic = detection.skippedDynamic;
     log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
@@ -100,20 +119,21 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     }
   }
 
-  // --- Dev server and reachability --------------------------------------------
-  const afterRaw = await devServer;
-  if (!afterRaw) {
-    throw new NeedsHumanError(
-      'No dev server found on the usual ports (3000, 5173, ...). Start it (e.g. npm run dev), then re-run — or pass --after http://localhost:PORT.',
-    );
-  }
-  const after = normalizeUrl(afterRaw);
-  if (!opts.after && !config.after) log(`Dev server: ${after}`);
-
-  const [probe, afterProbe] = await Promise.all([beforeProbe, probeUrl(after, headers)]);
-  if (probe.status === null) throw new NeedsHumanError(`Cannot reach ${before}. Check the URL (or your VPN) and re-run.`);
-  if (probe.status === 401 || probe.status === 403) throw new NeedsHumanError(authHint({ url: before, vercel: probe.vercel }));
-  if (afterProbe.status === null) throw new NeedsHumanError(`Cannot reach ${after}. Is the dev server running?`);
+  // --- Reachability ---------------------------------------------------------------
+  // Resolution already probed whatever it chose; this catches a side that died
+  // in between, and names which one so the message is actionable.
+  const fail = async (message: string): Promise<never> => {
+    await cleanupComparison();
+    throw new NeedsHumanError(message);
+  };
+  const [probe, afterProbe] = await Promise.all([
+    comparison.before.probe ?? probeUrl(before, headers),
+    comparison.after.probe ?? probeUrl(after, headers),
+  ]);
+  if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
+  if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
+  if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
+  if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
 
   const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
 
@@ -137,17 +157,17 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outcomes = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log });
   } finally {
     await closeBrowser();
+    await cleanupComparison();
   }
 
   // --- Publish -------------------------------------------------------------------
-  const pr = await prLookup;
   const changed = outcomes.filter(o => o.status === 'changed' && o.files);
   if (gh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;
     const files: AssetFile[] = [];
     for (const o of changed) {
-      for (const kind of ARTIFACT_KINDS) {
+      for (const kind of PUBLISHED_KINDS) {
         const local = o.files![kind];
         if (local) files.push({ path: keyFor(o, kind), content: fs.readFileSync(local) });
       }
@@ -156,7 +176,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     const published = await publishAssets(gh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
-      for (const kind of ARTIFACT_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
+      for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
       o.urls = urls as ArtifactSet;
     }
   }
@@ -176,9 +196,17 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   if (gh && (opts.comment ?? true)) {
     if (pr) {
-      const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
-      result.commentUrl = comment.html_url;
-      log(`${comment.created ? 'Posted' : 'Updated'} PR comment: ${comment.html_url}`);
+      // The description is what a reviewer reads first, so put the images there
+      // and fall back to a comment only when the PR cannot be edited.
+      const described = await upsertPrDescription(gh, ownerRepo, pr.number, result.markdown, 'pre-post');
+      if (described.updated) {
+        result.commentUrl = described.html_url;
+        log(`Updated PR description: ${described.html_url}`);
+      } else {
+        const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
+        result.commentUrl = comment.html_url;
+        log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
+      }
     } else {
       log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
     }
