@@ -12,7 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertStickyComment } from '../github.js';
+import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { readPackage } from '../pkg.js';
@@ -253,9 +253,17 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   if (gh && (opts.comment ?? true)) {
     if (pr) {
-      const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
-      result.commentUrl = comment.html_url;
-      log(`${comment.created ? 'Posted' : 'Updated'} PR comment: ${comment.html_url}`);
+      // The description is what a reviewer reads first, so put the images there
+      // and fall back to a comment only when the PR cannot be edited.
+      const described = await upsertPrDescription(gh, ownerRepo, pr.number, result.markdown, 'pre-post');
+      if (described.updated) {
+        result.commentUrl = described.html_url;
+        log(`Updated PR description: ${described.html_url}`);
+      } else {
+        const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
+        result.commentUrl = comment.html_url;
+        log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
+      }
     } else {
       log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
     }
