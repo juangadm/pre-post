@@ -49,7 +49,12 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   const summary = changed.length === 0
     ? `No visual changes detected across ${routes.size} route${routes.size === 1 ? '' : 's'} and ${viewportCount} viewport${viewportCount === 1 ? '' : 's'}.`
     : `${changed.length} of ${result.outcomes.length} captures changed across ${routes.size} route${routes.size === 1 ? '' : 's'}.`;
-  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = this branch · ${summary}`, '');
+  // Both sides can now be a deployment, so name the actual hosts rather than
+  // assuming Post is the reader's own checkout.
+  const postLabel = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(result.afterBase)
+    ? 'this branch (local)'
+    : hostOf(result.afterBase);
+  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel} · ${summary}`, '');
 
   for (const [route, outcomes] of routes) {
     const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
