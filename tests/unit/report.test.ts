@@ -30,7 +30,7 @@ describe('buildComment', () => {
   });
 
   it('leads with the cropped pair and tucks the full page into details', () => {
-    expect(md).toContain('### `/` — Desktop · 4.2% of pixels changed');
+    expect(md).toContain('### `/` — Desktop');
     expect(md).toContain('| ![Pre](https://u/pre-crop.png) | ![Post](https://u/post-crop.png) |');
     expect(md).toContain('<details>');
     expect(md).toContain('![Diff](https://u/diff.png)');
@@ -45,15 +45,18 @@ describe('buildComment', () => {
     expect(md).toContain('**Needs a sample URL:** `/blog/[slug]`');
   });
 
-  it('includes version, sha, and timing in the footer', () => {
-    expect(md).toContain('v1.0.0');
-    expect(md).toContain('`abcdef1`');
-    expect(md).toContain('12.3s');
+  it('states how it was captured on one line, with no footer', () => {
+    const header = md.split('\n').find(l => l.startsWith('**Pre**'))!;
+    expect(header).toContain('`abcdef1`');
+    expect(header).toContain('pre-post');
+    // No timing, version banner, or trailing rule to scroll past.
+    expect(md).not.toContain('12.3s');
+    expect(md).not.toContain('<sub>');
   });
 
   it('says so when nothing changed', () => {
     const none = buildComment({ ...base, outcomes: base.outcomes.filter(o => o.status === 'unchanged') });
-    expect(none).toContain('No visual changes detected');
+    expect(none).toContain('No visual changes.');
   });
 
   it('falls back to local files when nothing was published', () => {
@@ -70,7 +73,7 @@ describe('buildSummary', () => {
     const summary = buildSummary({ ...base, commentUrl: 'https://github.com/acme/web/pull/42#issuecomment-1' });
     const lines = summary.split('\n');
     expect(lines[0]).toBe('pre-post · PR #42 · 2 route(s) · 2 viewport(s) · 12.3s');
-    expect(summary).toContain('4.2% changed');
+    expect(summary).toContain('changed');
     expect(summary).toContain('no change');
     expect(summary).toContain('error');
     expect(summary).toContain('needs sample URL: /blog/[slug]');
