@@ -16,7 +16,7 @@ function git(cmd: string): void {
 }
 
 beforeAll(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-repo-'));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-repo-')));
   git('init -q -b main');
   git('config user.email t@example.com');
   git('config user.name t');
