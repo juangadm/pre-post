@@ -125,25 +125,27 @@ export default function Page() {
 
           <section id="install" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Install</h2>
-            <p className="text-sm">Install as a dev dependency</p>
-            <Code>npm install -D @juangadm/pre-post</Code>
+            <p className="text-sm">
+              Nothing to install. The first run downloads the CLI and the Chromium
+              headless shell. You need Node 20+ and a GitHub token — either{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">gh auth login</code>{" "}
+              or <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">GH_TOKEN</code>.
+            </p>
+            <Code>npx -y @juangadm/pre-post@latest pr</Code>
           </section>
 
           <section id="skill" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Add Skill</h2>
             <p className="text-sm">
               Show Claude Code how and when to take pre and post screenshots. The skill
-              uses{" "}
+              runs the one command and reports the summary and the comment link — it never
+              opens the images, so screenshots stay out of the model&apos;s context. Say{" "}
               <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">
-                gh
+                /pre-post
               </code>{" "}
-              to detect the associated PR with your branch and{" "}
-              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">
-                Playwright
-              </code>{" "}
-              for browser automation
+              after a UI change.
             </p>
-            <Code>npx skills add juangadm/pre-post</Code>
+            <Code>npx skills add juangadm/pre-post -y</Code>
           </section>
 
           <section id="options" className="scroll-mt-8">
