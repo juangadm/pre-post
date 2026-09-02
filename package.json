@@ -1,7 +1,7 @@
 {
   "name": "@juangadm/pre-post",
-  "version": "0.3.0",
-  "description": "Visual diff tool for PRs \u2014 captures before/after screenshots of web pages",
+  "version": "1.0.0",
+  "description": "Before/after screenshots for pull requests: detect changed routes, capture, pixel-diff, and post a sticky PR comment",
   "author": "Juan Gabriel Delgado (forked from James Clements)",
   "license": "MIT",
   "repository": {
@@ -16,13 +16,12 @@
     "screenshot",
     "before-after",
     "visual-diff",
-    "comparison",
-    "capture",
-    "web",
-    "testing",
-    "cli",
+    "visual-regression",
+    "pull-request",
     "playwright",
-    "pr-screenshots"
+    "pixelmatch",
+    "cli",
+    "claude-code-skill"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -38,7 +37,9 @@
   },
   "files": [
     "dist",
-    "skill"
+    "skill",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.pkg.json",
@@ -66,5 +67,8 @@
     "pixelmatch": "^7.2.0",
     "playwright-core": "1.58.0",
     "pngjs": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
