@@ -60,9 +60,9 @@ export default function Page() {
             </nav>
           </div>
           <p className="mb-8 sm:mb-12 text-[14px] sm:text-[15px]">
-            Automatic visual diffs for PRs. Pre-post reads your git
-            changes, figures out which pages changed, and screenshots
-            them.
+            One command for visual PR reviews. Pre-post detects the routes
+            your branch changed, screenshots them on production and on your
+            dev server, and posts the diff as a single PR comment.
           </p>
         </div>
 
@@ -77,14 +77,15 @@ export default function Page() {
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">How it works</h2>
             <ol className="text-sm space-y-2 list-decimal list-inside">
               <li>Make your UI changes</li>
-              <li>Say <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">/pre-post</code> in Claude Code</li>
-              <li>Pre-post reads your git diff and detects which pages changed</li>
-              <li>It screenshots each route — production vs your new version</li>
-              <li>You review the screenshots</li>
-              <li>Pre-post adds a pre/post table to your PR</li>
+              <li>Say <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">/pre-post</code> in Claude Code, or run <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">pre-post pr</code></li>
+              <li>Pre-post diffs your branch against main, then follows the import graph to every route you touched</li>
+              <li>It captures each route twice — production (Pre) and your dev server (Post), desktop and mobile</li>
+              <li>It pixel-diffs each pair and crops the changed region</li>
+              <li>One sticky comment lands on the PR, updated in place on every run</li>
             </ol>
             <p className="text-sm text-neutral-400">
-              Works with localhost, Vercel preview deploys, Netlify, or any accessible URL.
+              Next.js App and Pages Router, Vite, and monorepos are detected automatically.
+              The Pre side can be any reachable URL — Vercel, Netlify, or your own host.
             </p>
           </section>
 
@@ -102,8 +103,9 @@ export default function Page() {
               </a>
               . The original required you to manually pass two URLs. Pre-post
               reads your <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">git diff</code>,
-              detects which routes changed, and captures them automatically —
-              desktop and mobile, at 2x retina quality.
+              detects which routes changed, captures both sides automatically —
+              desktop and mobile, at 2x retina — then pixel-diffs each pair and
+              posts a single comment on the PR.
             </p>
             <p className="text-sm">
               Under the hood, it uses{" "}
@@ -115,9 +117,9 @@ export default function Page() {
               >
                 Playwright
               </a>{" "}
-              instead of Vercel&apos;s agent-browser. It waits for fonts to load
-              and freezes CSS animations before each capture, so screenshots are
-              consistent across runs.
+              instead of Vercel&apos;s agent-browser. It freezes the clock, finishes
+              animations, and waits for fonts, images, and layout to settle before
+              each capture, so a screenshot only changes when the page does.
             </p>
           </section>
 
