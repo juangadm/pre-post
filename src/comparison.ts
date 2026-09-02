@@ -18,6 +18,7 @@ import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js'
 import { ProbeResult } from './doctor.js';
 import { normalizeUrl } from './run.js';
 import { PrePostConfig } from './types.js';
+import { mergeBase } from './git.js';
 
 export type UrlSource = 'flag' | 'config' | 'deployment' | 'dev-server' | 'homepage' | 'local-base';
 
@@ -189,13 +190,16 @@ export async function resolveComparison(ctx: ResolveContext): Promise<Comparison
     return { strategy: 'explicit', before, after, mixed: isLocal(before.url) !== isLocal(after.url), stop: stopPost };
   }
 
+  // git knows what this branch forked from, so a baseline does not depend on a
+  // PR existing yet — this often runs before one is opened.
+  const baseSha = ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
   let baseline: LocalBaseline | null = null;
-  if (ctx.pr) {
+  if (baseSha) {
     const serve = ctx.serveBaseline ?? serveBaseCommit;
-    baseline = await serve({ repoRoot: ctx.repoRoot, sha: ctx.pr.base.sha, appPrefix: ctx.appPrefix, log: ctx.log });
+    baseline = await serve({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log });
   }
   if (baseline) {
-    const before: Side = { url: normalizeUrl(baseline.url), source: 'local-base', detail: `base commit ${ctx.pr!.base.sha.slice(0, 7)}, served locally` };
+    const before: Side = { url: normalizeUrl(baseline.url), source: 'local-base', detail: `base commit ${baseSha!.slice(0, 7)}, served locally` };
     return { strategy: 'local', before, after, mixed: false, stop: async () => { await baseline!.stop(); await stopPost(); } };
   }
 

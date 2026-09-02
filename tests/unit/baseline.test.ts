@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { detectPackageManager, devScript, freePort } from '../../src/baseline';
+import { detectPackageManager, devScript, freePort, servableDir } from '../../src/baseline';
 
 let dir: string;
 const write = (rel: string, content: string) => {
@@ -64,5 +64,25 @@ describe('freePort', () => {
     const b = await freePort();
     expect(a).toBeGreaterThan(1023);
     expect(b).toBeGreaterThan(1023);
+  });
+});
+
+describe('servableDir', () => {
+  it('prefers the detected app directory when it can start a server', () => {
+    write('mono2/site/package.json', JSON.stringify({ scripts: { dev: 'next dev' } }));
+    write('mono2/package.json', JSON.stringify({ scripts: { dev: 'other' } }));
+    expect(servableDir(path.join(dir, 'mono2'), 'site')).toBe(path.join(dir, 'mono2/site'));
+  });
+
+  it('finds the app next door when the detected directory has no dev script', () => {
+    // A PR touching only the CLI resolves to the repo root, which cannot serve.
+    write('cli/package.json', JSON.stringify({ scripts: { build: 'tsc', test: 'vitest' } }));
+    write('cli/site/package.json', JSON.stringify({ scripts: { dev: 'next dev' } }));
+    expect(servableDir(path.join(dir, 'cli'), undefined)).toBe(path.join(dir, 'cli/site'));
+  });
+
+  it('returns null when nothing in the tree can start a server', () => {
+    write('lib/package.json', JSON.stringify({ scripts: { build: 'tsc' } }));
+    expect(servableDir(path.join(dir, 'lib'), undefined)).toBeNull();
   });
 });

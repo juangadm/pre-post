@@ -18,6 +18,7 @@ import net from 'net';
 import os from 'os';
 import path from 'path';
 import { readPackage } from './pkg.js';
+import { findAppRoots } from './routes.js';
 
 export interface LocalBaseline {
   url: string;
@@ -49,6 +50,24 @@ export function detectPackageManager(dir: string, repoRoot?: string): PackageMan
     }
   }
   return NPM;
+}
+
+/**
+ * The directory to actually serve.
+ *
+ * The app root is detected from the files a branch changed, which answers
+ * "which routes moved" — not "which package can be served". A PR touching only
+ * the CLI resolves to the repo root, which has no dev script even though the
+ * site next door does. So prefer the detected directory and otherwise take the
+ * nearest package that can start a server.
+ */
+export function servableDir(treeRoot: string, appPrefix?: string): string | null {
+  const preferred = appPrefix ? path.join(treeRoot, appPrefix) : treeRoot;
+  if (devScript(preferred)) return preferred;
+  const roots = findAppRoots(treeRoot).filter(dir => devScript(dir));
+  if (!roots.length) return null;
+  // Deepest first: a workspace app beats the repo root that merely contains it.
+  return roots.sort((a, b) => b.length - a.length)[0];
 }
 
 /** The script that starts a dev server, preferring `dev`. */
@@ -160,9 +179,9 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     }
   }
 
-  const appDir = opts.appPrefix ? path.join(worktree, opts.appPrefix) : worktree;
-  const script = devScript(appDir);
-  if (!script) {
+  const appDir = servableDir(worktree, opts.appPrefix);
+  const script = appDir && devScript(appDir);
+  if (!appDir || !script) {
     await cleanup();
     return null;
   }
