@@ -343,7 +343,7 @@ export default function Page() {
             </a>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-xs font-[family-name:var(--font-departure)]">v0.3.0</span>
+            <span className="text-xs font-[family-name:var(--font-departure)]">v1.0.0</span>
             <a
               href="https://www.npmjs.com/package/@juangadm/pre-post"
               target="_blank"
