@@ -34,7 +34,7 @@ const biroScript = localFont({
 
 const siteUrl = "https://site-puce-rho.vercel.app"
 const description =
-  "pre-post is a visual diff tool that captures before-and-after screenshots of web pages for pull requests. Reads your git diff, detects changed routes, and screenshots them automatically. Use as a Claude Code skill or CLI tool."
+  "pre-post is a visual diff tool for pull requests. One command detects the routes your branch changed, captures them on production and on your dev server, pixel-diffs each pair, and posts a single comment on the PR. Use as a Claude Code skill or CLI tool."
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -53,6 +53,7 @@ export const metadata: Metadata = {
     "web screenshot tool",
     "pull request screenshots",
     "Playwright screenshots",
+    "pixel diff",
     "pre-post",
   ],
   authors: [{ name: "Juan Gabriel", url: "https://juangabriel.xyz" }],

@@ -60,9 +60,9 @@ export default function Page() {
             </nav>
           </div>
           <p className="mb-8 sm:mb-12 text-[14px] sm:text-[15px]">
-            Automatic visual diffs for PRs. Pre-post reads your git
-            changes, figures out which pages changed, and screenshots
-            them.
+            One command for visual PR reviews. Pre-post detects the routes
+            your branch changed, screenshots them on production and on your
+            dev server, and posts the diff as a single PR comment.
           </p>
         </div>
 
@@ -77,14 +77,15 @@ export default function Page() {
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">How it works</h2>
             <ol className="text-sm space-y-2 list-decimal list-inside">
               <li>Make your UI changes</li>
-              <li>Say <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">/pre-post</code> in Claude Code</li>
-              <li>Pre-post reads your git diff and detects which pages changed</li>
-              <li>It screenshots each route — production vs your new version</li>
-              <li>You review the screenshots</li>
-              <li>Pre-post adds a pre/post table to your PR</li>
+              <li>Say <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">/pre-post</code> in Claude Code, or run <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">pre-post pr</code></li>
+              <li>Pre-post diffs your branch against main, then follows the import graph to every route you touched</li>
+              <li>It captures each route twice — production (Pre) and your dev server (Post), desktop and mobile</li>
+              <li>It pixel-diffs each pair and crops the changed region</li>
+              <li>One sticky comment lands on the PR, updated in place on every run</li>
             </ol>
             <p className="text-sm text-neutral-400">
-              Works with localhost, Vercel preview deploys, Netlify, or any accessible URL.
+              Next.js App and Pages Router, Vite, and monorepos are detected automatically.
+              The Pre side can be any reachable URL — Vercel, Netlify, or your own host.
             </p>
           </section>
 
@@ -102,8 +103,9 @@ export default function Page() {
               </a>
               . The original required you to manually pass two URLs. Pre-post
               reads your <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">git diff</code>,
-              detects which routes changed, and captures them automatically —
-              desktop and mobile, at 2x retina quality.
+              detects which routes changed, captures both sides automatically —
+              desktop and mobile, at 2x retina — then pixel-diffs each pair and
+              posts a single comment on the PR.
             </p>
             <p className="text-sm">
               Under the hood, it uses{" "}
@@ -115,33 +117,35 @@ export default function Page() {
               >
                 Playwright
               </a>{" "}
-              instead of Vercel&apos;s agent-browser. It waits for fonts to load
-              and freezes CSS animations before each capture, so screenshots are
-              consistent across runs.
+              instead of Vercel&apos;s agent-browser. It freezes the clock, finishes
+              animations, and waits for fonts, images, and layout to settle before
+              each capture, so a screenshot only changes when the page does.
             </p>
           </section>
 
           <section id="install" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Install</h2>
-            <p className="text-sm">Install as a dev dependency</p>
-            <Code>npm install -D @juangadm/pre-post</Code>
+            <p className="text-sm">
+              Nothing to install. The first run downloads the CLI and the Chromium
+              headless shell. You need Node 20+ and a GitHub token — either{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">gh auth login</code>{" "}
+              or <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">GH_TOKEN</code>.
+            </p>
+            <Code>npx -y @juangadm/pre-post@latest pr</Code>
           </section>
 
           <section id="skill" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Add Skill</h2>
             <p className="text-sm">
               Show Claude Code how and when to take pre and post screenshots. The skill
-              uses{" "}
+              runs the one command and reports the summary and the comment link — it never
+              opens the images, so screenshots stay out of the model&apos;s context. Say{" "}
               <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">
-                gh
+                /pre-post
               </code>{" "}
-              to detect the associated PR with your branch and{" "}
-              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">
-                Playwright
-              </code>{" "}
-              for browser automation
+              after a UI change.
             </p>
-            <Code>npx skills add juangadm/pre-post</Code>
+            <Code>npx skills add juangadm/pre-post -y</Code>
           </section>
 
           <section id="options" className="scroll-mt-8">
@@ -163,53 +167,43 @@ export default function Page() {
               <div className="mt-4 space-y-6">
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture responsive screenshots (desktop + mobile)
+                    First run in a repo — the production URL is saved to{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post.json</code>
                   </p>
-                  <Code>pre-post compare --before-base url1 --after-base url2 --responsive</Code>
+                  <Code>pre-post pr --before https://acme.com</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Compare specific routes
+                    Skip detection and name the routes yourself
                   </p>
-                  <Code>pre-post compare --before-base url1 --after-base url2 --routes /dashboard,/settings</Code>
+                  <Code>pre-post pr --routes /pricing,/docs</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture a specific element using a CSS selector
+                    Custom viewports (default is desktop + mobile)
                   </p>
-                  <Code>pre-post url1 url2 &quot;.hero&quot;</Code>
+                  <Code>pre-post pr --viewports desktop,1440x900</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Use different selectors for pre and post
+                    Capture and diff locally without posting anything
                   </p>
-                  <Code>
-                    pre-post url1 url2 &quot;.old&quot; &quot;.new&quot;
-                  </Code>
+                  <Code>pre-post pr --dry-run</Code>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm">Machine-readable output</p>
+                  <Code>pre-post pr --json</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Capture at mobile (375x812), tablet (768x1024), or custom
-                    viewport
+                    Compare any two URLs, no PR involved
                   </p>
-                  <Code>pre-post url1 url2 --mobile</Code>
-                  <Code>pre-post url1 url2 --size 1920x1080</Code>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm">Capture the entire scrollable page</p>
-                  <Code>pre-post url1 url2 --full</Code>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm">
-                    Output a markdown table for PR descriptions
-                  </p>
-                  <Code>pre-post url1 url2 --markdown</Code>
+                  <Code>pre-post https://acme.com http://localhost:3000 --routes /pricing</Code>
                 </div>
 
                 <div className="space-y-2">
@@ -220,22 +214,31 @@ export default function Page() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-sm">Save to a custom location</p>
-                  <Code>pre-post url1 url2 --output ./screenshots</Code>
+                  <p className="text-sm">
+                    Check which routes this branch touches, or why a run cannot start
+                  </p>
+                  <Code>pre-post detect</Code>
+                  <Code>pre-post doctor</Code>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-sm">
-                    Override the default upload method
+                    Sign in once to a protected site — the session is reused
                   </p>
-                  <Code>pre-post url1 url2 --upload-url my-s3-endpoint</Code>
+                  <Code>pre-post login https://staging.acme.com</Code>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm">Clean up old screenshots</p>
+                  <Code>pre-post prune --days 90</Code>
                   <p className="text-sm mt-3">
-                    By default, screenshots are committed directly to the PR
-                    branch (under <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">.pre-post/</code>) and
-                    served via GitHub blob URLs pinned to the commit SHA.
-                    Works for both public and private repos.
-                    Use <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">--upload-url</code> to
-                    override with a custom storage service.
+                    Screenshots are published to a{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">pre-post-assets</code>{" "}
+                    branch in the same repository, one commit per run, and served via
+                    GitHub blob URLs. Nothing is committed to the PR branch, so no CI
+                    runs, and the images render on private repos.{" "}
+                    <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">prune</code>{" "}
+                    removes images for PRs closed more than 90 days ago.
                   </p>
                 </div>
               </div>
@@ -287,30 +290,33 @@ export default function Page() {
           <dl>
             <dt>What is pre-post?</dt>
             <dd>
-              pre-post is a visual diff tool that captures before-and-after
-              screenshots of web pages for pull requests. It reads your git diff,
-              detects which routes changed, and screenshots them automatically at
-              desktop and mobile viewports in 2x retina quality.
+              pre-post is a visual diff tool for pull requests. One command detects
+              the routes your branch changed, captures them on production and on your
+              dev server at desktop and mobile in 2x retina quality, pixel-diffs each
+              pair, and posts a single comment on the PR.
             </dd>
             <dt>How do I install pre-post?</dt>
             <dd>
-              Install as a dev dependency with npm install -D @juangadm/pre-post.
-              To add it as a Claude Code skill, run npx skills add juangadm/pre-post.
+              Nothing to install. Run npx -y @juangadm/pre-post@latest pr. You need
+              Node 20+ and a GitHub token, from gh auth login or GH_TOKEN. To add it
+              as a Claude Code skill, run npx skills add juangadm/pre-post -y.
             </dd>
             <dt>How does pre-post work?</dt>
             <dd>
-              Make your UI changes, then say /pre-post in Claude Code. It reads
-              your git diff, detects which pages changed, screenshots each route
-              comparing production vs your new version, and adds a comparison table
-              to your PR.
+              Make your UI changes, then say /pre-post in Claude Code or run pre-post
+              pr. It diffs your branch against main and follows the import graph to
+              every affected route, screenshots each one on production (Pre) and your
+              dev server (Post), pixel-diffs them, publishes the images to a
+              pre-post-assets branch, and updates one sticky comment on the PR.
             </dd>
             <dt>What makes pre-post different from before-and-after?</dt>
             <dd>
               pre-post is a fork of Vercel Labs' before-and-after. The original
-              required manually passing two URLs. pre-post reads your git diff
-              automatically, captures desktop and mobile at 2x retina, and uses
-              Playwright for consistent screenshots with font loading and CSS
-              animation freezing.
+              required manually passing two URLs. pre-post detects the changed routes
+              from your git diff, captures desktop and mobile at 2x retina, pixel-diffs
+              each pair, and posts the result to the PR itself. It uses Playwright with
+              a frozen clock, finished animations, and settled fonts and layout, so a
+              screenshot only changes when the page does.
             </dd>
           </dl>
         </section>
@@ -337,7 +343,7 @@ export default function Page() {
             </a>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-xs font-[family-name:var(--font-departure)]">v0.3.0</span>
+            <span className="text-xs font-[family-name:var(--font-departure)]">v1.0.0</span>
             <a
               href="https://www.npmjs.com/package/@juangadm/pre-post"
               target="_blank"
