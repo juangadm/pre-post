@@ -19,7 +19,7 @@ import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFi
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
 import { hasDependency } from './pkg.js';
-import { CONFIG_DEFAULTS } from './config.js';
+import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
 export type { Framework };
 
@@ -272,6 +272,8 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
 
   const ignore = (config.ignore || []).map(p => p.replace(/^\.?\//, ''));
   const allChanged = (options.changedFiles ?? gitChangedFiles(root, options.diffTarget))
+    // Our own config file is written mid-run; it never affects which routes changed.
+    .filter(f => f !== CONFIG_FILENAME)
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
 
   // Choose the app root that owns the most changed files (deepest wins ties).
