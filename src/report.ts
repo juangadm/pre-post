@@ -4,7 +4,7 @@
  */
 
 import { PrRunResult, RouteCaptureOutcome } from './types.js';
-import { hostOf } from './run.js';
+import { hostOf, isLocalUrl } from './run.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
 
@@ -40,9 +40,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
 
   // Both sides can now be a deployment, so name the actual hosts rather than
   // assuming Post is the reader's own checkout.
-  const postLabel = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(result.afterBase)
-    ? 'this branch (local)'
-    : hostOf(result.afterBase);
+  const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
   lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>`, '');
   if (changed.length === 0) lines.push('No visual changes.', '');

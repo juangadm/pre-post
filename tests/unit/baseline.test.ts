@@ -71,14 +71,14 @@ describe('servableDir', () => {
   it('prefers the detected app directory when it can start a server', () => {
     write('mono2/site/package.json', JSON.stringify({ scripts: { dev: 'next dev' } }));
     write('mono2/package.json', JSON.stringify({ scripts: { dev: 'other' } }));
-    expect(servableDir(path.join(dir, 'mono2'), 'site')).toBe(path.join(dir, 'mono2/site'));
+    expect(servableDir(path.join(dir, 'mono2'), 'site')).toEqual({ dir: path.join(dir, 'mono2/site'), script: 'dev' });
   });
 
   it('finds the app next door when the detected directory has no dev script', () => {
     // A PR touching only the CLI resolves to the repo root, which cannot serve.
     write('cli/package.json', JSON.stringify({ scripts: { build: 'tsc', test: 'vitest' } }));
     write('cli/site/package.json', JSON.stringify({ scripts: { dev: 'next dev' } }));
-    expect(servableDir(path.join(dir, 'cli'), undefined)).toBe(path.join(dir, 'cli/site'));
+    expect(servableDir(path.join(dir, 'cli'), undefined)).toEqual({ dir: path.join(dir, 'cli/site'), script: 'dev' });
   });
 
   it('returns null when nothing in the tree can start a server', () => {

@@ -33,14 +33,14 @@ interface PackageManager {
   run: (script: string, args: string[]) => string[];
 }
 
+const NPM: PackageManager = { bin: 'npm', install: ['install'], run: (s, a) => ['run', s, '--', ...a] };
+
 const MANAGERS: Array<{ lockfile: string; pm: PackageManager }> = [
   { lockfile: 'pnpm-lock.yaml', pm: { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s, a) => ['run', s, ...a] } },
   { lockfile: 'yarn.lock', pm: { bin: 'yarn', install: ['install'], run: (s, a) => ['run', s, ...a] } },
   { lockfile: 'bun.lockb', pm: { bin: 'bun', install: ['install'], run: (s, a) => ['run', s, ...a] } },
-  { lockfile: 'package-lock.json', pm: { bin: 'npm', install: ['install'], run: (s, a) => ['run', s, '--', ...a] } },
+  { lockfile: 'package-lock.json', pm: NPM },
 ];
-
-const NPM: PackageManager = MANAGERS[MANAGERS.length - 1].pm;
 
 /** Which package manager this tree uses, from its lockfile. Defaults to npm. */
 export function detectPackageManager(dir: string, repoRoot?: string): PackageManager {
@@ -61,13 +61,16 @@ export function detectPackageManager(dir: string, repoRoot?: string): PackageMan
  * site next door does. So prefer the detected directory and otherwise take the
  * nearest package that can start a server.
  */
-export function servableDir(treeRoot: string, appPrefix?: string): string | null {
+export function servableDir(treeRoot: string, appPrefix?: string): { dir: string; script: string } | null {
   const preferred = appPrefix ? path.join(treeRoot, appPrefix) : treeRoot;
-  if (devScript(preferred)) return preferred;
-  const roots = findAppRoots(treeRoot).filter(dir => devScript(dir));
-  if (!roots.length) return null;
+  const preferredScript = devScript(preferred);
+  if (preferredScript) return { dir: preferred, script: preferredScript };
   // Deepest first: a workspace app beats the repo root that merely contains it.
-  return roots.sort((a, b) => b.length - a.length)[0];
+  for (const dir of findAppRoots(treeRoot).sort((a, b) => b.length - a.length)) {
+    const script = devScript(dir);
+    if (script) return { dir, script };
+  }
+  return null;
 }
 
 /** The script that starts a dev server, preferring `dev`. */
@@ -162,7 +165,10 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     if (child && child.exitCode === null) {
       try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
     }
-    if (!opts.sha) return; // the working tree is the user's; never remove it
+    // Guard on the thing that actually matters: only a throwaway worktree may be
+    // removed. Checking `opts.sha` instead would let any future caller that
+    // points `worktree` at a real checkout delete uncommitted work.
+    if (worktree === opts.repoRoot) return;
     try {
       execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: opts.repoRoot, stdio: 'ignore' });
     } catch {
@@ -179,12 +185,12 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     }
   }
 
-  const appDir = servableDir(worktree, opts.appPrefix);
-  const script = appDir && devScript(appDir);
-  if (!appDir || !script) {
+  const app = servableDir(worktree, opts.appPrefix);
+  if (!app) {
     await cleanup();
     return null;
   }
+  const { dir: appDir, script } = app;
 
   const pm = detectPackageManager(appDir, worktree);
   const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';

@@ -7,6 +7,7 @@
  */
 
 import { GitHub } from './github.js';
+import { normalizeUrl } from './run.js';
 
 /**
  * Bots whose PR comments may be read for a preview URL. A comment is only
@@ -15,6 +16,9 @@ import { GitHub } from './github.js';
  * a URL a stranger chose.
  */
 const TRUSTED_BOTS = new Set(['vercel[bot]', 'netlify[bot]']);
+
+/** Commit-status contexts these same providers post under. */
+const PROVIDER_STATUS = /vercel|netlify|cloudflare|render/i;
 
 interface Deployment {
   id: number;
@@ -68,18 +72,53 @@ export async function deploymentUrlForSha(
     .filter(d => PRODUCTION.test(d.environment || '') === opts.production)
     .slice(0, MAX_DEPLOYMENTS);
 
-  for (const deployment of candidates) {
-    let statuses: DeploymentStatus[];
+  const ready = await Promise.all(candidates.map(async deployment => {
     try {
-      statuses = await gh.request<DeploymentStatus[]>('GET', `/repos/${ownerRepo}/deployments/${deployment.id}/statuses?per_page=20`);
+      const statuses = await gh.request<DeploymentStatus[]>('GET', `/repos/${ownerRepo}/deployments/${deployment.id}/statuses?per_page=20`);
+      if (!Array.isArray(statuses)) return null;
+      const ok = statuses.find((s): s is DeploymentStatus & { environment_url: string } => s.state === 'success' && !!s.environment_url);
+      return ok ? { url: ok.environment_url, environment: deployment.environment } : null;
     } catch {
-      continue;
+      return null;
     }
-    if (!Array.isArray(statuses)) continue;
-    const ready = statuses.find(s => s.state === 'success' && s.environment_url);
-    if (ready?.environment_url) return { url: ready.environment_url, environment: deployment.environment };
+  }));
+  // Candidates stay in newest-first order, so the first hit is the newest.
+  return ready.find(Boolean) ?? null;
+}
+
+/** Has a deployment provider reported success against this exact commit? */
+async function providerSucceededFor(gh: GitHub, ownerRepo: string, sha: string): Promise<boolean> {
+  try {
+    const combined = await gh.request<{ statuses?: Array<{ state: string; context: string }> }>('GET', `/repos/${ownerRepo}/commits/${sha}/status`);
+    return (combined.statuses ?? []).some(s => s.state === 'success' && PROVIDER_STATUS.test(s.context));
+  } catch {
+    return false;
   }
-  return null;
+}
+
+/**
+ * The preview for a commit, from whichever mechanism the provider uses.
+ *
+ * The freshness rule lives here rather than in the caller: a bot comment is
+ * edited in place and carries no SHA, so mid-deploy it still advertises the
+ * previous commit's preview. Screenshotting that and labelling it as this
+ * branch is the worst failure this tool has, because it looks exactly like a
+ * correct result. Every caller gets that guarantee by construction.
+ */
+export async function findPreviewForCommit(
+  gh: GitHub,
+  ownerRepo: string,
+  opts: { sha: string; prNumber?: number; appPrefix?: string },
+): Promise<DeploymentUrl | null> {
+  const recorded = await deploymentUrlForSha(gh, ownerRepo, opts.sha, { production: false });
+  if (recorded) return { ...recorded, url: normalizeUrl(recorded.url) };
+  if (opts.prNumber === undefined) return null;
+
+  const [fresh, commented] = await Promise.all([
+    providerSucceededFor(gh, ownerRepo, opts.sha),
+    previewUrlFromComments(gh, ownerRepo, opts.prNumber, { appPrefix: opts.appPrefix }),
+  ]);
+  return fresh && commented ? { ...commented, url: normalizeUrl(commented.url) } : null;
 }
 
 
@@ -103,8 +142,6 @@ function decodeVercelPayload(body: string): VercelPayload | null {
     return null;
   }
 }
-
-const withScheme = (url: string): string => (/^https?:\/\//.test(url) ? url : `https://${url}`);
 
 /**
  * The preview URL a deployment bot posted on the PR.
@@ -147,7 +184,7 @@ export async function previewUrlFromComments(
       const chosen = candidates.length === 1 ? candidates[0] : undefined;
       // A build still running has a URL that does not serve the branch yet.
       if (chosen && (chosen.nextCommitStatus ?? 'DEPLOYED') === 'DEPLOYED') {
-        return { url: withScheme(chosen.previewUrl!), environment: chosen.name ? `Preview (${chosen.name})` : 'Preview' };
+        return { url: normalizeUrl(chosen.previewUrl!), environment: chosen.name ? `Preview (${chosen.name})` : 'Preview' };
       }
       continue;
     }

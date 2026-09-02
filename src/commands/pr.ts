@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ArtifactSet, Framework, PrePostConfig, PrRunResult } from '../types.js';
-import { CONFIG_FILENAME, loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
+import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
@@ -15,9 +15,8 @@ import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } f
 import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
-import { readPackage } from '../pkg.js';
-import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
-import { Comparison, describeComparison, NoBaselineError, NoPostError, resolveComparison, UrlSource } from '../comparison.js';
+import { CaptureTask, joinUrl, routeSlug, runTasks } from '../run.js';
+import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -40,23 +39,12 @@ export interface PrCommandOptions extends Partial<Settings> {
   log?: (msg: string) => void;
 }
 
-/** Where the app's package.json lives, relative to the repo root. */
-function detectAppPrefix(root: string, config: PrePostConfig, opts: PrCommandOptions): string | undefined {
-  const { appRoot } = detectRoutesForRepo({ cwd: root, config, maxRoutes: opts.maxRoutes, framework: opts.framework });
-  return path.relative(root, appRoot) || undefined;
-}
-
 /**
  * What ends up on the assets branch. The diff overlay is an intermediate used
  * to locate the changed region; Pre beside Post is the comparison a reviewer
  * reads, so shipping the overlay is upload time and storage for nothing.
  */
 const PUBLISHED_KINDS = ['before', 'after', 'cropBefore', 'cropAfter'] as const;
-
-function packageHomepage(root: string): string | undefined {
-  const hp = readPackage(root)?.homepage;
-  return typeof hp === 'string' && /^https?:\/\//.test(hp) && !/github\.com/.test(hp) ? hp : undefined;
-}
 
 function headersFor(config: PrePostConfig, opts: PrCommandOptions): Record<string, string> {
   return resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [] })?.headers ?? {};
@@ -74,7 +62,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const settings = resolveSettings(config, opts);
   const ownerRepo = resolveOwnerRepo(root);
   const branch = currentBranch(root);
-  /** Tears down anything resolution started (a local baseline server). */
+  /** Tears down anything resolution started (a local dev server). */
   let cleanupComparison: () => Promise<void> = async () => undefined;
 
   // --- GitHub access (checked before any time is spent) -----------------------
@@ -87,24 +75,23 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     : Promise.resolve(null);
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
-  const devServer = opts.after || config.after ? Promise.resolve(opts.after || config.after!) : detectDevServer();
+  const explicitAfter = opts.after ?? config.after;
+  const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
 
+  // Detection is synchronous git + fs work, so run it while the PR lookup is in
+  // flight rather than after it.
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
+  const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const pr = await prLookup;
-  const appPrefix = detectAppPrefix(root, config, opts);
 
   // --- What are we comparing? ---------------------------------------------------
-  let comparison: Comparison;
-  try {
-    comparison = await resolveComparison({
-      gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
-      before: opts.before, after: opts.after ?? config.after,
-      devServer, probe: url => probeUrl(url, headersFor(config, opts)),
-      allowLocalBaseline: opts.localBaseline, log,
-    });
-  } catch (err) {
-    if (err instanceof NoPostError || err instanceof NoBaselineError) throw new NeedsHumanError(err.message);
-    throw err;
-  }
+  const headers = headersFor(config, opts);
+  const comparison: Comparison = await resolveComparison({
+    gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+    before: opts.before, after: explicitAfter,
+    devServer, probe: url => probeUrl(url, headers),
+    allowLocalBaseline: opts.localBaseline, log,
+  });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
@@ -115,11 +102,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     log('Saved production URL to .pre-post.json');
   }
 
-  const headers = headersFor(config, opts);
-
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
-  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
   let routes: string[];
   let skippedDynamic: string[] = [];
   if (opts.routes?.length) {
@@ -142,7 +126,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     await cleanupComparison();
     throw new NeedsHumanError(message);
   };
-  const [probe, afterProbe] = await Promise.all([probeUrl(before, headers), probeUrl(after, headers)]);
+  const [probe, afterProbe] = await Promise.all([
+    comparison.before.probe ?? probeUrl(before, headers),
+    comparison.after.probe ?? probeUrl(after, headers),
+  ]);
   if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
   if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
   if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
