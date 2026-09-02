@@ -18,10 +18,16 @@ It picks both sides itself:
 - **Post** (this branch) — the PR's preview deployment when one exists (Vercel, Cloudflare
   Pages, Netlify and Render all report these to GitHub), otherwise a local dev server.
 - **Pre** (the baseline) — `before` from `.pre-post.json`, otherwise the production
-  deployment for the commit this branch forked from.
+  deployment for the commit this branch forked from, otherwise that base commit itself,
+  checked out into a throwaway worktree and served locally.
 
 So on a PR with a preview deployment, no dev server and no checkout are needed — anyone on
 the team can run it against anyone's PR.
+
+The last baseline needs no network at all, so the tool still works inside a sandbox, a CI
+container, or behind an egress allowlist where no deployment URL is reachable. It also
+compares against exactly what the branch forked from, rendered in the same environment as
+the Post side. Pass `--no-local-baseline` to turn it off.
 
 ## Run
 

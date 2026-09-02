@@ -18,6 +18,7 @@ import { resolveAuth } from '../sessions.js';
 import { readPackage } from '../pkg.js';
 import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
 import { deploymentUrlForSha } from '../deployments.js';
+import { LocalBaseline, serveBaseCommit } from '../baseline.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -34,12 +35,14 @@ export interface PrCommandOptions extends Partial<Settings> {
   /** Publish assets but do not touch the PR */
   comment?: boolean;
   pr?: number;
+  /** Rebuild the baseline from the base commit when no URL is reachable. Default true. */
+  localBaseline?: boolean;
   version?: string;
   log?: (msg: string) => void;
 }
 
 /** Where a base URL came from, so failures can name the thing to change. */
-export type UrlSource = 'flag' | 'config' | 'deployment' | 'dev-server' | 'homepage';
+export type UrlSource = 'flag' | 'config' | 'deployment' | 'dev-server' | 'homepage' | 'local-base';
 
 const SOURCE_FIX: Record<UrlSource, string> = {
   flag: 'Check the URL you passed.',
@@ -47,6 +50,7 @@ const SOURCE_FIX: Record<UrlSource, string> = {
   deployment: 'That URL came from the deployment GitHub has for this commit — the deploy may have been removed, or your network may not reach it.',
   'dev-server': 'Is the dev server still running?',
   homepage: 'That URL came from "homepage" in package.json. Pass --before to override it.',
+  'local-base': 'The base commit was served locally but stopped responding.',
 };
 
 function unreachable(side: string, url: string, source: UrlSource): string {
@@ -70,6 +74,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const settings = resolveSettings(config, opts);
   const ownerRepo = resolveOwnerRepo(root);
   const branch = currentBranch(root);
+  /** Dev server for the base commit, when we had to build one. */
+  let baseline: LocalBaseline | null = null;
 
   // --- GitHub access (checked before any time is spent) -----------------------
   const gh = opts.dryRun ? null : new GitHub(requireToken());
@@ -131,7 +137,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       'No production URL known for the "before" state. Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).',
     );
   }
-  const before = normalizeUrl(beforeRaw);
+  let before = normalizeUrl(beforeRaw);
   if (opts.before && config.before !== before) {
     updateConfig(root, { before });
     log('Saved production URL to .pre-post.json');
@@ -143,12 +149,14 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
+  // Where the app's package.json lives — the local baseline needs it to install and boot.
+  const appPrefix = path.relative(root, detection.appRoot) || undefined;
   let routes: string[];
   let skippedDynamic: string[] = [];
   if (opts.routes?.length) {
     routes = opts.routes;
   } else {
-    const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
     routes = detection.routes.map(r => r.path);
     skippedDynamic = detection.skippedDynamic;
     log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
@@ -160,11 +168,29 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   }
 
   // --- Reachability --------------------------------------------------------------
-  const [probe, afterProbe] = await Promise.all([beforeProbe, probeUrl(after, headers)]);
-  if (probe.status === null) throw new NeedsHumanError(unreachable('Pre', before, beforeSource));
-  if (probe.status === 401 || probe.status === 403) throw new NeedsHumanError(authHint({ url: before, vercel: probe.vercel }));
-  if (afterProbe.status === null) throw new NeedsHumanError(unreachable('Post', after, afterSource));
-  if (afterProbe.status === 401 || afterProbe.status === 403) throw new NeedsHumanError(authHint({ url: after, vercel: afterProbe.vercel }));
+  let [probe, afterProbe] = await Promise.all([beforeProbe, probeUrl(after, headers)]);
+
+  // An unreachable baseline is not fatal. Rebuild it from the base commit and
+  // serve it locally — no network, so this is what keeps the tool working
+  // inside a sandbox or behind an egress allowlist.
+  if (probe.status === null && pr && opts.localBaseline !== false) {
+    log(`Cannot reach ${before}; rebuilding the baseline from the base commit instead.`);
+    baseline = await serveBaseCommit({ repoRoot: root, sha: pr.base.sha, appPrefix, log });
+    if (baseline) {
+      before = normalizeUrl(baseline.url);
+      beforeSource = 'local-base';
+      probe = await probeUrl(before, headers);
+    }
+  }
+  // Any bail-out from here on must not leave a dev server behind.
+  const fail = async (message: string): Promise<never> => {
+    if (baseline) await baseline.stop();
+    throw new NeedsHumanError(message);
+  };
+  if (probe.status === null) await fail(unreachable('Pre', before, beforeSource));
+  if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
+  if (afterProbe.status === null) await fail(unreachable('Post', after, afterSource));
+  if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
 
   const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
 
@@ -188,6 +214,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outcomes = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log });
   } finally {
     await closeBrowser();
+    if (baseline) await baseline.stop();
   }
 
   // --- Publish -------------------------------------------------------------------
