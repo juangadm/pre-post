@@ -239,9 +239,10 @@ export async function upsertPrDescription(
   const existing = pr.body ?? '';
   const start = existing.indexOf(open);
   const end = existing.indexOf(close);
+  // Prepend: the screenshots are the first thing a reviewer should see.
   const next = start !== -1 && end > start
     ? existing.slice(0, start) + section + existing.slice(end + close.length)
-    : (existing.trim() ? existing.trimEnd() + '\n\n' : '') + section;
+    : section + (existing.trim() ? '\n\n' + existing.trimStart() : '');
   if (next === existing) return { html_url: pr.html_url, updated: true };
   try {
     await gh.request('PATCH', `/repos/${ownerRepo}/pulls/${prNumber}`, { body: next });
