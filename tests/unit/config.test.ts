@@ -5,7 +5,7 @@ import path from 'path';
 import { loadConfig, saveConfig, updateConfig, CONFIG_FILENAME, CONFIG_DEFAULTS } from '../../src/config';
 
 let root: string;
-beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-config-')); });
+beforeEach(() => { root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-config-'))); });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe('config', () => {

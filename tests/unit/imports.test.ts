@@ -14,7 +14,7 @@ function write(rel: string, content: string): string {
 }
 
 beforeAll(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-imports-'));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-imports-')));
   write('tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['./src/*'] } } }));
   write('src/app/page.tsx', "import Hero from '@/components/hero';\nexport default function Page() { return <Hero/>; }");
   write('src/app/pricing/page.tsx', "import { Card } from '../../components/card';\nexport default () => <Card/>;");

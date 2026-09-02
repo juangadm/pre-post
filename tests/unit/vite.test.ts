@@ -12,7 +12,7 @@ function write(rel: string, content: string): void {
 }
 
 beforeAll(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-vite-'));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-vite-')));
   write('package.json', JSON.stringify({ devDependencies: { vite: '^5' } }));
   write('vite.config.ts', 'export default {}');
   write('src/App.tsx', `
