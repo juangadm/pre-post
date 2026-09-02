@@ -125,6 +125,24 @@ export interface LaunchOptions {
 }
 
 /**
+ * Proxy settings for the capture browser, from the environment.
+ *
+ * Node's fetch and Chromium each ignore the standard proxy variables unless
+ * told, so on a corporate network or in a sandboxed container the probes can
+ * succeed while every capture times out. NO_PROXY is passed through so local
+ * dev servers still connect directly.
+ */
+export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: string; bypass?: string } | undefined {
+  const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!server) return undefined;
+  const noProxy = env.NO_PROXY || env.no_proxy;
+  // Playwright wants a comma-separated bypass list and always resolves
+  // loopback directly, so only non-empty custom entries are worth passing.
+  const bypass = noProxy ? noProxy.split(',').map(h => h.trim()).filter(Boolean).join(',') : '';
+  return { server, ...(bypass ? { bypass } : {}) };
+}
+
+/**
  * Launch Chromium with a fallback chain:
  * 1. Explicit custom path (PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH) — override, fails hard
  * 2. Bundled Playwright Chromium (headless shell when headless)
@@ -133,10 +151,11 @@ export interface LaunchOptions {
  */
 export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> {
   const headless = opts.headless ?? true;
+  const proxy = proxyFromEnv();
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   if (customPath) {
     try {
-      const b = await chromium.launch({ headless, executablePath: customPath, args: LAUNCH_ARGS });
+      const b = await chromium.launch({ headless, executablePath: customPath, args: LAUNCH_ARGS, proxy });
       browserLabel = `custom (${customPath})`;
       return b;
     } catch (err) {
@@ -149,15 +168,15 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> 
   }
 
   const strategies: Array<{ label: string; options: Parameters<typeof chromium.launch>[0] }> = [
-    { label: 'bundled', options: { headless, args: LAUNCH_ARGS } },
+    { label: 'bundled', options: { headless, args: LAUNCH_ARGS, proxy } },
   ];
   if (headless) {
     for (const cachedPath of findCachedChromium()) {
-      strategies.push({ label: `cached (${cachedPath})`, options: { headless, executablePath: cachedPath, args: LAUNCH_ARGS } });
+      strategies.push({ label: `cached (${cachedPath})`, options: { headless, executablePath: cachedPath, args: LAUNCH_ARGS, proxy } });
     }
   }
-  strategies.push({ label: 'system chrome', options: { headless, channel: 'chrome', args: LAUNCH_ARGS } });
-  strategies.push({ label: 'system edge', options: { headless, channel: 'msedge', args: LAUNCH_ARGS } });
+  strategies.push({ label: 'system chrome', options: { headless, channel: 'chrome', args: LAUNCH_ARGS, proxy } });
+  strategies.push({ label: 'system edge', options: { headless, channel: 'msedge', args: LAUNCH_ARGS, proxy } });
 
   let lastError: Error | null = null;
   for (const { label, options } of strategies) {
