@@ -56,9 +56,8 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
       const pre = u.cropBefore ?? u.before;
       const post = u.cropAfter ?? u.after;
       lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
-      lines.push('<details>', `<summary>Full page and diff</summary>`, '');
-      const diffCol = u.diff ? ` ![Diff](${u.diff}) |` : '';
-      lines.push(`| Pre (full) | Post (full) |${u.diff ? ' Diff |' : ''}`, `|:---:|:---:|${u.diff ? ':---:|' : ''}`, `| ![Pre full](${u.before}) | ![Post full](${u.after}) |${diffCol}`, '');
+      lines.push('<details>', `<summary>Full page</summary>`, '');
+      lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
       lines.push('</details>', '');
     }
   }

@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ARTIFACT_KINDS, ArtifactSet, Framework, PrRunResult } from '../types.js';
+import { ArtifactSet, Framework, PrRunResult } from '../types.js';
 import { CONFIG_FILENAME, loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
@@ -56,6 +56,13 @@ const SOURCE_FIX: Record<UrlSource, string> = {
 function unreachable(side: string, url: string, source: UrlSource): string {
   return `Cannot reach ${url} (${side}). ${SOURCE_FIX[source]}`;
 }
+
+/**
+ * What ends up on the assets branch. The diff overlay is an intermediate used
+ * to locate the changed region; Pre beside Post is the comparison a reviewer
+ * reads, so shipping the overlay is upload time and storage for nothing.
+ */
+const PUBLISHED_KINDS = ['before', 'after', 'cropBefore', 'cropAfter'] as const;
 
 function packageHomepage(root: string): string | undefined {
   const hp = readPackage(root)?.homepage;
@@ -224,7 +231,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;
     const files: AssetFile[] = [];
     for (const o of changed) {
-      for (const kind of ARTIFACT_KINDS) {
+      for (const kind of PUBLISHED_KINDS) {
         const local = o.files![kind];
         if (local) files.push({ path: keyFor(o, kind), content: fs.readFileSync(local) });
       }
@@ -233,7 +240,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     const published = await publishAssets(gh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
-      for (const kind of ARTIFACT_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
+      for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
       o.urls = urls as ArtifactSet;
     }
   }

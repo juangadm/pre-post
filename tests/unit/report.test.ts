@@ -33,7 +33,8 @@ describe('buildComment', () => {
     expect(md).toContain('### `/` — Desktop');
     expect(md).toContain('| ![Pre](https://u/pre-crop.png) | ![Post](https://u/post-crop.png) |');
     expect(md).toContain('<details>');
-    expect(md).toContain('![Diff](https://u/diff.png)');
+    // Pre beside Post is the comparison; the overlay is not shown.
+    expect(md).not.toContain('diff.png');
   });
 
   it('collapses unchanged captures into one line', () => {
