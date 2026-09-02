@@ -17,8 +17,7 @@ import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { readPackage } from '../pkg.js';
 import { CaptureTask, joinUrl, normalizeUrl, routeSlug, runTasks } from '../run.js';
-import { deploymentUrlForSha, previewUrlFromComments } from '../deployments.js';
-import { LocalBaseline, serveBaseCommit } from '../baseline.js';
+import { Comparison, describeComparison, NoBaselineError, NoPostError, resolveComparison, UrlSource } from '../comparison.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -41,22 +40,6 @@ export interface PrCommandOptions extends Partial<Settings> {
   log?: (msg: string) => void;
 }
 
-/** Where a base URL came from, so failures can name the thing to change. */
-export type UrlSource = 'flag' | 'config' | 'deployment' | 'dev-server' | 'homepage' | 'local-base';
-
-const SOURCE_FIX: Record<UrlSource, string> = {
-  flag: 'Check the URL you passed.',
-  config: `Check "before" in ${CONFIG_FILENAME}.`,
-  deployment: 'That URL came from the deployment GitHub has for this commit — the deploy may have been removed, or your network may not reach it.',
-  'dev-server': 'Is the dev server still running?',
-  homepage: 'That URL came from "homepage" in package.json. Pass --before to override it.',
-  'local-base': 'The base commit was served locally but stopped responding.',
-};
-
-function unreachable(side: string, url: string, source: UrlSource): string {
-  return `Cannot reach ${url} (${side}). ${SOURCE_FIX[source]}`;
-}
-
 /** Where the app's package.json lives, relative to the repo root. */
 function detectAppPrefix(root: string, config: PrePostConfig, opts: PrCommandOptions): string | undefined {
   const { appRoot } = detectRoutesForRepo({ cwd: root, config, maxRoutes: opts.maxRoutes, framework: opts.framework });
@@ -75,6 +58,10 @@ function packageHomepage(root: string): string | undefined {
   return typeof hp === 'string' && /^https?:\/\//.test(hp) && !/github\.com/.test(hp) ? hp : undefined;
 }
 
+function headersFor(config: PrePostConfig, opts: PrCommandOptions): Record<string, string> {
+  return resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [] })?.headers ?? {};
+}
+
 function runId(now: Date): string {
   return now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 }
@@ -87,8 +74,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const settings = resolveSettings(config, opts);
   const ownerRepo = resolveOwnerRepo(root);
   const branch = currentBranch(root);
-  /** Dev server for the base commit, when we had to build one. */
-  let baseline: LocalBaseline | null = null;
+  /** Tears down anything resolution started (a local baseline server). */
+  let cleanupComparison: () => Promise<void> = async () => undefined;
 
   // --- GitHub access (checked before any time is spent) -----------------------
   const gh = opts.dryRun ? null : new GitHub(requireToken());
@@ -103,65 +90,32 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const devServer = opts.after || config.after ? Promise.resolve(opts.after || config.after!) : detectDevServer();
 
   const pr = await prLookup;
+  const appPrefix = detectAppPrefix(root, config, opts);
 
-  // --- "Post": the branch under review ----------------------------------------
-  // A preview deployment is preferred over a local dev server so that anyone on
-  // the team can screenshot a PR without checking the branch out.
-  let after: string;
-  let afterSource: UrlSource;
-  const afterOverride = opts.after || config.after;
-  const preview = !afterOverride && gh && pr
-    ? (await deploymentUrlForSha(gh, ownerRepo, pr.head.sha, { production: false }))
-      ?? (await previewUrlFromComments(gh, ownerRepo, pr.number, { appPrefix: detectAppPrefix(root, config, opts) }))
-    : null;
-  if (afterOverride) {
-    after = normalizeUrl(afterOverride);
-    afterSource = opts.after ? 'flag' : 'config';
-  } else if (preview) {
-    after = normalizeUrl(preview.url);
-    afterSource = 'deployment';
-    log(`Post: ${after} (${preview.environment} deployment for ${pr!.head.sha.slice(0, 7)})`);
-  } else {
-    const local = await devServer;
-    if (!local) {
-      throw new NeedsHumanError(
-        'No preview deployment for this commit and no dev server on the usual ports (3000, 5173, ...). Start the dev server (e.g. npm run dev), then re-run — or pass --after http://localhost:PORT.',
-      );
-    }
-    after = normalizeUrl(local);
-    afterSource = 'dev-server';
-    log(`Post: ${after} (local dev server)`);
+  // --- What are we comparing? ---------------------------------------------------
+  let comparison: Comparison;
+  try {
+    comparison = await resolveComparison({
+      gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+      before: opts.before, after: opts.after ?? config.after,
+      devServer, probe: url => probeUrl(url, headersFor(config, opts)),
+      allowLocalBaseline: opts.localBaseline, log,
+    });
+  } catch (err) {
+    if (err instanceof NoPostError || err instanceof NoBaselineError) throw new NeedsHumanError(err.message);
+    throw err;
   }
+  cleanupComparison = comparison.stop;
+  for (const line of describeComparison(comparison)) log(line);
 
-  // --- "Pre": what this branch forked from ------------------------------------
-  let beforeRaw = opts.before || config.before;
-  let beforeSource: UrlSource = opts.before ? 'flag' : beforeRaw ? 'config' : 'flag';
-  if (!beforeRaw && gh && pr) {
-    const baseline = await deploymentUrlForSha(gh, ownerRepo, pr.base.sha, { production: true });
-    if (baseline) {
-      beforeRaw = baseline.url;
-      beforeSource = 'deployment';
-      log(`Pre: ${beforeRaw} (${baseline.environment} deployment for ${pr.base.sha.slice(0, 7)})`);
-    }
-  }
-  if (!beforeRaw) {
-    beforeRaw = packageHomepage(root);
-    if (beforeRaw) beforeSource = 'homepage';
-  }
-  if (!beforeRaw) {
-    throw new NeedsHumanError(
-      'No production URL known for the "before" state. Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).',
-    );
-  }
-  let before = normalizeUrl(beforeRaw);
+  const before = comparison.before.url;
+  const after = comparison.after.url;
   if (opts.before && config.before !== before) {
     updateConfig(root, { before });
     log('Saved production URL to .pre-post.json');
   }
 
-  // Headers alone are enough to probe production; cookies need the final URL list.
-  const headers = resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [before] })?.headers ?? {};
-  const beforeProbe = probeUrl(before, headers);
+  const headers = headersFor(config, opts);
 
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
@@ -181,29 +135,17 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     }
   }
 
-  // --- Reachability --------------------------------------------------------------
-  let [probe, afterProbe] = await Promise.all([beforeProbe, probeUrl(after, headers)]);
-
-  // An unreachable baseline is not fatal. Rebuild it from the base commit and
-  // serve it locally — no network, so this is what keeps the tool working
-  // inside a sandbox or behind an egress allowlist.
-  if (probe.status === null && pr && opts.localBaseline !== false) {
-    log(`Cannot reach ${before}; rebuilding the baseline from the base commit instead.`);
-    baseline = await serveBaseCommit({ repoRoot: root, sha: pr.base.sha, appPrefix: detectAppPrefix(root, config, opts), log });
-    if (baseline) {
-      before = normalizeUrl(baseline.url);
-      beforeSource = 'local-base';
-      probe = await probeUrl(before, headers);
-    }
-  }
-  // Any bail-out from here on must not leave a dev server behind.
+  // --- Reachability ---------------------------------------------------------------
+  // Resolution already probed whatever it chose; this catches a side that died
+  // in between, and names which one so the message is actionable.
   const fail = async (message: string): Promise<never> => {
-    if (baseline) await baseline.stop();
+    await cleanupComparison();
     throw new NeedsHumanError(message);
   };
-  if (probe.status === null) await fail(unreachable('Pre', before, beforeSource));
+  const [probe, afterProbe] = await Promise.all([probeUrl(before, headers), probeUrl(after, headers)]);
+  if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
   if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
-  if (afterProbe.status === null) await fail(unreachable('Post', after, afterSource));
+  if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
   if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
 
   const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
@@ -228,7 +170,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outcomes = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log });
   } finally {
     await closeBrowser();
-    if (baseline) await baseline.stop();
+    await cleanupComparison();
   }
 
   // --- Publish -------------------------------------------------------------------

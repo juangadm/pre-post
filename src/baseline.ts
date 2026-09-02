@@ -111,9 +111,19 @@ export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBasel
   let child: ChildProcess | null = null;
   let stopped = false;
 
+  // A detached dev server survives Ctrl-C and keeps its port, so tear it down
+  // on the signals that end the run as well as on the normal path.
+  const onSignal = () => { void cleanup(); };
+  const untrap = () => {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    process.off('exit', onSignal);
+  };
+
   const cleanup = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    untrap();
     if (child && child.exitCode === null) {
       try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
     }
@@ -162,6 +172,8 @@ export async function serveBaseCommit(opts: BaselineOptions): Promise<LocalBasel
     await cleanup();
     return null;
   }
-  log(`Pre: ${url} (base commit ${opts.sha.slice(0, 7)}, served locally)`);
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  process.once('exit', onSignal);
   return { url, stop: cleanup };
 }
