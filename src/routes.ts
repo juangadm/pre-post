@@ -275,13 +275,16 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
 
   // Choose the app root that owns the most changed files (deepest wins ties).
+  // The repo root contains every changed file, so it would always match at least
+  // as many as any app nested inside it. Score the nested app roots only, and
+  // fall back to the repo root when none of them owns a changed file.
   let appRoot = root;
-  let best = -1;
+  let best = 0;
   for (const candidate of findAppRoots(root)) {
     const rel = toPosix(path.relative(root, candidate));
-    const prefix = rel ? rel + '/' : '';
-    const count = allChanged.filter(f => f.startsWith(prefix)).length;
-    if (count > best || (count === best && candidate.length > appRoot.length)) {
+    if (!rel) continue;
+    const count = allChanged.filter(f => f.startsWith(rel + '/')).length;
+    if (count > best || (count === best && count > 0 && candidate.length > appRoot.length)) {
       best = count;
       appRoot = candidate;
     }

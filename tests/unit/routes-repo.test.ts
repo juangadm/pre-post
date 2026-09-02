@@ -91,6 +91,21 @@ describe('detectRoutesForRepo', () => {
   });
 });
 
+describe('app root selection is not derailed by root-level files', () => {
+  it('keeps the nested app root when the diff also touches repo-root files', () => {
+    const changed = ['README.md', '.github/workflows/ci.yml', 'apps/web/src/app/page.tsx'];
+    const result = detectRoutesForRepo({ cwd: root, changedFiles: changed });
+    expect(path.relative(root, result.appRoot)).toBe(path.join('apps', 'web'));
+    expect(result.framework).toBe('nextjs-app');
+    expect(result.routes.find(r => r.path === '/')?.confidence).toBe('high');
+  });
+
+  it('falls back to the repo root when no nested app owns a changed file', () => {
+    const result = detectRoutesForRepo({ cwd: root, changedFiles: ['README.md'] });
+    expect(result.appRoot).toBe(root);
+  });
+});
+
 describe('isDynamicRoute', () => {
   it('recognizes bracket, colon, and splat segments', () => {
     expect(isDynamicRoute('/blog/[slug]')).toBe(true);
