@@ -1,272 +1,134 @@
 # pre-post
 
-Visual diff tool that captures pre/post screenshots for PRs. Use it as a Claude Code skill for automatic visual documentation, or run it directly from the CLI.
+Before/after screenshots for pull requests. One command detects the routes your branch
+changed, captures them on production ("Pre") and on your dev server ("Post"), pixel-diffs
+them, uploads the images to GitHub, and posts a single comment on the PR that a reviewer
+can judge at a glance.
 
-> Originally forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) / Vercel Labs.
+> Originally forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by James Clements / Vercel Labs.
 
-## What Changed from the Original
+```
+$ npx -y @juangadm/pre-post@latest pr
 
-| Area | before-and-after | pre-post |
-|------|-----------------|----------|
-| Browser engine | `agent-browser` (Vercel-proprietary) | **Playwright** (direct dependency) |
-| Screenshot quality | 1x | **2x retina** (`deviceScaleFactor: 2`) |
-| Route detection | Manual | **Automatic** from `git diff` (Next.js App/Pages Router, generic fallback) |
-| Responsive capture | Single viewport | **Desktop + mobile** per route (`--responsive`) |
-| CLI subcommands | URL pairs only | `detect`, `compare`, `run` subcommands |
-| Skill orchestration | Basic capture | Full workflow: route detection, Claude refinement, user approval, PR posting |
-| Font/animation handling | None | Waits for `document.fonts.ready`, disables CSS animations |
-
-## How It Works
-
-```mermaid
-flowchart TD
-    A[pre-post] --> B{Mode?}
-
-    B -->|Manual| C["pre-post url1 url2"]
-    B -->|Subcommand| D{"detect | compare | run"}
-    B -->|Claude Code Skill| E["/pre-post"]
-
-    D -->|detect| F["Git: diff, staged, unstaged, untracked"]
-    D -->|compare| J
-    D -->|run| F
-
-    F --> G{Detect framework}
-    G -->|Next.js App Router| H[Map files → routes]
-    G -->|Next.js Pages Router| H
-    G -->|Generic| H
-    H --> I{Routes found?}
-    I -->|Yes| J[Route list with confidence]
-    I -->|No| J2["Default to /"]
-    J2 --> J
-
-    E --> E1[Pre-flight checks]
-    E1 --> F
-    E1 --> K[Claude refines routes]
-    K --> K1[User approves routes]
-    K1 --> J
-
-    C --> L[Playwright]
-    J --> L
-
-    L --> M{Launch Chromium}
-    M -->|"PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"| M1[Custom path — fail hard if invalid]
-    M -->|Auto-detect| M2[System Chrome → Bundled → Cached]
-    M1 --> P[Navigate + wait for network idle]
-    M2 --> P
-
-    P --> Q[Disable CSS animations]
-    Q --> R[Wait for document.fonts.ready]
-    R --> S[Take 2x retina screenshot]
-
-    S --> T[Save to ~/Downloads]
-    T --> T1{--markdown?}
-    T1 -->|No| U[Done]
-    T1 -->|Yes| V{Upload method}
-    V -->|Default| W["git-native: commit to .pre-post/"]
-    V -->|--upload-url| Y["HTTP: 0x0.st / Vercel Blob / PUT"]
-    W --> X[Build blob+SHA URL]
-    Y --> X
-    X --> Z[Markdown table]
-
-    Z --> Z1{Skill mode?}
-    Z1 -->|Yes| Z2[User approves screenshots]
-    Z2 --> Z3["gh pr edit — append to PR body"]
-    Z1 -->|No| Z4[Copy to clipboard]
-
-    style A fill:#4f46e5,color:#fff
-    style L fill:#2563eb,color:#fff
-    style S fill:#059669,color:#fff
+Routes (nextjs-app, 41ms): /, /pricing
+  /                           medium src/app/page.tsx imports src/components/ui/button.tsx (2 hops)
+  /pricing                    medium src/app/pricing/page.tsx imports src/components/ui/button.tsx (2 hops)
+Capturing 8 screenshots (2 route(s) × 2 viewport(s)) ...
+  changed  /pricing @ mobile (1.42%, 1811ms)
+  changed  /pricing @ desktop (0.64%, 2036ms)
+  same     / @ mobile (0.00%, 1990ms)
+  same     / @ desktop (0.00%, 2211ms)
+Publishing 10 image(s) to acme/web@pre-post-assets ...
+Updated PR comment: https://github.com/acme/web/pull/42#issuecomment-1
+pre-post · PR #42 · 2 route(s) · 2 viewport(s) · 6.8s
+  /         desktop  no change
+  /         mobile   no change
+  /pricing  desktop  0.64% changed
+  /pricing  mobile   1.4% changed
+Comment: https://github.com/acme/web/pull/42#issuecomment-1
 ```
 
-## Prerequisites
+## How it works
 
-- **Node.js** 18+
-- **Chromium** — install once via Playwright:
-
-```bash
-npx playwright install chromium
-```
-
-## CI / Sandboxed Environments
-
-pre-post needs a Chromium binary. In restricted environments where `npx playwright install chromium` fails (CDN blocked):
-
-```bash
-# Point to a pre-installed Chrome/Chromium binary
-export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chrome
-
-# This is treated as an explicit override — pre-post will fail with a
-# clear error if the path is wrong, rather than silently falling back.
-```
-
-When no custom path is set, pre-post auto-detects in order: system Chrome, bundled Playwright Chromium, then any builds in `~/.cache/ms-playwright/`.
-
-If no browser is available at all, use image-only mode:
-
-```bash
-pre-post before.png after.png --markdown
-```
-
-**Proxy URLs**: If your git remote uses a proxy (e.g., `http://proxy@host/git/owner/repo`), set the repo explicitly:
-
-```bash
-export GH_REPO=owner/repo
-```
-
-**Google Fonts**: Container egress proxies typically block `fonts.googleapis.com`.
-Screenshots will render with system font fallbacks. This is cosmetic only —
-`document.fonts.ready` still resolves and layout is preserved.
+1. **Routes.** Diffs the branch against the merge base with `main`, then follows the import
+   graph: a change to `components/ui/button.tsx` marks every page that imports it. Next.js
+   App Router and Pages Router, Vite apps (React Router, file-based `src/pages`), and a
+   generic fallback. Monorepos are handled by picking the app that owns the changed files.
+2. **Capture.** Playwright + Chromium headless shell. Fixed clock, reduced motion,
+   animations finished, caret hidden, fonts and images settled, layout stable across frames,
+   lazy content primed. 2x device scale, full page (capped at 2400 CSS px), desktop + mobile.
+   All routes and viewports run concurrently.
+3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed,
+   the bounding box, a red-highlight image, and a tight crop of the changed region.
+4. **Publish.** Images go to a `pre-post-assets` branch in the same repository via the GitHub
+   API, as one commit per run. Nothing is committed to the PR branch, no CI is triggered,
+   and the blob URLs render on private repos. `pre-post prune` removes images for PRs
+   closed more than 90 days ago.
+5. **Comment.** One sticky comment per PR, updated in place on every run. Changed routes show
+   a Pre/Post crop with the full page and diff collapsed underneath; unchanged routes fold
+   into a single line.
 
 ## Install
 
-```bash
-npm install -D @juangadm/pre-post
-```
+Nothing to install. `npx -y @juangadm/pre-post@latest pr` downloads the CLI and, on first
+use, the Chromium headless shell (~80 MB). You need Node 20+ and a GitHub token: either
+`gh auth login` or `GH_TOKEN`.
 
-## Basic Use
-
-### As a Claude Code Skill (recommended)
-
-After making visual UI changes, say `/pre-post` or "take pre and post screenshots". Claude will:
-
-1. Detect affected routes from your git diff
-2. Propose routes for your approval
-3. Capture desktop + mobile screenshots (production vs localhost)
-4. Show you the screenshots for approval
-5. Upload and append markdown to your PR
-
-### From the CLI
-
-Capture any two URLs:
+As a Claude Code skill:
 
 ```bash
-pre-post site.com localhost:3000
+npx skills add juangadm/pre-post -y
 ```
 
-Use existing images:
+Then say `/pre-post` after making UI changes.
+
+## Usage
 
 ```bash
-pre-post before.png after.png
+pre-post pr                                  # everything, on the current branch's PR
+pre-post pr --before https://acme.com        # first run in a repo (saved to .pre-post.json)
+pre-post pr --routes /pricing,/docs          # explicit routes
+pre-post pr --viewports desktop,1440x900     # custom viewports
+pre-post pr --dry-run                        # capture + diff locally, post nothing
+pre-post pr --json                           # machine-readable output
+
+pre-post https://acme.com http://localhost:3000 --routes /pricing   # ad-hoc comparison
+pre-post before.png after.png                # diff two images
+pre-post detect                              # which routes does this branch touch?
+pre-post login https://staging.acme.com      # sign in once; the session is reused
+pre-post prune --days 90                     # clean up the assets branch
+pre-post doctor                              # browser, token, dev server, config
 ```
 
-## CLI Subcommands
+When something needs a human, the CLI exits with code 3 and one sentence saying what to do
+(log in, start the dev server, pass `--before`). Re-running picks up where it left off.
 
-### `detect` -- Route Detection
+## Configuration
 
-Detect affected routes from git changes:
+Optional `.pre-post.json` in the repo root:
+
+```json
+{
+  "before": "https://acme.com",
+  "routes": ["/"],
+  "samples": { "/blog/[slug]": "/blog/hello-world" },
+  "viewports": ["desktop", "mobile"],
+  "fullPage": true,
+  "maxHeight": 2400,
+  "scale": 2,
+  "threshold": 0.001,
+  "minChangedPixels": 40,
+  "maxRoutes": 6,
+  "ignore": ["apps/docs"],
+  "headers": {},
+  "assetsBranch": "pre-post-assets"
+}
+```
+
+Environment:
+
+| Variable | Purpose |
+|---|---|
+| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (default: `gh auth token`) |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on the production URL |
+| `PRE_POST_CONCURRENCY` | Parallel pages (default 6) |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use a specific Chromium binary |
+| `GH_REPO` | `owner/repo` when the remote URL cannot be parsed |
+
+## Library
+
+```ts
+import { runPr, captureScreenshot, diffImages, detectRoutesForRepo } from '@juangadm/pre-post';
+```
+
+## Development
 
 ```bash
-pre-post detect                        # Auto-detect framework
-pre-post detect --framework nextjs-app  # Force framework
+pnpm install
+pnpm build
+pnpm test:unit
+TEST_BROWSER=true pnpm test        # needs a Chromium; npx playwright-core install chromium-headless-shell
 ```
-
-Outputs JSON with route paths, confidence levels, and source files.
-
-### `compare` -- URL Comparison
-
-Compare pre/post states across routes:
-
-```bash
-pre-post compare --before-base https://prod.com --after-base http://localhost:3000
-pre-post compare --before-base URL --after-base URL --routes /dashboard,/settings
-pre-post compare --before-base URL --after-base URL --responsive  # Desktop + mobile
-```
-
-### `run` -- Full Auto
-
-Combines `detect` + `compare`:
-
-```bash
-pre-post run --before-base https://prod.com --after-base http://localhost:3000
-```
-
-## Options
-
-Capture a specific element using a CSS selector:
-
-```bash
-pre-post url1 url2 ".hero"
-```
-
-Use different selectors for pre and post:
-
-```bash
-pre-post url1 url2 ".old" ".new"
-```
-
-Capture at mobile (375x812), tablet (768x1024), or custom viewport:
-
-```bash
-pre-post url1 url2 --mobile
-pre-post url1 url2 --size 1920x1080
-```
-
-Capture the entire scrollable page:
-
-```bash
-pre-post url1 url2 --full
-```
-
-Output a markdown table for PR descriptions:
-
-```bash
-pre-post url1 url2 --markdown
-```
-
-Save to a custom location:
-
-```bash
-pre-post url1 url2 --output ./screenshots
-```
-
-Upload to a custom image storage service:
-
-```bash
-pre-post url1 url2 --markdown --upload-url https://my-s3-bucket.amazonaws.com
-```
-
-By default, `--markdown` commits screenshots to the PR branch (under `.pre-post/`) and serves them via GitHub blob URLs pinned to the commit SHA. This works for both public and private repos. Use `--upload-url` to point at your own storage instead. It auto-detects the protocol for 0x0.st, Vercel Blob, and any generic PUT endpoint (like S3). Screenshots auto-append to the PR body, newest on top.
-
-## Route Detection
-
-Pre-post automatically maps `git diff --name-only` to affected UI routes:
-
-| Changed File | Detected Route | Confidence |
-|---|---|---|
-| `app/page.tsx` | `/` | high |
-| `app/dashboard/page.tsx` | `/dashboard` | high |
-| `app/(marketing)/about/page.tsx` | `/about` (strips route groups) | high |
-| `app/blog/[slug]/page.tsx` | `/blog/[slug]` | high |
-| `app/dashboard/layout.tsx` | `/dashboard` | medium |
-| `app/dashboard/components/Chart.tsx` | `/dashboard` | medium |
-| `globals.css`, `tailwind.config.ts` | `/` | low |
-| `app/api/*`, `middleware.ts` | Skipped (no visual) | -- |
-
-Supports:
-- **Next.js App Router** (route groups, dynamic segments, parallel routes, catch-all)
-- **Next.js Pages Router** (`pages/`, `_app.tsx`, `_document.tsx`)
-- **Generic fallback** (defaults to `/`)
-
-## Add Skill
-
-Install as an agent skill using the [`skills` CLI](https://github.com/vercel-labs/skills):
-
-```bash
-npx skills add juangadm/pre-post          # interactive — pick your agent(s)
-npx skills add juangadm/pre-post -y       # auto-install to all universal agents
-npx skills add juangadm/pre-post -y -g    # install globally (all projects)
-```
-
-This copies `skill/SKILL.md` into the appropriate directory for your agent (e.g., `.claude/skills/` for Claude Code, `.agents/skills/` for Amp/Codex/Gemini CLI, etc.).
-
-The skill uses `gh` to detect the associated PR and Playwright for screenshots.
-
-> **Note:** The npm package (`@juangadm/pre-post`) is published on [npmjs.com](https://www.npmjs.com/package/@juangadm/pre-post), not GitHub Packages — so the "Packages" section on the GitHub repo page will show none.
-
-## Credits
-
-- Original [before-and-after](https://github.com/vercel-labs/before-and-after) by [James Clements](https://github.com/jamesclement) at [Vercel Labs](https://github.com/vercel-labs)
-- Browser automation powered by [Playwright](https://playwright.dev/)
 
 ## License
 
