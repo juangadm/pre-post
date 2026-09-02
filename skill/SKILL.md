@@ -1,251 +1,49 @@
 ---
 name: pre-post
-description: Captures before/after screenshots of web pages for visual comparison in PRs. Use when user says "take before and after", "screenshot comparison", "visual diff", "PR screenshots", or after making visual UI changes.
+description: Before/after screenshots for the current PR. Use when the user says "take before and after", "pre-post", "screenshot comparison", "visual diff", "PR screenshots", or after making visual UI changes.
 allowed-tools:
+  - Bash(npx -y @juangadm/pre-post@latest *)
   - Bash(npx pre-post *)
   - Bash(pre-post *)
-  - Bash(*/upload-and-copy.sh *)
-  - Bash(curl -s -o /dev/null -w *)
-  - Bash(gh pr view *)
-  - Bash(gh pr edit *)
-  - Bash(lsof -i *)
-  - Bash(mkdir -p /tmp/pre-post)
-  - Bash(git diff *)
 ---
 
-# Pre-Post Screenshot Skill
+# pre-post
 
-> **Package:** `pre-post`
-> Visual diff tool for PRs — fastest path from code change to visual documentation.
+One command does everything: detects the routes this branch changed, screenshots them on
+production ("Pre") and on the local dev server ("Post") at desktop and mobile, pixel-diffs
+them, uploads the images to a `pre-post-assets` branch, and posts or updates a single
+comment on the open PR. The human reviews on GitHub.
 
-## Agent Behavior Rules
-
-**DO NOT:**
-- Switch git branches, stash changes, start dev servers, or assume what "before" is
-- Use `--full` unless user explicitly asks for full page / full scroll capture
-- Post screenshots to PR without user approval
-
-**DO:**
-- Use `--markdown` when user wants PR integration or markdown output
-- Use `--responsive` to capture both desktop and mobile viewports
-- Use `--mobile` / `--tablet` if user mentions phone, mobile, tablet, responsive
-- Assume current state is **After** (localhost = after, production = before)
-- Show screenshots to user before posting to PR
-- If user provides only one URL, **ASK**: "What URL should I use for the 'before' state? (production URL, preview deployment, or another local port)"
-
-## Execution Order
-
-### 1. Pre-flight Checks
+## Run
 
 ```bash
-# Detect running dev server
-lsof -i :3000 2>/dev/null || lsof -i :3001 2>/dev/null || lsof -i :5173 2>/dev/null || lsof -i :8080 2>/dev/null
+npx -y @juangadm/pre-post@latest pr
 ```
 
-If no dev server is running, tell the user to start one.
+Add `--before https://production-url` the first time in a repo (it is saved to
+`.pre-post.json`). Add `--routes /a,/b` when the user names pages explicitly.
 
-```bash
-# Check production URL is accessible
-curl -s -o /dev/null -w "%{http_code}" "<production-url>"
-```
+## Rules
 
-- **200** → proceed
-- **401/403** → warn user: "Production URL requires authentication. Options: (1) provide a public URL, (2) skip 'before' and capture after-only, (3) provide auth cookies"
-- **No production URL** → "after-only" mode: screenshot localhost only, label as current state
+- Run the command once. Do not open, read, or describe the screenshot files; the PR
+  comment is the deliverable. Report the summary the command prints, plus the comment link.
+- Do not start dev servers, switch branches, or use a browser tool yourself.
+- Exit code 3 means a human must do one thing (log in, start the dev server, pass
+  `--before`). Relay that one sentence verbatim and stop.
+- Do not use `--dry-run` unless the user asks to preview without posting.
+- If the summary lists routes that "need a sample URL", ask the user for one example URL per
+  dynamic route and add it under `"samples"` in `.pre-post.json`, then re-run.
 
-### 2. Route Detection + Refinement
+## Options worth knowing
 
-```bash
-# Detect affected routes from git diff
-npx pre-post detect
-```
+| Flag | Use when |
+|------|----------|
+| `--routes /a,/b` | The user names the pages |
+| `--viewports desktop` | Desktop only (default is desktop + mobile) |
+| `--viewport-only` | First screen only instead of full page |
+| `--pr <n>` | The branch has several PRs or the lookup fails |
+| `--dry-run` | Preview locally, post nothing |
+| `--header k=v` / `--cookie k=v` | The site needs auth headers or cookies |
 
-This outputs JSON with detected routes, confidence levels, and source files.
-
-**Claude's role:** Review the JSON output using conversation context:
-- Add routes you know are affected from the work done in this session
-- Remove false positives (e.g., API-only changes)
-- For dynamic routes (e.g., `/blog/[slug]`), ask user for a sample value
-- Present to user: "I'll screenshot these routes: `/dashboard`, `/settings`. Want to add or change any?"
-
-### 3. Screenshot Capture
-
-**Option A: CLI (preferred — deterministic)**
-
-```bash
-# Single route, desktop only
-npx pre-post compare \
-  --before-base https://prod.com \
-  --after-base http://localhost:3000 \
-  --routes /dashboard \
-  --output /tmp/pre-post
-
-# Multiple routes, responsive (desktop + mobile)
-npx pre-post compare \
-  --before-base https://prod.com \
-  --after-base http://localhost:3000 \
-  --routes /dashboard,/settings,/ \
-  --responsive \
-  --output /tmp/pre-post
-```
-
-**Option B: Playwright MCP (for more control)**
-
-Use when you need custom waits, interactions, or complex page states:
-
-```
-browser_resize(1280, 800)
-browser_navigate("https://prod.com/dashboard")
-browser_wait_for(time: 3)
-browser_take_screenshot(filename: "/tmp/pre-post/dashboard-desktop-before.png")
-
-browser_navigate("http://localhost:3000/dashboard")
-browser_wait_for(time: 3)
-browser_take_screenshot(filename: "/tmp/pre-post/dashboard-desktop-after.png")
-
-# Mobile
-browser_resize(375, 812)
-browser_navigate("https://prod.com/dashboard")
-browser_wait_for(time: 3)
-browser_take_screenshot(filename: "/tmp/pre-post/dashboard-mobile-before.png")
-
-browser_navigate("http://localhost:3000/dashboard")
-browser_wait_for(time: 3)
-browser_take_screenshot(filename: "/tmp/pre-post/dashboard-mobile-after.png")
-```
-
-### 4. User Approval
-
-Show screenshots in conversation. Ask: "Here are the before/after screenshots. Should I post to PR, retake any, or add more pages?"
-
-### 5. Upload + PR Markdown
-
-```bash
-# Upload and generate markdown
-mkdir -p /tmp/pre-post
-./scripts/upload-and-copy.sh /tmp/pre-post/before.png /tmp/pre-post/after.png --markdown
-```
-
-**Always upload via the bundled `upload-and-copy.sh` above — never `npx pre-post --markdown`.**
-The bundled script enforces GitHub storage, a pathspec-scoped commit, and the gated
-public-host fallback; the published npm CLI may lag behind these guarantees.
-
-For multi-route PRs, generate this format:
-
-```markdown
-## Visual Changes
-
-### `/dashboard`
-
-<details open>
-<summary>Desktop (1280x800)</summary>
-
-| Pre | Post |
-|:---:|:----:|
-| ![Pre](url) | ![Post](url) |
-</details>
-
-<details>
-<summary>Mobile (375x812)</summary>
-
-| Pre | Post |
-|:---:|:----:|
-| ![Pre](url) | ![Post](url) |
-</details>
-
----
-*Captured by [pre-post](https://github.com/juangadm/pre-post)*
-```
-
-### 6. PR Integration
-
-```bash
-# Get current PR
-gh pr view --json number,body
-
-# Append screenshots to PR body
-gh pr edit <number> --body "<existing-body>
-
-<generated-markdown>"
-```
-
-If no `gh` CLI: output markdown and tell user to paste manually.
-
-## Quick Reference
-
-```bash
-# Basic usage (two URLs)
-pre-post site.com localhost:3000
-
-# Detect routes from git diff
-pre-post detect
-pre-post detect --framework nextjs-app
-
-# Compare with auto-detected routes
-pre-post run --before-base https://prod.com --after-base http://localhost:3000
-
-# Compare specific routes
-pre-post compare --before-base URL --after-base URL --routes /dashboard,/settings
-
-# Responsive (desktop + mobile)
-pre-post compare --before-base URL --after-base URL --responsive
-
-# From existing images — use the bundled script, not the CLI (see Image Upload)
-./scripts/upload-and-copy.sh before.png after.png --markdown
-
-# Via npx
-npx pre-post detect
-npx pre-post compare --before-base URL --after-base URL
-```
-
-| Flag | Description |
-|------|-------------|
-| `-m, --mobile` | Mobile viewport (375x812) |
-| `-t, --tablet` | Tablet viewport (768x1024) |
-| `--size <WxH>` | Custom viewport |
-| `-f, --full` | Full scrollable page |
-| `-s, --selector` | CSS selector to capture |
-| `-r, --responsive` | Desktop + mobile capture |
-| `--routes <paths>` | Explicit route list (comma-separated) |
-| `--max-routes <n>` | Max detected routes (default: 5) |
-| `--framework <name>` | Force framework detection |
-| `--before-base <url>` | Production URL |
-| `--after-base <url>` | Localhost URL |
-| `-o, --output` | Output directory (default: ~/Downloads) |
-| `--markdown` | Upload images & output markdown |
-| `--upload-url <url>` | Upload endpoint (overrides git-native default) |
-
-## Image Upload
-
-**Policy: GitHub storage first, always.** Screenshots are committed to `.pre-post/`
-on the current PR branch and served via GitHub blob URLs pinned to the commit SHA.
-This works for **both public and private repos** — blob URLs are same-origin on
-GitHub, so the markdown renderer resolves them with the viewer's authentication.
-The commit is pathspec-scoped to `.pre-post/` only — it never picks up other
-staged changes from the user's index.
-
-0x0.st is a **public, unauthenticated file host** (files retained ~365 days,
-anyone with the URL can view them). It exists only as a fallback for users with
-no GitHub repo/remote, and the adapter refuses to run unless
-`PREPOST_ALLOW_PUBLIC_UPLOAD=1` is set. Never use it when screenshots could
-contain private, customer, or on-prem data.
-
-```bash
-# Default (git-native — commits to PR branch, works on any repo)
-./scripts/upload-and-copy.sh before.png after.png --markdown
-
-# Fallback ONLY when no GitHub repo/remote exists AND screenshots are non-sensitive:
-PREPOST_ALLOW_PUBLIC_UPLOAD=1 IMAGE_ADAPTER=0x0st ./scripts/upload-and-copy.sh before.png after.png --markdown
-```
-
-## Error Reference
-
-| Error | Fix |
-|-------|-----|
-| `command not found` | `npm install -g @juangadm/pre-post` |
-| `browserType.launch: Executable doesn't exist` | `npx playwright install chromium` |
-| 401/403 on production URL | See pre-flight section above |
-| Element not found | Verify selector exists on page |
-| No changed files detected | Specify routes manually with `--routes` |
-| Could not determine commit SHA | Ensure `git push` succeeded and HEAD is valid |
-| `0x0.st is a PUBLIC ... file host` | Use GitHub storage (default). Only set `PREPOST_ALLOW_PUBLIC_UPLOAD=1` if there is no GitHub remote and nothing sensitive is on screen |
+Login-protected sites: `npx -y @juangadm/pre-post@latest login https://site` opens a browser
+once; the saved session is reused automatically.

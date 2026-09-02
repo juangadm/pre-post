@@ -21,6 +21,13 @@ export const VIEWPORT_PRESETS: Record<ViewportPreset, ViewportSize> = {
 // Capture
 // ============================================================
 
+export interface AuthOptions {
+  /** Extra request headers sent with every request (e.g. Vercel bypass). */
+  headers?: Record<string, string>;
+  /** Cookies to set before navigation. */
+  cookies?: Array<{ name: string; value: string; domain?: string; path?: string; url?: string }>;
+}
+
 export interface CaptureOptions {
   /** URL to capture (file://, http://, https://) */
   url: string;
@@ -30,6 +37,16 @@ export interface CaptureOptions {
   viewport?: ViewportConfig;
   /** Capture full scrollable page instead of viewport. Default: false */
   fullPage?: boolean;
+  /** Maximum page height (CSS px) for full-page captures. Default: 3× viewport height */
+  maxHeight?: number;
+  /** Device scale factor. Default: 2 */
+  scale?: number;
+  /** Hard cap on settle wait (ms). Default: 8000 */
+  settleTimeout?: number;
+  /** Extra fixed wait after settle (ms). Default: 0 */
+  wait?: number;
+  /** Auth headers / cookies */
+  auth?: AuthOptions;
 }
 
 export interface CaptureResult {
@@ -41,6 +58,10 @@ export interface CaptureResult {
   url: string;
   /** CSS selector used, if any */
   selector?: string;
+  /** HTTP status of the main document */
+  status?: number;
+  /** Wall-clock milliseconds for navigation + settle + screenshot */
+  durationMs: number;
 }
 
 export interface BeforeAfterCaptureOptions {
@@ -56,43 +77,39 @@ export interface BeforeAfterCaptureResult {
 }
 
 // ============================================================
-// Image Input Mode
+// Diff
 // ============================================================
 
-export type ImageInput = string | Buffer;
-
-export interface FromImagesOptions {
-  /** Before image (file path or Buffer) */
-  before: ImageInput;
-  /** After image (file path or Buffer) */
-  after: ImageInput;
-  /** Labels for markdown output */
-  labels?: { before?: string; after?: string };
+export interface DiffRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
-export interface FromImagesResult {
-  /** Markdown table for PR comments */
-  markdown: string;
-  /** Before image buffer */
-  beforeImage: Buffer;
-  /** After image buffer */
-  afterImage: Buffer;
-}
-
-// ============================================================
-// Main API
-// ============================================================
-
-export interface BeforeAndAfterOptions {
-  /** Default viewport for all operations */
-  viewport?: ViewportConfig;
-  /** Output directory for saved screenshots */
-  outputDir?: string;
+export interface DiffResult {
+  /** Fraction of pixels that differ, 0..1 (over the union canvas) */
+  changedRatio: number;
+  /** Number of differing pixels */
+  changedPixels: number;
+  /** Canvas size used for comparison (device pixels) */
+  width: number;
+  height: number;
+  /** Bounding box of all changes in device pixels, or null when identical */
+  region: DiffRegion | null;
+  /** Whether the two images had different dimensions */
+  sizeChanged: boolean;
+  /** Highlight image: grayscale page with changed pixels in red (PNG). Absent when identical. */
+  highlight?: Buffer;
+  /** Crops of before/after around the changed region, when the change is localized */
+  crop?: { before: Buffer; after: Buffer; region: DiffRegion };
 }
 
 // ============================================================
 // Route Detection
 // ============================================================
+
+export type Framework = 'nextjs-app' | 'nextjs-pages' | 'vite' | 'generic';
 
 export interface DetectedRoute {
   /** Route path, e.g., "/dashboard" */
@@ -107,64 +124,87 @@ export interface DetectedRoute {
 
 export interface RouteDetectionOptions {
   /** Force a specific framework instead of auto-detecting */
-  framework?: 'nextjs-app' | 'nextjs-pages' | 'generic';
-  /** Maximum number of routes to return (default: 5) */
+  framework?: Framework;
+  /** Maximum number of routes to return (default: 6) */
   maxRoutes?: number;
-  /** Git diff target, e.g., "main...HEAD" or "HEAD~1" */
-  diffTarget?: string;
 }
 
 // ============================================================
-// Compare Mode
+// Config (.pre-post.json)
 // ============================================================
 
-export interface CompareOptions {
-  /** Base URL for "before" state (e.g., production URL) */
+export interface PrePostConfig {
+  /** Production base URL — the "before" state */
+  before?: string;
+  /** Local base URL — the "after" state (auto-detected when omitted) */
+  after?: string;
+  /** Routes to always include */
+  routes?: string[];
+  /** Sample URLs for dynamic routes, e.g. { "/blog/[slug]": "/blog/hello" } */
+  samples?: Record<string, string>;
+  /** Viewports to capture. Default: ["desktop", "mobile"] */
+  viewports?: Array<ViewportPreset | string>;
+  /** Extra headers for every request */
+  headers?: Record<string, string>;
+  /** Change ratio (fraction 0..1) at or above which a route counts as changed. Default 0.001 */
+  threshold?: number;
+  /** Absolute changed-pixel floor at or above which a route counts as changed, so small edits on tall pages register. Default 40 */
+  minChangedPixels?: number;
+  /** Max detected routes. Default 6 */
+  maxRoutes?: number;
+  /** Capture full page. Default true */
+  fullPage?: boolean;
+  /** Max full-page height in CSS px. Default 2400 */
+  maxHeight?: number;
+  /** Device scale factor. Default 2 */
+  scale?: number;
+  /** Assets branch name. Default "pre-post-assets" */
+  assetsBranch?: string;
+  /** Skip paths (glob-ish prefixes) from route detection */
+  ignore?: string[];
+}
+
+// ============================================================
+// PR run result
+// ============================================================
+
+/** Pre, post, and (when there was a change) diff and crop images, as local paths or URLs. */
+export interface ArtifactSet {
+  before: string;
+  after: string;
+  diff?: string;
+  cropBefore?: string;
+  cropAfter?: string;
+}
+
+export const ARTIFACT_KINDS = ['before', 'after', 'diff', 'cropBefore', 'cropAfter'] as const;
+
+export interface RouteCaptureOutcome {
+  route: string;
+  /** Route actually requested (after sample substitution) */
+  resolvedRoute: string;
+  viewport: string;
+  status: 'changed' | 'unchanged' | 'error';
+  changedRatio?: number;
+  sizeChanged?: boolean;
+  error?: string;
+  files?: ArtifactSet;
+  urls?: ArtifactSet;
+  durationMs?: number;
+  /** Extra context, e.g. "new page (404 on production)" */
+  note?: string;
+}
+
+export interface PrRunResult {
+  repo: string;
+  prNumber?: number;
+  commentUrl?: string;
   beforeBase: string;
-  /** Base URL for "after" state (e.g., localhost) */
   afterBase: string;
-  /** Routes to capture */
-  routes: string[];
-  /** Capture at desktop + mobile viewports */
-  responsive?: boolean;
-  /** Viewport override (used when not in responsive mode) */
-  viewport?: ViewportConfig;
-  /** Output directory for screenshots */
-  output?: string;
-  /** Generate markdown output */
-  markdown?: boolean;
-}
-
-// ============================================================
-// Video/GIF Capture
-// ============================================================
-
-export interface VideoOptions {
-  /** Viewport size for the capture */
-  viewport: ViewportSize;
-  /** Recording duration in seconds (default: 3, max: 10) */
-  duration?: number;
-  /** Target frames per second (default: 5, max: 10) */
-  fps?: number;
-  /** Milliseconds to wait after page load before recording (default: 0) */
-  delay?: number;
-  /** CSS selector — scroll element into view before recording */
-  selector?: string;
-}
-
-export interface VideoResult {
-  /** Raw GIF data */
-  gif: Buffer;
-  /** Output format identifier */
-  format: 'gif';
-  /** Viewport used for capture */
-  viewport: ViewportSize;
-  /** URL that was captured */
-  url: string;
-  /** Actual recording duration in seconds */
-  duration: number;
-  /** Number of frames in the GIF */
-  frameCount: number;
-  /** CSS selector used, if any */
-  selector?: string;
+  outcomes: RouteCaptureOutcome[];
+  skippedDynamic: string[];
+  durationMs: number;
+  markdown: string;
+  /** Local directory holding every captured file */
+  outputDir: string;
 }

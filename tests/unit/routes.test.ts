@@ -359,13 +359,13 @@ describe('detectRoutes', () => {
     expect(routes.length).toBeLessThanOrEqual(3);
   });
 
-  it('defaults maxRoutes to 5', () => {
+  it('defaults maxRoutes to 6', () => {
     const files = Array.from({ length: 10 }, (_, i) =>
       `app/page${i}/page.tsx`
     );
 
     const routes = detectRoutes(files, { framework: 'nextjs-app' });
-    expect(routes.length).toBeLessThanOrEqual(5);
+    expect(routes.length).toBe(6);
   });
 
   it('handles mixed high and low confidence files', () => {

@@ -1,49 +1,43 @@
 /**
- * Browser automation via Playwright.
- * Launches headless Chromium for screenshot capture.
+ * Browser automation via Playwright (playwright-core + Chromium headless shell).
+ *
+ * One browser per process, one context per viewport/auth combination, and a
+ * small page pool. Captures are deterministic: fixed clock, reduced motion,
+ * animations finished, caret hidden, fonts and images settled, layout stable.
  */
 
-import { chromium, Browser, Page } from 'playwright';
-import { ViewportSize } from './types.js';
+import { chromium, Browser, BrowserContext, Page } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
+import { spawnSync } from 'child_process';
+import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
+import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
+
+const require = createRequire(import.meta.url);
+
+/** Every capture sees the same wall clock, so dates and "x minutes ago" never drift. */
+export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
+
+const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 6;
+const NAVIGATION_TIMEOUT = 30_000;
 
 let browser: Browser | null = null;
+let browserLabel = '';
+const contexts = new Map<string, Promise<BrowserContext>>();
 
-const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 4;
 let activePages = 0;
-const pageQueue: Array<(value: void) => void> = [];
+const pageQueue: Array<() => void> = [];
 
-/**
- * Get the shared Browser instance (creating it if needed).
- * Used by video.ts to create fresh pages without animation-killing CSS.
- */
-export async function getBrowser(): Promise<Browser> {
-  if (!browser) {
-    browser = await launchBrowser();
-  }
-  return browser;
-}
-
-/**
- * Acquire a page from the pool. Blocks if MAX_CONCURRENT_PAGES are in use.
- * Each page gets its own viewport and deviceScaleFactor.
- */
-export async function acquirePage(viewport: ViewportSize): Promise<Page> {
+async function acquireSlot(): Promise<void> {
   if (activePages >= MAX_CONCURRENT_PAGES) {
     await new Promise<void>(resolve => pageQueue.push(resolve));
   }
   activePages++;
-  const b = await getBrowser();
-  return b.newPage({ viewport, deviceScaleFactor: 2 });
 }
 
-/**
- * Release a page back to the pool (closes it).
- */
-export async function releasePage(pg: Page): Promise<void> {
+function releaseSlot(): void {
   activePages--;
-  if (!pg.isClosed()) await pg.close();
   const next = pageQueue.shift();
   if (next) next();
 }
@@ -51,17 +45,34 @@ export async function releasePage(pg: Page): Promise<void> {
 export interface ScreenshotOptions {
   viewport: ViewportSize;
   fullPage?: boolean;
+  maxHeight?: number;
+  scale?: number;
   selector?: string;
+  settleTimeout?: number;
+  wait?: number;
+  auth?: AuthOptions;
+}
+
+// ============================================================
+// Launch
+// ============================================================
+
+/** Directory of the playwright-core package (for its CLI and browsers.json). */
+export function playwrightCoreDir(): string {
+  return path.dirname(require.resolve('playwright-core/package.json'));
 }
 
 /**
- * Scan Playwright's cache directory for any installed Chromium executables.
- * Returns paths to try, in order of preference.
+ * Scan Playwright's browser cache for installed Chromium executables.
  */
 function findCachedChromium(): string[] {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH
-    || path.join(home, '.cache', 'ms-playwright');
+    || (process.platform === 'darwin'
+      ? path.join(home, 'Library', 'Caches', 'ms-playwright')
+      : process.platform === 'win32'
+        ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'ms-playwright')
+        : path.join(home, '.cache', 'ms-playwright'));
 
   let entries: string[];
   try {
@@ -70,44 +81,64 @@ function findCachedChromium(): string[] {
     return [];
   }
 
-  const knownSubpaths: string[] = [];
-  if (process.platform === 'darwin') {
-    knownSubpaths.push(path.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'));
-  } else if (process.platform === 'win32') {
-    knownSubpaths.push(path.join('chrome-win', 'chrome.exe'));
-  } else {
-    knownSubpaths.push(
-      path.join('chrome-linux', 'chrome'),
-      path.join('chrome-headless-shell-linux64', 'chrome-headless-shell'),
-    );
-  }
+  const subpaths: string[] = process.platform === 'darwin'
+    ? [
+        path.join('chrome-mac', 'headless_shell'),
+        path.join('chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+        path.join('chrome-mac-arm64', 'headless_shell'),
+        path.join('chrome-mac-arm64', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+      ]
+    : process.platform === 'win32'
+      ? [path.join('chrome-win', 'headless_shell.exe'), path.join('chrome-win', 'chrome.exe')]
+      : [
+          path.join('chrome-linux', 'headless_shell'),
+          path.join('chrome-headless-shell-linux64', 'chrome-headless-shell'),
+          path.join('chrome-linux', 'chrome'),
+        ];
+
+  // Prefer headless shell builds, newest first.
+  const sorted = entries
+    .filter(e => e.startsWith('chromium'))
+    .sort((a, b) => (b.includes('headless') ? 1 : 0) - (a.includes('headless') ? 1 : 0) || b.localeCompare(a));
 
   const candidates: string[] = [];
-  for (const entry of entries) {
-    if (!entry.startsWith('chromium')) continue;
-
-    for (const sub of knownSubpaths) {
-      const fullPath = path.join(cacheDir, entry, sub);
-      if (fs.existsSync(fullPath)) candidates.push(fullPath);
+  for (const entry of sorted) {
+    for (const sub of subpaths) {
+      const full = path.join(cacheDir, entry, sub);
+      if (fs.existsSync(full)) candidates.push(full);
     }
   }
-
   return candidates;
+}
+
+const LAUNCH_ARGS = [
+  '--disable-dev-shm-usage',
+  '--hide-scrollbars',
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--force-color-profile=srgb',
+  '--font-render-hinting=none',
+];
+
+export interface LaunchOptions {
+  headless?: boolean;
 }
 
 /**
  * Launch Chromium with a fallback chain:
- * 1. Explicit custom path (PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH) — treated as override, fails hard
- * 2. System Chrome
- * 3. Bundled Playwright Chromium
- * 4. Any Chromium build found in Playwright's cache
+ * 1. Explicit custom path (PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH) — override, fails hard
+ * 2. Bundled Playwright Chromium (headless shell when headless)
+ * 3. Any Chromium build found in Playwright's cache
+ * 4. System Chrome / Edge
  */
-async function launchBrowser(): Promise<Browser> {
-  // If user explicitly set a custom path, treat it as an override — don't fallback
+export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> {
+  const headless = opts.headless ?? true;
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   if (customPath) {
     try {
-      return await chromium.launch({ headless: true, executablePath: customPath });
+      const b = await chromium.launch({ headless, executablePath: customPath, args: LAUNCH_ARGS });
+      browserLabel = `custom (${customPath})`;
+      return b;
     } catch (err) {
       throw new Error(
         `Failed to launch Chromium at custom path: ${customPath}\n` +
@@ -117,95 +148,333 @@ async function launchBrowser(): Promise<Browser> {
     }
   }
 
-  // Auto-detection: try each strategy in order
   const strategies: Array<{ label: string; options: Parameters<typeof chromium.launch>[0] }> = [
-    { label: 'System Chrome', options: { headless: true, channel: 'chrome' } },
-    { label: 'Bundled Playwright Chromium', options: { headless: true } },
+    { label: 'bundled', options: { headless, args: LAUNCH_ARGS } },
   ];
-
-  for (const cachedPath of findCachedChromium()) {
-    strategies.push({ label: `Cached (${cachedPath})`, options: { headless: true, executablePath: cachedPath } });
+  if (headless) {
+    for (const cachedPath of findCachedChromium()) {
+      strategies.push({ label: `cached (${cachedPath})`, options: { headless, executablePath: cachedPath, args: LAUNCH_ARGS } });
+    }
   }
+  strategies.push({ label: 'system chrome', options: { headless, channel: 'chrome', args: LAUNCH_ARGS } });
+  strategies.push({ label: 'system edge', options: { headless, channel: 'msedge', args: LAUNCH_ARGS } });
 
-  for (const { options } of strategies) {
+  let lastError: Error | null = null;
+  for (const { label, options } of strategies) {
     try {
-      return await chromium.launch(options);
-    } catch { /* try next */ }
+      const b = await chromium.launch(options);
+      browserLabel = label;
+      return b;
+    } catch (err) {
+      lastError = err as Error;
+    }
   }
 
-  throw new Error(
-    'No usable Chromium found.\n' +
-    '  1. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chrome\n' +
-    '  2. Or run: npx playwright install chromium\n' +
-    '  3. For pre-captured images: pre-post before.png after.png --markdown'
-  );
+  throw new BrowserNotFoundError(lastError);
+}
+
+export type BrowserKind = 'chromium-headless-shell' | 'chromium';
+
+/** Install a browser through playwright-core's CLI. Returns true on success. */
+export function installBrowser(kind: BrowserKind): boolean {
+  const cli = path.join(playwrightCoreDir(), 'cli.js');
+  console.error(`Installing ${kind} (one-time, ~${kind === 'chromium' ? '170' : '80'} MB)...`);
+  return spawnSync(process.execPath, [cli, 'install', kind], { stdio: 'inherit' }).status === 0;
 }
 
 /**
- * Capture a screenshot using Playwright.
- * Acquires a page from the pool, captures, and releases.
- * Safe to call concurrently — pool limits parallelism.
+ * Launch, installing the right browser first if none is found.
+ * Throws BrowserNotFoundError (with `installed` set) when it still cannot launch.
  */
-export async function captureScreenshot(
-  url: string,
-  options: ScreenshotOptions
-): Promise<Buffer> {
-  const pg = await acquirePage(options.viewport);
-
+export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<Browser> {
   try {
-    await pg.goto(url, { waitUntil: 'domcontentloaded' });
-    await Promise.race([
-      pg.waitForLoadState('networkidle'),
-      pg.waitForTimeout(3000),
-    ]);
+    return await launchBrowser(opts);
+  } catch (err) {
+    if (!(err instanceof BrowserNotFoundError)) throw err;
+  }
+  const installed = installBrowser(opts.headless === false ? 'chromium' : 'chromium-headless-shell');
+  if (!installed) throw new BrowserNotFoundError(null, false);
+  try {
+    return await launchBrowser(opts);
+  } catch (err) {
+    if (err instanceof BrowserNotFoundError) throw new BrowserNotFoundError(err.cause, true);
+    throw err;
+  }
+}
 
-    // Disable animations and transitions for consistent captures
-    await pg.addStyleTag({
-      content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }',
-    });
+/** The process-wide headless browser, launched (and installed) on first use. */
+export async function getBrowser(): Promise<Browser> {
+  if (!browser) {
+    browser = await launchBrowserOrInstall();
+    browser.on('disconnected', () => { browser = null; contexts.clear(); });
+  }
+  return browser;
+}
 
-    // Wait for web fonts (capped at 2s to avoid slow CDN hangs)
-    await Promise.race([
-      pg.evaluate(() => document.fonts.ready),
-      pg.waitForTimeout(2000),
-    ]);
+export function browserDescription(): string {
+  return browserLabel;
+}
 
-    // If selector specified, scroll it into view
-    if (options.selector) {
-      const locator = pg.locator(options.selector);
-      const count = await locator.count();
-      if (count === 0) {
-        throw new Error(`Element not found: ${options.selector}`);
+// ============================================================
+// Contexts
+// ============================================================
+
+function contextKey(viewport: ViewportSize, scale: number, auth?: AuthOptions): string {
+  return `${viewport.width}x${viewport.height}@${scale}|${auth ? JSON.stringify(auth) : ''}`;
+}
+
+const INIT_SCRIPT = `
+  (() => {
+    // Deterministic pseudo-random for pages that seed layout from Math.random().
+    let seed = 42;
+    Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    // No smooth scrolling: scrollTo() must land immediately.
+    const style = document.createElement('style');
+    style.setAttribute('data-pre-post', '');
+    style.textContent = 'html, body, * { scroll-behavior: auto !important; } ::-webkit-scrollbar { display: none !important; }';
+    const attach = () => { (document.head || document.documentElement).appendChild(style); };
+    if (document.head) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
+  })();
+`;
+
+async function getContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
+  const key = contextKey(viewport, scale, auth);
+  let pending = contexts.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const b = await getBrowser();
+      const ctx = await b.newContext({
+        viewport,
+        deviceScaleFactor: scale,
+        reducedMotion: 'reduce',
+        colorScheme: 'light',
+        locale: 'en-US',
+        timezoneId: 'UTC',
+        ignoreHTTPSErrors: true,
+        serviceWorkers: 'block',
+        extraHTTPHeaders: auth?.headers,
+        bypassCSP: true,
+      });
+      await ctx.clock.setFixedTime(FIXED_TIME);
+      await ctx.addInitScript(INIT_SCRIPT);
+      if (auth?.cookies?.length) {
+        await ctx.addCookies(auth.cookies.map(c => ({
+          name: c.name,
+          value: c.value,
+          ...(c.url ? { url: c.url } : { domain: c.domain!, path: c.path || '/' }),
+        })));
       }
+      ctx.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+      ctx.setDefaultTimeout(10_000);
+      return ctx;
+    })();
+    contexts.set(key, pending);
+  }
+  return pending;
+}
+
+// ============================================================
+// Settle
+// ============================================================
+
+/**
+ * In-page settle: fonts loaded, images decoded, and layout stable across
+ * consecutive animation frames. Bounded by `timeout` ms.
+ */
+async function settlePage(page: Page, timeout: number, options: { network?: boolean } = {}): Promise<void> {
+  const settled = page.evaluate(async (timeoutMs: number) => {
+    const start = performance.now();
+    const remaining = () => Math.max(0, timeoutMs - (performance.now() - start));
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+    const frame = () => new Promise<void>(r => requestAnimationFrame(() => r()));
+    const withCap = <T,>(p: Promise<T>, ms: number) => Promise.race([p, sleep(ms)]);
+
+    if (document.fonts?.ready) await withCap(document.fonts.ready, Math.min(2500, remaining()));
+
+    const pending = Array.from(document.images).filter(img => !img.complete);
+    if (pending.length) {
+      await withCap(
+        Promise.allSettled(pending.map(img => img.decode().catch(() => undefined))),
+        Math.min(3000, remaining()),
+      );
+    }
+
+    const signature = () => {
+      const de = document.documentElement;
+      return `${de.scrollHeight}:${de.scrollWidth}:${document.body?.childElementCount ?? 0}:${document.getElementsByTagName('*').length}`;
+    };
+    let last = signature();
+    let stable = 0;
+    while (stable < 2 && remaining() > 0) {
+      await frame();
+      await frame();
+      const now = signature();
+      if (now === last) stable++;
+      else { stable = 0; last = now; }
+    }
+  }, timeout);
+
+  const quiet = options.network === false ? Promise.resolve() : waitForNetworkQuiet(page, 150, Math.min(timeout, 2500));
+  await Promise.all([settled, quiet]);
+}
+
+/**
+ * Resolve once no request has been in flight for `quietMs`, or after `cap` ms.
+ * Cheaper than Playwright's networkidle (which insists on a 500 ms window)
+ * and tolerant of dev servers that keep sockets open.
+ */
+function waitForNetworkQuiet(page: Page, quietMs: number, cap: number): Promise<void> {
+  const tracker = inflight.get(page);
+  if (!tracker) return Promise.resolve();
+  return new Promise<void>(resolve => {
+    let timer: NodeJS.Timeout | null = null;
+    const done = () => {
+      if (timer) clearTimeout(timer);
+      clearTimeout(hardStop);
+      tracker.listeners.delete(check);
+      resolve();
+    };
+    const check = () => {
+      if (timer) clearTimeout(timer);
+      timer = tracker.count === 0 ? setTimeout(done, quietMs) : null;
+    };
+    const hardStop = setTimeout(done, cap);
+    tracker.listeners.add(check);
+    check();
+  });
+}
+
+interface InflightTracker {
+  count: number;
+  listeners: Set<() => void>;
+}
+
+const inflight = new WeakMap<Page, InflightTracker>();
+
+function trackRequests(page: Page): void {
+  const tracker: InflightTracker = { count: 0, listeners: new Set() };
+  inflight.set(page, tracker);
+  const notify = () => { for (const l of tracker.listeners) l(); };
+  page.on('request', req => {
+    // WebSocket upgrades and event streams never "finish"; ignore them.
+    if (req.resourceType() === 'websocket' || req.resourceType() === 'eventsource') return;
+    tracker.count++;
+    notify();
+  });
+  const finish = (req: { resourceType(): string }) => {
+    if (req.resourceType() === 'websocket' || req.resourceType() === 'eventsource') return;
+    tracker.count = Math.max(0, tracker.count - 1);
+    notify();
+  };
+  page.on('requestfinished', finish);
+  page.on('requestfailed', finish);
+}
+
+/**
+ * Scroll through the page once so lazy-loaded and reveal-on-scroll content is
+ * rendered before a full-page capture, then return to the top.
+ */
+async function primeLazyContent(page: Page, maxHeight: number): Promise<void> {
+  await page.evaluate(async (limitPx: number) => {
+    const frame = () => new Promise<void>(r => requestAnimationFrame(() => r()));
+    const step = Math.max(200, window.innerHeight);
+    const limit = Math.min(document.documentElement.scrollHeight, limitPx);
+    for (let y = step; y < limit + step; y += step) {
+      window.scrollTo(0, y);
+      await frame();
+      await frame();
+    }
+    window.scrollTo(0, 0);
+    await frame();
+  }, maxHeight);
+}
+
+// ============================================================
+// Capture
+// ============================================================
+
+/**
+ * Capture a screenshot. Safe to call concurrently — the page pool bounds parallelism.
+ * Throws HttpStatusError for 401/403 (auth required); other statuses are returned
+ * in the result so callers can decide (a 404 "before" for a new page is legitimate).
+ */
+export async function captureScreenshot(url: string, options: ScreenshotOptions): Promise<CaptureResult> {
+  const started = Date.now();
+  const scale = options.scale ?? 2;
+  const settleTimeout = options.settleTimeout ?? 8000;
+  const maxHeight = options.maxHeight ?? options.viewport.height * 3;
+
+  const ctx = await getContext(options.viewport, scale, options.auth);
+  await acquireSlot();
+  const page = await ctx.newPage();
+  trackRequests(page);
+  try {
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => {
+      throw new NavigationError(classifyNavigationError(err), url, err);
+    });
+    const status = response?.status();
+    if (status === 401 || status === 403) throw new HttpStatusError(status, url, isVercelResponse({ get: n => response!.headers()[n] ?? null }));
+
+    await settlePage(page, settleTimeout);
+
+    if (options.fullPage) {
+      await primeLazyContent(page, maxHeight);
+      await settlePage(page, Math.min(settleTimeout, 2000), { network: false });
+    }
+
+    if (options.selector) {
+      const locator = page.locator(options.selector);
+      if ((await locator.count()) === 0) throw new Error(`Element not found: ${options.selector}`);
       await locator.first().scrollIntoViewIfNeeded();
     }
 
-    const screenshot = await pg.screenshot({ fullPage: options.fullPage ?? false });
-    return Buffer.from(screenshot);
+    if (options.wait) await page.waitForTimeout(options.wait);
+
+    let clip: { x: number; y: number; width: number; height: number } | undefined;
+    if (options.fullPage) {
+      const height = await page.evaluate(() => document.documentElement.scrollHeight);
+      if (height > maxHeight) clip = { x: 0, y: 0, width: options.viewport.width, height: maxHeight };
+    }
+
+    const image = await page.screenshot({
+      type: 'png',
+      fullPage: options.fullPage ?? false,
+      animations: 'disabled',
+      caret: 'hide',
+      clip,
+      timeout: 20_000,
+    });
+
+    return {
+      image,
+      viewport: options.viewport,
+      url,
+      status,
+      selector: options.selector,
+      durationMs: Date.now() - started,
+    };
   } finally {
-    await releasePage(pg);
+    await page.close().catch(() => undefined);
+    releaseSlot();
   }
+}
+
+function classifyNavigationError(err: Error): NavigationError['kind'] {
+  const msg = err.message || '';
+  if (err.name === 'TimeoutError' || /Timeout .* exceeded/.test(msg)) return 'timeout';
+  if (/ERR_CONNECTION_REFUSED/.test(msg)) return 'refused';
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/.test(msg)) return 'dns';
+  return 'other';
 }
 
 /**
  * Close the browser session and clean up resources.
  */
 export async function closeBrowser(): Promise<void> {
-  if (browser) {
-    await browser.close();
-    browser = null;
-  }
+  const b = browser;
+  browser = null;
+  contexts.clear();
   activePages = 0;
   pageQueue.length = 0;
-}
-
-/**
- * Read a pre-captured screenshot from disk.
- * Used in MCP mode where Playwright MCP saves files directly.
- */
-export function readScreenshot(filepath: string): Buffer {
-  if (!fs.existsSync(filepath)) {
-    throw new Error(`Screenshot not found: ${filepath}`);
-  }
-  return fs.readFileSync(filepath);
+  if (b) await b.close().catch(() => undefined);
 }

@@ -1,98 +1,24 @@
+/**
+ * Public API. Everything else under src/ is internal and may change.
+ */
 export * from './types.js';
-export { resolveViewport } from './viewport.js';
-export { captureScreenshot, captureBeforeAfter, captureResponsive } from './capture.js';
-export { captureVideo, captureGif } from './video.js';
+export type { Settings } from './config.js';
+export { loadConfig, resolveSettings, CONFIG_DEFAULTS } from './config.js';
+export { NeedsHumanError, HttpStatusError, NavigationError, BrowserNotFoundError, GitHubError } from './errors.js';
+export { captureScreenshot, captureBeforeAfter } from './capture.js';
+export { closeBrowser } from './browser.js';
+export { diffImages } from './diff.js';
+export type { DiffOptions } from './diff.js';
+export { parseViewport, resolveViewport } from './viewport.js';
 export { generateFilename } from './filename.js';
-export { closeBrowser, readScreenshot } from './browser.js';
-export { detectRoutes, detectFramework, getChangedFiles } from './routes.js';
-
-import fs from 'fs';
-import path from 'path';
-import {
-  BeforeAndAfterOptions,
-  CaptureOptions,
-  CaptureResult,
-  BeforeAfterCaptureOptions,
-  BeforeAfterCaptureResult,
-  ViewportSize,
-  FromImagesOptions,
-  FromImagesResult,
-  ImageInput,
-} from './types.js';
-
-import { resolveViewport } from './viewport.js';
-import { captureScreenshot, captureBeforeAfter } from './capture.js';
-
-export class BeforeAndAfter {
-  private options: BeforeAndAfterOptions;
-
-  constructor(options: BeforeAndAfterOptions = {}) {
-    this.options = options;
-  }
-
-  get viewport(): ViewportSize {
-    return resolveViewport(this.options.viewport);
-  }
-
-  async capture(options: CaptureOptions): Promise<CaptureResult> {
-    return captureScreenshot({
-      viewport: this.options.viewport,
-      ...options,
-    });
-  }
-
-  async captureBeforeAfter(options: BeforeAfterCaptureOptions): Promise<BeforeAfterCaptureResult> {
-    return captureBeforeAfter({
-      viewport: this.options.viewport,
-      ...options,
-    });
-  }
-
-  /**
-   * Create output from existing images (no browser capture needed).
-   * Outputs GitHub-flavored markdown table.
-   */
-  async fromImages(options: FromImagesOptions): Promise<FromImagesResult> {
-    const beforeImage = this.resolveImageInput(options.before);
-    const afterImage = this.resolveImageInput(options.after);
-
-    const beforeLabel = options.labels?.before || 'Before';
-    const afterLabel = options.labels?.after || 'After';
-    const markdown = this.generateMarkdown(beforeLabel, afterLabel, options.before, options.after);
-
-    return {
-      markdown,
-      beforeImage,
-      afterImage,
-    };
-  }
-
-  /**
-   * Generate GitHub-flavored markdown table for before/after images.
-   */
-  generateMarkdown(
-    beforeLabel: string,
-    afterLabel: string,
-    beforePath: ImageInput,
-    afterPath: ImageInput,
-  ): string {
-    // For markdown, we use the path if it's a string, otherwise a placeholder
-    const beforeSrc = typeof beforePath === 'string' ? beforePath : 'before.png';
-    const afterSrc = typeof afterPath === 'string' ? afterPath : 'after.png';
-
-    return [
-      `| ${beforeLabel} | ${afterLabel} |`,
-      `|:------:|:-----:|`,
-      `| ![${beforeLabel}](${beforeSrc}) | ![${afterLabel}](${afterSrc}) |`,
-    ].join('\n');
-  }
-
-  private resolveImageInput(input: ImageInput): Buffer {
-    if (Buffer.isBuffer(input)) {
-      return input;
-    }
-    // It's a file path
-    const resolvedPath = path.isAbsolute(input) ? input : path.resolve(process.cwd(), input);
-    return fs.readFileSync(resolvedPath);
-  }
-}
+export { detectRoutes, detectRoutesForRepo, detectFramework, getChangedFiles } from './routes.js';
+export type { RepoRouteDetection, RepoDetectionOptions } from './routes.js';
+export { buildComment, buildSummary, STICKY_MARKER } from './report.js';
+export { runPr } from './commands/pr.js';
+export type { PrCommandOptions } from './commands/pr.js';
+export { runCompare } from './commands/compare.js';
+export type { CompareOptions } from './commands/compare.js';
+export { runLogin } from './commands/login.js';
+export { runPrune } from './commands/prune.js';
+export { runDoctor } from './commands/doctor.js';
+export { runDetect } from './commands/detect.js';
