@@ -290,30 +290,33 @@ export default function Page() {
           <dl>
             <dt>What is pre-post?</dt>
             <dd>
-              pre-post is a visual diff tool that captures before-and-after
-              screenshots of web pages for pull requests. It reads your git diff,
-              detects which routes changed, and screenshots them automatically at
-              desktop and mobile viewports in 2x retina quality.
+              pre-post is a visual diff tool for pull requests. One command detects
+              the routes your branch changed, captures them on production and on your
+              dev server at desktop and mobile in 2x retina quality, pixel-diffs each
+              pair, and posts a single comment on the PR.
             </dd>
             <dt>How do I install pre-post?</dt>
             <dd>
-              Install as a dev dependency with npm install -D @juangadm/pre-post.
-              To add it as a Claude Code skill, run npx skills add juangadm/pre-post.
+              Nothing to install. Run npx -y @juangadm/pre-post@latest pr. You need
+              Node 20+ and a GitHub token, from gh auth login or GH_TOKEN. To add it
+              as a Claude Code skill, run npx skills add juangadm/pre-post -y.
             </dd>
             <dt>How does pre-post work?</dt>
             <dd>
-              Make your UI changes, then say /pre-post in Claude Code. It reads
-              your git diff, detects which pages changed, screenshots each route
-              comparing production vs your new version, and adds a comparison table
-              to your PR.
+              Make your UI changes, then say /pre-post in Claude Code or run pre-post
+              pr. It diffs your branch against main and follows the import graph to
+              every affected route, screenshots each one on production (Pre) and your
+              dev server (Post), pixel-diffs them, publishes the images to a
+              pre-post-assets branch, and updates one sticky comment on the PR.
             </dd>
             <dt>What makes pre-post different from before-and-after?</dt>
             <dd>
               pre-post is a fork of Vercel Labs' before-and-after. The original
-              required manually passing two URLs. pre-post reads your git diff
-              automatically, captures desktop and mobile at 2x retina, and uses
-              Playwright for consistent screenshots with font loading and CSS
-              animation freezing.
+              required manually passing two URLs. pre-post detects the changed routes
+              from your git diff, captures desktop and mobile at 2x retina, pixel-diffs
+              each pair, and posts the result to the PR itself. It uses Playwright with
+              a frozen clock, finished animations, and settled fonts and layout, so a
+              screenshot only changes when the page does.
             </dd>
           </dl>
         </section>
