@@ -21,6 +21,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: "/components/",
       },
     ],
-    sitemap: "https://site-puce-rho.vercel.app/sitemap.xml",
+    sitemap: "https://prepost.juangabriel.org/sitemap.xml",
   }
 }

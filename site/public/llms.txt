@@ -4,7 +4,7 @@
 
 ## Links
 
-- [Homepage](https://site-puce-rho.vercel.app): Overview, install instructions, usage examples
+- [Homepage](https://prepost.juangabriel.org): Overview, install instructions, usage examples
 - [GitHub](https://github.com/juangadm/pre-post): Source code and issues
 - [npm](https://www.npmjs.com/package/@juangadm/pre-post): Package registry
 

@@ -32,7 +32,7 @@ const biroScript = localFont({
   variable: "--font-biro-script",
 })
 
-const siteUrl = "https://site-puce-rho.vercel.app"
+const siteUrl = "https://prepost.juangabriel.org"
 const description =
   "pre-post is a visual diff tool for pull requests. One command detects the routes your branch changed, captures them on production and on your dev server, pixel-diffs each pair, and posts a single comment on the PR. Use as a Claude Code skill or CLI tool."
 
