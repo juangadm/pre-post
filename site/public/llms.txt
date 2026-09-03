@@ -10,14 +10,16 @@
 
 ## What it does
 
-pre-post detects the routes your branch changed, captures them on production ("Pre") and on your dev server ("Post") at desktop and mobile in 2x retina quality, pixel-diffs each pair, and posts a single comment on the pull request that a reviewer can judge at a glance.
+pre-post detects the routes your branch changed, captures each one before ("Pre") and after ("Post") at desktop and mobile in 2x retina quality, pixel-diffs each pair, and puts the result at the top of the pull request where a reviewer can judge it at a glance.
+
+Both sides always come from the same kind of environment. On a PR with a preview deployment it compares that against the deployed baseline; with nothing deployed it serves both the base commit and your branch locally. It never pairs a deployment against a dev server, because the two build differently and the diff would carry changes the branch never made.
 
 ## How it works
 
 1. Make your UI changes
 2. Say `/pre-post` in Claude Code, or run `pre-post pr`
 3. pre-post diffs your branch against main, then follows the import graph to every route you touched
-4. It captures each route twice — production (Pre) and your dev server (Post), desktop and mobile
+4. It captures each route twice — the baseline (Pre) and your branch (Post), desktop and mobile, both from the same kind of environment
 5. It pixel-diffs each pair and crops the changed region
 6. One sticky comment lands on the PR, updated in place on every run
 
