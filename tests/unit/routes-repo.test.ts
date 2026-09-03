@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { detectRoutesForRepo, findAppRoots, frameworkForRoot, isDynamicRoute } from '../../src/routes';
+import { detectRoutesForRepo, findAppRoots, frameworkForRoot, isDynamicRoute, isServableApp } from '../../src/routes';
 
 let root: string;
 function write(rel: string, content: string): void {
@@ -21,7 +21,7 @@ beforeAll(() => {
   git('config user.email t@example.com');
   git('config user.name t');
   write('package.json', JSON.stringify({ name: 'mono', private: true }));
-  write('apps/web/package.json', JSON.stringify({ dependencies: { next: '15' } }));
+  write('apps/web/package.json', JSON.stringify({ scripts: { dev: 'next dev' }, dependencies: { next: '15' } }));
   write('apps/web/tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['./src/*'] } } }));
   write('apps/web/src/app/layout.tsx', 'export default ({ children }) => children;');
   write('apps/web/src/app/page.tsx', "import { Hero } from '@/components/hero';\nexport default () => <Hero/>;");
@@ -120,5 +120,59 @@ describe('isDynamicRoute', () => {
     expect(isDynamicRoute('/users/:id')).toBe(true);
     expect(isDynamicRoute('/docs/*')).toBe(true);
     expect(isDynamicRoute('/pricing')).toBe(false);
+  });
+});
+
+/**
+ * Counting changed files alone once picked this repo's own tests/fixtures over
+ * its marketing site by a single file, then reported routes for a directory
+ * nothing can serve — a confident wrong answer. Servability has to outrank the
+ * count.
+ */
+describe('app root: servability outranks file count', () => {
+  let repo: string;
+  const put = (rel: string, content: string) => {
+    const file = path.join(repo, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  };
+  const run = (cmd: string) => execSync(`git ${cmd}`, { cwd: repo, stdio: 'pipe' });
+
+  beforeAll(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-approot-')));
+    run('init -q -b main');
+    run('config user.email t@example.com');
+    run('config user.name t');
+    put('package.json', JSON.stringify({ name: 'root', private: true }));
+    // The real app: servable, but only one changed file.
+    put('site/package.json', JSON.stringify({ scripts: { dev: 'next dev' }, dependencies: { next: '15' } }));
+    put('site/app/page.tsx', 'export default () => null;');
+    // A fixture app that outnumbers it in the diff and cannot be served.
+    put('tests/fixtures/package.json', JSON.stringify({ name: 'fixtures' }));
+    put('tests/fixtures/pages/a.html', '<p>a');
+    run('add -A');
+    run('commit -q -m init');
+    run('checkout -q -b feature');
+    put('site/app/page.tsx', 'export default () => <main>hi</main>;');
+    for (const n of ['b', 'c', 'd']) put(`tests/fixtures/pages/${n}.html`, `<p>${n}`);
+    run('add -A');
+    run('commit -q -m change');
+  });
+  afterAll(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  it('picks the servable app even when another dir owns more of the diff', () => {
+    const detection = detectRoutesForRepo({ cwd: repo });
+    expect(path.relative(repo, detection.appRoot)).toBe('site');
+    expect(detection.framework).toBe('nextjs-app');
+  });
+
+  it('does not treat fixture directories as app roots at all', () => {
+    const roots = findAppRoots(repo).map(d => path.relative(repo, d));
+    expect(roots).not.toContain(path.join('tests', 'fixtures'));
+  });
+
+  it('isServableApp requires a dev script or a real framework', () => {
+    expect(isServableApp(path.join(repo, 'site'))).toBe(true);
+    expect(isServableApp(path.join(repo, 'tests', 'fixtures'))).toBe(false);
   });
 });

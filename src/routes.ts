@@ -18,7 +18,7 @@ import { detectGenericRoutes } from './routes/generic.js';
 import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
-import { hasDependency } from './pkg.js';
+import { devScript, hasDependency } from './pkg.js';
 import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
 export type { Framework };
@@ -133,6 +133,15 @@ function adapterFor(name: Framework): FrameworkAdapter {
   return FRAMEWORKS.find(f => f.name === name) ?? FRAMEWORKS[FRAMEWORKS.length - 1];
 }
 
+/**
+ * Can this directory actually be served as an app? A dev script is the same
+ * test baseline.ts uses before serving a base commit, so detection and serving
+ * agree; a recognised framework counts too, for apps started some other way.
+ */
+export function isServableApp(root: string): boolean {
+  return devScript(root) !== null || frameworkForRoot(root) !== 'generic';
+}
+
 export function frameworkForRoot(root: string): Framework {
   return FRAMEWORKS.find(f => f.matches(root))!.name;
 }
@@ -142,6 +151,13 @@ export function frameworkForRoot(root: string): Framework {
 // ============================================================
 
 const APP_SCAN_DEPTH = 3;
+
+/**
+ * Directory names that can look like an app but never are the one under
+ * review. Test fixtures in particular are whole little apps, and a PR touching
+ * them can easily out-number the real app in the diff.
+ */
+const NON_APP_DIRS = new Set(['tests', 'test', '__tests__', 'fixtures', 'examples', 'example', 'e2e', 'cypress', 'playwright']);
 
 /** Directories (depth ≤ 3) that look like an app: package.json, or app/ pages/ route folders. */
 export function findAppRoots(baseDir: string): string[] {
@@ -159,7 +175,7 @@ export function findAppRoots(baseDir: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (entry.isDirectory() && !SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+      if (entry.isDirectory() && !SKIP_DIRS.has(entry.name) && !NON_APP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
         walk(path.join(dir, entry.name), depth - 1);
       }
     }
@@ -276,21 +292,31 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     .filter(f => f !== CONFIG_FILENAME)
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
 
-  // Choose the app root that owns the most changed files (deepest wins ties).
-  // The repo root contains every changed file, so it would always match at least
-  // as many as any app nested inside it. Score the nested app roots only, and
-  // fall back to the repo root when none of them owns a changed file.
-  let appRoot = root;
-  let best = 0;
-  for (const candidate of findAppRoots(root)) {
-    const rel = toPosix(path.relative(root, candidate));
-    if (!rel) continue;
-    const count = allChanged.filter(f => f.startsWith(rel + '/')).length;
-    if (count > best || (count === best && count > 0 && candidate.length > appRoot.length)) {
-      best = count;
-      appRoot = candidate;
-    }
-  }
+  // Choose the app root the PR is about. The repo root contains every changed
+  // file, so it would always match at least as many as any app nested inside
+  // it; score the nested app roots only, and fall back to the repo root when
+  // none of them owns a changed file.
+  //
+  // Servability outranks file count. Counting alone once picked this repo's
+  // own tests/fixtures over its marketing site by a single file, and then
+  // reported routes for a directory nothing can serve. A directory that cannot
+  // be served is not the app a branch changed, however much of the diff lands
+  // in it; among candidates that can be served, the diff decides, deepest
+  // first on a tie.
+  const scored = findAppRoots(root)
+    .map(dir => ({ dir, rel: toPosix(path.relative(root, dir)) }))
+    .filter(c => c.rel)
+    .map(c => ({
+      dir: c.dir,
+      count: allChanged.filter(f => f.startsWith(c.rel + '/')).length,
+      servable: isServableApp(c.dir),
+    }))
+    .filter(c => c.count > 0)
+    .sort((a, b) =>
+      Number(b.servable) - Number(a.servable)
+      || b.count - a.count
+      || b.dir.length - a.dir.length);
+  const appRoot = scored[0]?.dir ?? root;
   const adapter = adapterFor(options.framework || frameworkForRoot(appRoot));
   const appPrefix = toPosix(path.relative(root, appRoot));
   const appRel = allChanged
