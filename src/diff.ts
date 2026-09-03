@@ -17,6 +17,16 @@ export interface DiffOptions {
   minCrop?: { width: number; height: number };
   /** Integer factor to shrink the highlight image by (e.g. 2 for 2x captures). Default 1 */
   highlightDownscale?: number;
+  /**
+   * Produce the red-highlight overlay. Default true.
+   *
+   * The pr pipeline uses the bounding box to crop Pre and Post, and ships that
+   * pair; it never publishes the overlay, and a wall of red pixels is not
+   * something a reviewer reads anyway. Encoding one per capture is a downscale
+   * and a deflate of a full-page image for nothing, so that path turns it off.
+   * Image mode still writes diff.png.
+   */
+  highlight?: boolean;
 }
 
 const DIFF_COLOR: [number, number, number] = [255, 0, 0];
@@ -158,7 +168,9 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     region,
     sizeChanged,
     // Identical pages need no highlight; skip the downscale + deflate.
-    highlight: region ? encode(downscale(diff, options.highlightDownscale ?? 1)) : undefined,
+    highlight: region && options.highlight !== false
+      ? encode(downscale(diff, options.highlightDownscale ?? 1))
+      : undefined,
   };
 
   if (region) {

@@ -127,6 +127,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
       padding: 40 * opts.scale,
       minCrop: { width: 400 * opts.scale, height: 200 * opts.scale },
       highlightDownscale: opts.scale >= 2 ? 2 : 1,
+      highlight: false,
     },
   });
 
