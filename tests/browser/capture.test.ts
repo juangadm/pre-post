@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import http from 'http';
 import path from 'path';
 import { captureScreenshot, captureBeforeAfter } from '../../src/capture';
+import { closeBrowser } from '../../src/browser';
 
 const TEST_PAGES = path.resolve(__dirname, '../fixtures/pages');
 
@@ -144,5 +146,42 @@ describe('captureBeforeAfter', () => {
     expect(result.after.selector).toBe('.card');
     expect(isValidPng(result.before.image)).toBe(true);
     expect(isValidPng(result.after.image)).toBe(true);
+  });
+});
+
+/**
+ * Playwright routes loopback through the launch proxy even when NO_PROXY lists
+ * localhost, so a proxy that refuses localhost used to render its own error
+ * page for both sides of a comparison — and the run reported "no visual
+ * changes" for a PR that changed plenty. Loopback must ignore the proxy.
+ */
+describe('loopback capture with a proxy configured', () => {
+  it.skipIf(!playwrightAvailable)('ignores the proxy for localhost and renders the real page', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><title>real page</title><body style="background:#0af">hello');
+    });
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as { port: number }).port;
+
+    // A proxy that is not listening at all: any request routed through it fails.
+    const saved = { https: process.env.HTTPS_PROXY, http: process.env.HTTP_PROXY, no: process.env.NO_PROXY };
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1';
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1';
+    delete process.env.NO_PROXY;
+    try {
+      await closeBrowser();
+      const result = await captureScreenshot({ url: `http://localhost:${port}/` });
+      expect(result.status).toBe(200);
+      expect(isValidPng(result.image)).toBe(true);
+    } finally {
+      await closeBrowser();
+      process.env.HTTPS_PROXY = saved.https ?? '';
+      process.env.HTTP_PROXY = saved.http ?? '';
+      if (saved.no === undefined) delete process.env.NO_PROXY; else process.env.NO_PROXY = saved.no;
+      if (!saved.https) delete process.env.HTTPS_PROXY;
+      if (!saved.http) delete process.env.HTTP_PROXY;
+      server.close();
+    }
   });
 });

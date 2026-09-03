@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 import { spawnSync } from 'child_process';
 import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
 import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
+import { isLocalUrl } from './url.js';
 
 const require = createRequire(import.meta.url);
 
@@ -22,7 +23,8 @@ export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
 const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 6;
 const NAVIGATION_TIMEOUT = 30_000;
 
-let browser: Browser | null = null;
+/** Keyed by "direct": a proxy-free browser for loopback, a proxied one for the rest. */
+const browsers = new Map<boolean, Promise<Browser>>();
 let browserLabel = '';
 const contexts = new Map<string, Promise<BrowserContext>>();
 
@@ -122,6 +124,8 @@ const LAUNCH_ARGS = [
 
 export interface LaunchOptions {
   headless?: boolean;
+  /** Ignore any configured proxy. Used for loopback targets. */
+  direct?: boolean;
 }
 
 /**
@@ -129,8 +133,12 @@ export interface LaunchOptions {
  *
  * Node's fetch and Chromium each ignore the standard proxy variables unless
  * told, so on a corporate network or in a sandboxed container the probes can
- * succeed while every capture times out. NO_PROXY is passed through so local
- * dev servers still connect directly.
+ * succeed while every capture times out.
+ *
+ * NO_PROXY is passed through, but it does NOT keep local dev servers working:
+ * Playwright forces loopback through the proxy whatever the bypass list says.
+ * Loopback is handled by launching a second, proxy-free browser instead — see
+ * getBrowser.
  */
 export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: string; bypass?: string } | undefined {
   const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
@@ -151,7 +159,7 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: st
  */
 export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> {
   const headless = opts.headless ?? true;
-  const proxy = proxyFromEnv();
+  const proxy = opts.direct ? undefined : proxyFromEnv();
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   if (customPath) {
     try {
@@ -221,13 +229,32 @@ export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<
   }
 }
 
-/** The process-wide headless browser, launched (and installed) on first use. */
-export async function getBrowser(): Promise<Browser> {
-  if (!browser) {
-    browser = await launchBrowserOrInstall();
-    browser.on('disconnected', () => { browser = null; contexts.clear(); });
+/**
+ * A headless browser, launched (and installed) on first use.
+ *
+ * With no proxy configured there is exactly one. With a proxy configured,
+ * loopback targets get a second, proxy-free browser: Playwright routes
+ * localhost through the launch proxy even when NO_PROXY lists it, so a proxy
+ * that refuses localhost renders its own error page on *both* sides of the
+ * comparison and the run reports "no visual changes" for a PR that changed
+ * plenty. A false negative is the worst answer this tool can give, so the
+ * cost of a second browser process buys it away.
+ */
+export async function getBrowser(direct = false): Promise<Browser> {
+  let pending = browsers.get(direct);
+  if (!pending) {
+    pending = launchBrowserOrInstall({ direct }).then(b => {
+      b.on('disconnected', () => { browsers.delete(direct); contexts.clear(); });
+      return b;
+    });
+    browsers.set(direct, pending);
   }
-  return browser;
+  return pending;
+}
+
+/** Should `url` be captured through a proxy-free browser? Only when a proxy is configured. */
+function needsDirect(url: string): boolean {
+  return Boolean(proxyFromEnv()) && isLocalUrl(url);
 }
 
 export function browserDescription(): string {
@@ -238,8 +265,8 @@ export function browserDescription(): string {
 // Contexts
 // ============================================================
 
-function contextKey(viewport: ViewportSize, scale: number, auth?: AuthOptions): string {
-  return `${viewport.width}x${viewport.height}@${scale}|${auth ? JSON.stringify(auth) : ''}`;
+function contextKey(viewport: ViewportSize, scale: number, direct: boolean, auth?: AuthOptions): string {
+  return `${viewport.width}x${viewport.height}@${scale}|${direct ? 'direct' : 'proxied'}|${auth ? JSON.stringify(auth) : ''}`;
 }
 
 const INIT_SCRIPT = `
@@ -256,12 +283,12 @@ const INIT_SCRIPT = `
   })();
 `;
 
-async function getContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
-  const key = contextKey(viewport, scale, auth);
+async function getContext(viewport: ViewportSize, scale: number, direct: boolean, auth?: AuthOptions): Promise<BrowserContext> {
+  const key = contextKey(viewport, scale, direct, auth);
   let pending = contexts.get(key);
   if (!pending) {
     pending = (async () => {
-      const b = await getBrowser();
+      const b = await getBrowser(direct);
       const ctx = await b.newContext({
         viewport,
         deviceScaleFactor: scale,
@@ -423,7 +450,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
   const settleTimeout = options.settleTimeout ?? 8000;
   const maxHeight = options.maxHeight ?? options.viewport.height * 3;
 
-  const ctx = await getContext(options.viewport, scale, options.auth);
+  const ctx = await getContext(options.viewport, scale, needsDirect(url), options.auth);
   await acquireSlot();
   const page = await ctx.newPage();
   trackRequests(page);
@@ -490,10 +517,10 @@ function classifyNavigationError(err: Error): NavigationError['kind'] {
  * Close the browser session and clean up resources.
  */
 export async function closeBrowser(): Promise<void> {
-  const b = browser;
-  browser = null;
+  const pending = Array.from(browsers.values());
+  browsers.clear();
   contexts.clear();
   activePages = 0;
   pageQueue.length = 0;
-  if (b) await b.close().catch(() => undefined);
+  await Promise.all(pending.map(p => p.then(b => b.close()).catch(() => undefined)));
 }
