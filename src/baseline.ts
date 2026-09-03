@@ -17,8 +17,10 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
-import { readPackage } from './pkg.js';
+import { devScript } from './pkg.js';
 import { findAppRoots } from './routes.js';
+
+export { devScript };
 
 export interface LocalBaseline {
   url: string;
@@ -71,13 +73,6 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
     if (script) return { dir, script };
   }
   return null;
-}
-
-/** The script that starts a dev server, preferring `dev`. */
-export function devScript(dir: string): string | null {
-  const scripts = readPackage(dir)?.scripts as Record<string, string> | undefined;
-  if (!scripts) return null;
-  return ['dev', 'start:dev', 'serve', 'start'].find(name => typeof scripts[name] === 'string') ?? null;
 }
 
 /** An OS-assigned free port. */
