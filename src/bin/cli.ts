@@ -183,6 +183,11 @@ async function main(): Promise<void> {
 
   switch (subcommand) {
     case 'pr': {
+      // before/after come from flags here; positionals would be silently dropped.
+      if (positionals.length) {
+        console.error(`pre-post pr takes no positional arguments (got: ${positionals.join(' ')}). Use --before and --after.`);
+        process.exit(2);
+      }
       const cookies = values.cookie ? Object.entries(kv(values.cookie)!).map(([name, value]) => ({ name, value })) : undefined;
       const result = await runPr({
         ...common,
