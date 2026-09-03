@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { detectPackageManager, devScript, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, devScript, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
 import type { BaselineSkip } from '../../src/baseline';
 import { execSync } from 'child_process';
 
@@ -122,5 +122,52 @@ describe('serveBaseCommit skip reasons', () => {
     const result = await serveBaseCommit({ repoRoot: repo, sha: '0'.repeat(40), onSkip: s => skips.push(s) });
     expect(result).toBeNull();
     expect(skips[0]?.code).toBe('worktree');
+  });
+});
+
+describe('copyEnvFiles', () => {
+  let from: string;
+  let to: string;
+  beforeAll(() => {
+    from = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-envsrc-')));
+    to = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-envdst-')));
+    fs.writeFileSync(path.join(from, '.env'), 'API_KEY=secret\n');
+    fs.writeFileSync(path.join(from, '.env.local'), 'DB=postgres://local\n');
+    fs.mkdirSync(path.join(from, 'apps', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(from, 'apps', 'web', '.env'), 'SCOPED=1\n');
+  });
+  afterAll(() => {
+    fs.rmSync(from, { recursive: true, force: true });
+    fs.rmSync(to, { recursive: true, force: true });
+  });
+
+  it('copies root env files and the app dir ones', () => {
+    const copied = copyEnvFiles(from, to, path.join('apps', 'web'));
+    expect(copied).toContain('.env');
+    expect(copied).toContain('.env.local');
+    expect(fs.readFileSync(path.join(to, '.env'), 'utf-8')).toBe('API_KEY=secret\n');
+    expect(fs.readFileSync(path.join(to, 'apps', 'web', '.env'), 'utf-8')).toBe('SCOPED=1\n');
+  });
+
+  it('skips files that are absent and never reports values', () => {
+    const copied = copyEnvFiles(from, to);
+    expect(copied).not.toContain('.env.development');
+    expect(copied.join(' ')).not.toMatch(/secret|postgres/);
+  });
+
+  it('refuses to write outside the destination', () => {
+    const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-esc-')));
+    const dest = path.join(parent, 'worktree');
+    fs.mkdirSync(dest);
+    try {
+      const copied = copyEnvFiles(from, dest, path.join('..', '..'));
+      // The root-level copies land inside dest and are fine; the traversing
+      // prefix must contribute nothing.
+      expect(copied.some(p => p.includes('..'))).toBe(false);
+      expect(fs.existsSync(path.join(parent, '.env'))).toBe(false);
+      expect(fs.existsSync(path.join(dest, '.env'))).toBe(true);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
   });
 });

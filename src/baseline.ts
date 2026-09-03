@@ -89,6 +89,40 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
   return null;
 }
 
+/** Local env files, in the order a framework would layer them. */
+const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local'];
+
+/**
+ * Copy the working checkout's local env files into a throwaway worktree.
+ *
+ * .env files are gitignored, so a fresh worktree of the base commit has none.
+ * An app that needs one to boot then either never starts or serves an error
+ * page — and an error page diffed against the real branch reports a wall of
+ * changes the PR never made, which is worse than reporting no baseline at all.
+ *
+ * Only ever writes inside `to`, and returns names, never values: these files
+ * are exactly the ones that hold secrets.
+ */
+export function copyEnvFiles(from: string, to: string, appPrefix?: string): string[] {
+  const copied: string[] = [];
+  const root = path.resolve(to);
+  for (const dir of appPrefix ? ['', appPrefix] : ['']) {
+    for (const name of ENV_FILES) {
+      const src = path.join(from, dir, name);
+      const dest = path.resolve(root, dir, name);
+      // The worktree is the only place this may write.
+      if (dest !== root && !dest.startsWith(root + path.sep)) continue;
+      if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        copied.push(path.posix.join(dir, name));
+      } catch { /* best effort: a missing env file is not fatal on its own */ }
+    }
+  }
+  return copied;
+}
+
 /** An OS-assigned free port. */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -199,6 +233,8 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       await cleanup();
       return skip('worktree', `Could not check out ${opts.sha.slice(0, 7)} into a temporary worktree.`);
     }
+    const copied = copyEnvFiles(opts.repoRoot, worktree, opts.appPrefix);
+    if (copied.length) log(`Using local env file(s) for the baseline: ${copied.join(', ')}`);
   }
 
   const app = servableDir(worktree, opts.appPrefix);
