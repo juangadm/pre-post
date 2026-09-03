@@ -3,11 +3,13 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { browserDescription } from '../browser.js';
 import { configPath, CONFIG_FILENAME, loadConfig } from '../config.js';
 import { detectDevServer, ensureBrowser } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
 import { repoRoot } from '../git.js';
+import { servableDir } from '../baseline.js';
 import { getToken } from '../github.js';
 import { closeBrowser } from '../browser.js';
 
@@ -35,6 +37,13 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     const cfg = loadConfig(root);
     checks.push(cfg.before ? { name: 'before', ok: true, detail: cfg.before } : { name: 'before', ok: false, detail: 'not set — pass --before once and it is saved' });
     checks.push({ name: 'config', ok: true, detail: fs.existsSync(configPath(root)) ? CONFIG_FILENAME : 'none (defaults)' });
+    // The last-resort baseline serves the base commit itself, so knowing
+    // whether anything here *can* be served is worth reporting before a run
+    // needs it.
+    const app = servableDir(root);
+    checks.push(app
+      ? { name: 'servable', ok: true, detail: `${path.relative(root, app.dir) || '.'} (${app.script})` }
+      : { name: 'servable', ok: false, detail: 'no dev/serve/start script found; the local baseline is unavailable' });
   } catch {
     checks.push({ name: 'git', ok: false, detail: 'not a repository' });
   }

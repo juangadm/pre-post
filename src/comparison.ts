@@ -14,7 +14,7 @@
 
 import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit } from './deployments.js';
-import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
+import { BaselineSkip, LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
 import { isLocalUrl, normalizeUrl } from './run.js';
 import { PrePostConfig } from './types.js';
@@ -141,7 +141,10 @@ async function localPair(ctx: ResolveContext): Promise<Comparison> {
   // rather than handing back a chore.
   let postServer: LocalBaseline | null = null;
   if (!after && ctx.allowLocalBaseline !== false) {
-    postServer = await (ctx.servePost ?? serveWorkingTree)({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, log: ctx.log });
+    postServer = await (ctx.servePost ?? serveWorkingTree)({
+      repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, log: ctx.log,
+      onSkip: (s: BaselineSkip) => ctx.log(`Could not serve the working tree: ${s.detail}`),
+    });
     if (postServer) after = side(postServer.url, 'working tree, served locally');
   }
   if (!after) throw new NoPostError();
@@ -155,7 +158,10 @@ async function localPair(ctx: ResolveContext): Promise<Comparison> {
   const baseSha = ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
   const baseline = ctx.allowLocalBaseline === false || !baseSha
     ? null
-    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log });
+    : await (ctx.serveBaseline ?? serveBaseCommit)({
+      repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log,
+      onSkip: (s: BaselineSkip) => ctx.log(`Could not serve the base commit: ${s.detail}`),
+    });
   if (baseline) {
     const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`);
     return pair('local', before, after, async () => { await baseline.stop(); await stopPost(); });

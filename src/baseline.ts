@@ -28,6 +28,20 @@ export interface LocalBaseline {
   stop: () => Promise<void>;
 }
 
+/**
+ * Why a local server could not be started.
+ *
+ * Serving locally has four distinct ways to fail and they need different
+ * things from a human — a missing dev script is not a failed install. Callers
+ * treat every one as "try the next option", so without this the run just goes
+ * quiet and the tool reports no baseline at all with nothing to act on.
+ */
+export interface BaselineSkip {
+  code: 'worktree' | 'not-servable' | 'install' | 'boot';
+  /** One sentence, addressed to whoever has to fix it. */
+  detail: string;
+}
+
 interface PackageManager {
   bin: string;
   install: string[];
@@ -109,6 +123,8 @@ export interface BaselineOptions {
   appPrefix?: string;
   /** Budget for install + boot. */
   timeoutMs?: number;
+  /** Called with the reason when null is returned. */
+  onSkip?: (skip: BaselineSkip) => void;
   log?: (msg: string) => void;
 }
 
@@ -137,6 +153,11 @@ export async function serveWorkingTree(opts: Omit<BaselineOptions, 'sha'>): Prom
 
 async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null> {
   const log = opts.log ?? (() => undefined);
+  const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';
+  const skip = (code: BaselineSkip['code'], detail: string): null => {
+    opts.onSkip?.({ code, detail });
+    return null;
+  };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
 
@@ -176,26 +197,25 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
     } catch {
       await cleanup();
-      return null;
+      return skip('worktree', `Could not check out ${opts.sha.slice(0, 7)} into a temporary worktree.`);
     }
   }
 
   const app = servableDir(worktree, opts.appPrefix);
   if (!app) {
     await cleanup();
-    return null;
+    return skip('not-servable', `No package with a dev, serve or start script was found, so ${what} cannot be served locally.`);
   }
   const { dir: appDir, script } = app;
 
   const pm = detectPackageManager(appDir, worktree);
-  const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
   if (!fs.existsSync(path.join(appDir, 'node_modules'))) {
     try {
       execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
     } catch {
       await cleanup();
-      return null;
+      return skip('install', `${pm.bin} install failed for ${what}; run it by hand in ${appDir} to see why.`);
     }
   }
 
@@ -212,7 +232,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const ready = await waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null);
   if (!ready) {
     await cleanup();
-    return null;
+    return skip('boot', `${pm.bin} ${script} did not start serving ${what} within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);
   }
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
