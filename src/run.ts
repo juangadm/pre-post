@@ -10,6 +10,10 @@ import { captureScreenshot } from './browser.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
+import { hostOf, isLocalUrl, joinUrl, normalizeUrl } from './url.js';
+
+// Re-exported so existing importers of run.js keep working.
+export { hostOf, isLocalUrl, joinUrl, normalizeUrl };
 
 export interface CaptureTask {
   route: string;
@@ -35,33 +39,6 @@ export interface PipelineOptions {
 export function routeSlug(route: string): string {
   const slug = route.replace(/^\/+|\/+$/g, '').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '');
   return slug || 'home';
-}
-
-export function joinUrl(base: string, route: string): string {
-  return base.replace(/\/+$/, '') + (route.startsWith('/') ? route : `/${route}`);
-}
-
-/** Add a scheme to a bare URL (http for loopback hosts, https otherwise) and drop trailing slashes. */
-const LOOPBACK = /^(?:(?:https?|file):\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|\/|$)/i;
-
-/** Is this URL served from the machine running the command? */
-export function isLocalUrl(url: string): boolean {
-  return LOOPBACK.test(url);
-}
-
-export function normalizeUrl(url: string): string {
-  const withScheme = /^(https?|file):\/\//i.test(url)
-    ? url
-    : isLocalUrl(url) ? `http://${url}` : `https://${url}`;
-  return withScheme.replace(/\/+$/, '');
-}
-
-export function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
 }
 
 /** The one rule for "did this capture change": a ratio for big pages, an absolute floor for small edits. */
