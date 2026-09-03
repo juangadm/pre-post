@@ -80,7 +80,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
   // flight rather than after it.
-  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, log });
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const pr = await prLookup;
 

@@ -210,13 +210,13 @@ export function deduplicateRoutes(routes: DetectedRoute[]): DetectedRoute[] {
   return Array.from(byPath.values());
 }
 
-function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn = true): DetectedRoute[] {
+function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn?: (msg: string) => void): DetectedRoute[] {
   let out = deduplicateRoutes(routes);
   out.sort((a, b) => CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence] || a.path.localeCompare(b.path));
   if (out.length > maxRoutes) {
     const original = out.length;
     out = out.slice(0, maxRoutes);
-    if (warn) console.warn(`Detected ${original} routes, capping at ${maxRoutes}. Use --max-routes to increase.`);
+    warn?.(`Detected ${original} routes, capping at ${maxRoutes}. Use --max-routes to increase.`);
   }
   return out;
 }
@@ -245,7 +245,7 @@ export function getChangedFiles(diffTarget?: string, cwd = process.cwd()): strin
 export function detectRoutes(changedFiles: string[], options: RouteDetectionOptions = {}): DetectedRoute[] {
   if (changedFiles.length === 0) return [];
   const adapter = adapterFor(options.framework || detectFramework());
-  return rankAndCap(adapter.directRoutes(changedFiles.map(adapter.normalize)), options.maxRoutes ?? CONFIG_DEFAULTS.maxRoutes);
+  return rankAndCap(adapter.directRoutes(changedFiles.map(adapter.normalize)), options.maxRoutes ?? CONFIG_DEFAULTS.maxRoutes, options.log);
 }
 
 // ============================================================
@@ -271,6 +271,8 @@ export interface RepoDetectionOptions {
   diffTarget?: string;
   /** Override changed files (tests) */
   changedFiles?: string[];
+  /** Where warnings go. Left unset, they are silent — --json must stay parseable. */
+  log?: (msg: string) => void;
 }
 
 /** For a layout-only route (no page of its own), the closest static page beneath it. */
@@ -385,7 +387,7 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     framework: adapter.name,
     appRoot,
     changedFiles: allChanged,
-    routes: rankAndCap(resolved, maxRoutes, false),
+    routes: rankAndCap(resolved, maxRoutes, options.log),
     skippedDynamic: Array.from(skippedDynamic),
     durationMs: Date.now() - started,
   };

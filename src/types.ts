@@ -127,6 +127,8 @@ export interface RouteDetectionOptions {
   framework?: Framework;
   /** Maximum number of routes to return (default: 6) */
   maxRoutes?: number;
+  /** Where warnings go. Left unset, they are silent. */
+  log?: (msg: string) => void;
 }
 
 // ============================================================
