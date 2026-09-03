@@ -30,7 +30,7 @@ export interface PipelineOptions {
   maxHeight: number;
   scale: number;
   threshold: number;
-  minChangedPixels: number;
+  minChangedArea: number;
   wait?: number;
   auth?: AuthOptions;
   log?: (msg: string) => void;
@@ -41,9 +41,34 @@ export function routeSlug(route: string): string {
   return slug || 'home';
 }
 
-/** The one rule for "did this capture change": a ratio for big pages, an absolute floor for small edits. */
-export function isChanged(diff: { changedRatio: number; changedPixels: number }, threshold: number, minChangedPixels: number): boolean {
-  return diff.changedPixels > 0 && (diff.changedRatio >= threshold || diff.changedPixels >= minChangedPixels);
+/**
+ * Did this capture change?
+ *
+ * Two arms, because they cover different regimes and neither covers both:
+ *
+ * - Painted area, in CSS pixels² — the rule for pages. Measured against the
+ *   fixture ladder, every deliberate change covers 242 CSS px² or more while
+ *   every no-op covers exactly 0, so the floor sits in a wide empty band. CSS
+ *   pixels rather than device pixels so it means the same at --scale 1 as at
+ *   --scale 2; the old device-pixel constant was silently four times stricter
+ *   at scale 1, and at ~10 CSS px² amounted to a third of one letter.
+ * - Share of the canvas — the rule for small images. One pixel of a 20x20 icon
+ *   is a quarter of a percent of it and obviously a change, but it will never
+ *   reach an area floor sized for pages.
+ *
+ * On a full page the ratio arm effectively never fires on its own (a recoloured
+ * 16px icon is 0.024% of one), and on a small image the area arm never does.
+ * Dropping either one loses real changes, which is the worse error: reporting
+ * "no visual changes" on a PR that changed something is the one answer that
+ * makes a reviewer stop looking.
+ */
+export function isChanged(
+  diff: { changedRatio: number; changedPixels: number },
+  opts: { minChangedArea: number; threshold: number; scale: number },
+): boolean {
+  if (diff.changedPixels === 0) return false;
+  return diff.changedPixels / (opts.scale * opts.scale) >= opts.minChangedArea
+    || diff.changedRatio >= opts.threshold;
 }
 
 function describeError(err: unknown, side: 'before' | 'after', url: string): string {
@@ -110,7 +135,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   else if (before.status && before.status >= 400) notes.push(`production returned ${before.status}`);
   if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
 
-  const changed = isChanged(diff, opts.threshold, opts.minChangedPixels);
+  const changed = isChanged(diff, { minChangedArea: opts.minChangedArea, threshold: opts.threshold, scale: opts.scale });
   opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${(diff.changedRatio * 100).toFixed(2)}%, ${Date.now() - started}ms)`);
   return {
     ...base,

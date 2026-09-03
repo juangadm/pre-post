@@ -3,6 +3,10 @@ import http from 'http';
 import path from 'path';
 import { captureScreenshot, captureBeforeAfter } from '../../src/capture';
 import { closeBrowser } from '../../src/browser';
+import { diffImages } from '../../src/diff';
+import { isChanged } from '../../src/run';
+import { CONFIG_DEFAULTS } from '../../src/config';
+import fs from 'fs';
 
 const TEST_PAGES = path.resolve(__dirname, '../fixtures/pages');
 
@@ -183,5 +187,59 @@ describe('loopback capture with a proxy configured', () => {
       if (!saved.http) delete process.env.HTTP_PROXY;
       server.close();
     }
+  });
+});
+
+/**
+ * The calibration ladder.
+ *
+ * Every rung is one deliberate visual change of increasing painted area; every
+ * noise fixture renders identically on both sides. Together they place the
+ * change threshold: real changes must all land above it and no-ops must all
+ * land at zero. Without this the threshold is a constant nobody can defend.
+ */
+describe('change threshold calibration', () => {
+  const SCALE = CONFIG_DEFAULTS.scale;
+  const AREA = CONFIG_DEFAULTS.minChangedArea;
+  const dirs = fs.existsSync(TEST_PAGES) ? fs.readdirSync(TEST_PAGES) : [];
+  const rungs = dirs.filter(d => d.startsWith('rung-')).sort();
+  const noise = dirs.filter(d => d.startsWith('noise-')).sort();
+
+  async function measure(name: string): Promise<number> {
+    const [before, after] = await Promise.all([
+      captureScreenshot({ url: fileUrl(`${name}/before.html`), fullPage: true, scale: SCALE }),
+      captureScreenshot({ url: fileUrl(`${name}/after.html`), fullPage: true, scale: SCALE }),
+    ]);
+    return diffImages(before.image, after.image).changedPixels / (SCALE * SCALE);
+  }
+
+  it.skipIf(!playwrightAvailable)('reports every no-op as no change', async () => {
+    expect(noise.length).toBeGreaterThan(0);
+    for (const name of noise) {
+      const area = await measure(name);
+      expect(area, `${name} should render identically`).toBe(0);
+    }
+  });
+
+  it.skipIf(!playwrightAvailable)('reports every deliberate change as changed', async () => {
+    expect(rungs.length).toBeGreaterThan(0);
+    for (const name of rungs) {
+      const area = await measure(name);
+      expect(
+        isChanged(
+          { changedPixels: area * SCALE * SCALE, changedRatio: 0 },
+          { minChangedArea: AREA, threshold: CONFIG_DEFAULTS.threshold, scale: SCALE },
+        ),
+        `${name} covers ${area.toFixed(0)} CSS px², threshold is ${AREA}`,
+      ).toBe(true);
+    }
+  });
+
+  it.skipIf(!playwrightAvailable)('keeps the threshold clear of the smallest real change', async () => {
+    // The smallest rung is a recoloured 16px icon. The threshold must sit well
+    // under it, because missing a real change is far worse than reporting a
+    // marginal one.
+    const areas = await Promise.all(rungs.map(measure));
+    expect(Math.min(...areas)).toBeGreaterThan(AREA * 2);
   });
 });

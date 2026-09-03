@@ -12,7 +12,17 @@ export const CONFIG_FILENAME = '.pre-post.json';
 export const CONFIG_DEFAULTS = {
   viewports: ['desktop', 'mobile'] as string[],
   threshold: 0.001,
-  minChangedPixels: 40,
+  /**
+   * Smallest painted change that counts, in CSS pixels².
+   *
+   * Roughly a third of a 16px icon. Against the fixture ladder every real
+   * change measures 242 CSS px² or more while every no-op measures exactly 0,
+   * so this sits in the middle of a wide empty band — low enough that missing
+   * a real change (the worse error by far: the tool would report "no visual
+   * changes" on a PR that changed something) stays implausible, high enough to
+   * absorb antialiasing differences between two machines.
+   */
+  minChangedArea: 100,
   maxRoutes: 6,
   fullPage: true,
   maxHeight: 2400,
@@ -24,13 +34,28 @@ export const CONFIG_DEFAULTS = {
 export interface Settings {
   viewports: string[];
   threshold: number;
-  minChangedPixels: number;
+  minChangedArea: number;
   maxRoutes: number;
   fullPage: boolean;
   maxHeight: number;
   scale: number;
   assetsBranch: string;
   pruneDays: number;
+}
+
+/**
+ * Back-compat: minChangedPixels was device pixels, so honour it at the capture
+ * scale rather than silently ignoring a setting someone tuned.
+ */
+function minChangedArea(config: PrePostConfig, overrides: Partial<Settings>): number {
+  if (overrides.minChangedArea !== undefined) return overrides.minChangedArea;
+  if (config.minChangedArea !== undefined) return config.minChangedArea;
+  const legacy = config.minChangedPixels;
+  if (legacy !== undefined) {
+    const scale = overrides.scale ?? config.scale ?? CONFIG_DEFAULTS.scale;
+    return legacy / (scale * scale);
+  }
+  return CONFIG_DEFAULTS.minChangedArea;
 }
 
 /** Defaults < .pre-post.json < explicit overrides (undefined overrides are ignored). */
@@ -40,7 +65,7 @@ export function resolveSettings(config: PrePostConfig = {}, overrides: Partial<S
   return {
     viewports: pick('viewports'),
     threshold: pick('threshold'),
-    minChangedPixels: pick('minChangedPixels'),
+    minChangedArea: minChangedArea(config, overrides),
     maxRoutes: pick('maxRoutes'),
     fullPage: pick('fullPage'),
     maxHeight: pick('maxHeight'),

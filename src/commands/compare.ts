@@ -48,7 +48,9 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
       route: path.basename(before),
       resolvedRoute: before,
       viewport: 'image',
-      status: isChanged(diff, settings.threshold, settings.minChangedPixels) ? 'changed' : 'unchanged',
+      // Two PNGs off disk were not captured at our scale — their pixels are
+      // already whatever scale they were saved at, so compare area 1:1.
+      status: isChanged(diff, { minChangedArea: settings.minChangedArea, threshold: settings.threshold, scale: 1 }) ? 'changed' : 'unchanged',
       changedRatio: diff.changedRatio,
       sizeChanged: diff.sizeChanged,
       files: { before, after, diff: diff.highlight ? diffPath : undefined },
