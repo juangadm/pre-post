@@ -8,7 +8,8 @@
 
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { DiffRegion, DiffResult } from './types.js';
+import { DiffRegion, DiffResult, ShiftSummary } from './types.js';
+import { alignImage, detectShift } from './shift.js';
 
 export interface DiffOptions {
   /** Padding around the change region for crops, in device pixels. Default 80 */
@@ -37,6 +38,21 @@ const PAD_COLOR: [number, number, number] = [255, 255, 255];
 const PIXEL_THRESHOLD = 0.1;
 /** No crop when the change covers more than this fraction of the canvas. */
 const CROP_MAX_RATIO = 0.5;
+/**
+ * A shift is only worth reporting when putting the two sides back in register
+ * accounts for most of the difference. This is the whole test: an offset that
+ * does not remove the pixels it claims to explain is not the story.
+ *
+ * Measured on the shift ladder, as a share of the original changed pixels:
+ * a pure shift and a shift larger than the viewport leave 0, the two fixtures
+ * carrying a real change leave 0.21 and 0.23, and the horizontal reflow — the
+ * one case no vertical offset explains — leaves 0.45. The band between 0.23
+ * and 0.45 is empty, and this sits inside it, nearer the real changes so a
+ * genuine shift carrying a larger change still reads as one. Erring low is
+ * deliberate: rejecting a shift falls back to the old behaviour, while
+ * claiming one that isn't there tells a reviewer something untrue.
+ */
+const MAX_ALIGNED_SHARE = 0.3;
 
 function padTo(src: PNG, width: number, height: number, bg: [number, number, number]): PNG {
   if (src.width === width && src.height === height) return src;
@@ -159,6 +175,39 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     diffMask: false,
   });
 
+  // A vertical shift repaints everything below where it starts, so the raw
+  // bounding box covers most of the page and the crop guards below refuse to
+  // zoom in. Comparing Post put back in register with Pre isolates the change
+  // the branch actually made, which is small enough to crop and to describe.
+  let shift: ShiftSummary | undefined;
+  let alignedAfter: PNG | undefined;
+  let alignedDiff: PNG | undefined;
+  if (changedPixels > 0) {
+    const candidate = detectShift(before, after);
+    if (candidate) {
+      const aligned = alignImage(after, candidate, bg);
+      const diffOfAligned = new PNG({ width, height });
+      const alignedChangedPixels = pixelmatch(before.data, aligned.data, diffOfAligned.data, width, height, {
+        threshold: PIXEL_THRESHOLD,
+        includeAA: false,
+        alpha: 0.5,
+        diffColor: DIFF_COLOR,
+        aaColor: AA_COLOR,
+        diffMask: false,
+      });
+      if (alignedChangedPixels <= changedPixels * MAX_ALIGNED_SHARE) {
+        shift = {
+          dy: candidate.dy,
+          from: candidate.from,
+          alignedChangedPixels,
+          alignedChangedRatio: alignedChangedPixels / (width * height),
+        };
+        alignedAfter = aligned;
+        alignedDiff = diffOfAligned;
+      }
+    }
+  }
+
   const region = changedPixels > 0 ? boundingBox(diff) : null;
   const result: DiffResult = {
     changedRatio: changedPixels / (width * height),
@@ -171,13 +220,19 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     highlight: region && options.highlight !== false
       ? encode(downscale(diff, options.highlightDownscale ?? 1))
       : undefined,
+    shift,
   };
 
-  if (region) {
-    const area = region.width * region.height;
+  // With a shift, crop what is left once the move is undone; without one, crop
+  // the change itself. A pure shift leaves nothing over and gets no crop: the
+  // sentence is the report, and the full pages are already published.
+  const cropAgainst = alignedAfter ?? after;
+  const cropRegion = alignedDiff ? boundingBox(alignedDiff) : region;
+  if (cropRegion) {
+    const area = cropRegion.width * cropRegion.height;
     if (area / (width * height) <= CROP_MAX_RATIO) {
       const expanded = expandRegion(
-        region,
+        cropRegion,
         { width, height },
         options.padding ?? 80,
         options.minCrop ?? { width: 800, height: 400 },
@@ -186,7 +241,7 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
       if (expanded.width * expanded.height < width * height * 0.8) {
         result.crop = {
           before: crop(before, expanded),
-          after: crop(after, expanded),
+          after: crop(cropAgainst, expanded),
           region: expanded,
         };
       }
