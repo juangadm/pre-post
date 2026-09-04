@@ -59,15 +59,25 @@ Comment: https://github.com/acme/web/pull/42#issuecomment-1
    the painted difference covers at least `minChangedArea` CSS pixels² (default 100, roughly
    a third of a 16px icon) or at least `threshold` of the canvas — the first rule is what
    decides on a page, the second on a small image.
-4. **Publish.** Images go to a `pre-post-assets` branch in the same repository via the GitHub
+4. **Layout shift.** A padding change near the top of a page moves everything below it, and
+   pixel diffing counts every moved pixel as changed: a change a designer would call
+   "slightly roomier" reads as most of the page repainted, and the crop is suppressed just
+   when it would be most useful. So the two sides are checked for a single vertical offset
+   first — how far the content moved, and from which row. When one is found, and putting
+   Post back in register with Pre accounts for most of the difference, the crop is taken
+   from the aligned pair and the comment says `Content shifted down 48px` instead of quoting
+   a percentage. The raw numbers are left alone: a move is a visual change, and reporting
+   less of one would hide it. Reflow, where content moves both across and down, has no
+   single offset to find, so it is reported the way it always was.
+5. **Publish.** Images go to a `pre-post-assets` branch in the same repository via the GitHub
    API, as one commit per run. Nothing is committed to the PR branch, no CI is triggered,
    and the blob URLs render on private repos — a screenshot is visible to exactly whoever
    can see the repository. `pre-post prune` removes images for PRs closed more than 90 days
    ago, but note that it commits a deletion rather than rewriting history: the older commits
    still hold the blobs, so a link handed out earlier keeps working. Treat anything captured
    as permanent, and think twice before pointing pre-post at a preview holding real data.
-5. **Comment.** One sticky comment per PR, updated in place on every run. Changed routes show
-   a Pre/Post crop with the full page and diff collapsed underneath; unchanged routes fold
+6. **Comment.** One sticky comment per PR, updated in place on every run. Changed routes show
+   a Pre/Post crop with the full page collapsed underneath; unchanged routes fold
    into a single line.
 
 ## Install

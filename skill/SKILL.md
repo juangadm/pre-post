@@ -53,7 +53,12 @@ re-runs replace in place — the author's own text is never touched. If the PR c
 edited (a fork, a read-only token) it falls back to a single sticky comment.
 
 Each changed route shows **Pre beside Post**, per viewport, with the full pages folded into
-a `<details>`. That pairing is the comparison; there is no diff overlay and no percentage.
+a `<details>` beneath the crop. That pairing is the comparison; there is no diff overlay and
+no percentage.
+
+When a change moved the page rather than repainting it, the route says so in words —
+`Content shifted down 48px` — and the pair beneath is aligned on that move, so it shows what
+changed besides it. Report that sentence as written; do not translate it into a percentage.
 
 ## Rules
 
