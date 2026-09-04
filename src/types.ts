@@ -216,6 +216,15 @@ export interface RouteCaptureOutcome {
   durationMs?: number;
   /** Extra context, e.g. "new page (404 on production)" */
   note?: string;
+  /** Vertical displacement of Post against Pre, when one explains the change */
+  shift?: RouteShift;
+}
+
+export interface RouteShift {
+  /** CSS pixels the content moved down by; negative means up. */
+  px: number;
+  /** Whether anything changed beyond the move, judged by the same rule as any other capture. */
+  otherChange: boolean;
 }
 
 export interface PrRunResult {

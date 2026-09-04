@@ -6,6 +6,7 @@
 import fs from 'fs';
 import { parentPort } from 'worker_threads';
 import { diffImages, DiffOptions } from './diff.js';
+import { ShiftSummary } from './types.js';
 
 export interface DiffJob {
   /** PNG bytes; transferred to the worker, so the caller must not reuse them. */
@@ -22,6 +23,8 @@ export interface DiffJobResult {
   sizeChanged: boolean;
   hasCrop: boolean;
   hasHighlight: boolean;
+  /** Plain numbers, so the summary survives the structured clone back to the pool. */
+  shift?: ShiftSummary;
   error?: string;
 }
 
@@ -42,6 +45,7 @@ export function executeDiffJob(job: DiffJob): DiffJobResult {
     sizeChanged: result.sizeChanged,
     hasCrop: Boolean(result.crop),
     hasHighlight: Boolean(result.highlight),
+    shift: result.shift,
   };
 }
 
