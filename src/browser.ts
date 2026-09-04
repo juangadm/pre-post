@@ -13,18 +13,20 @@ import { createRequire } from 'module';
 import { spawnSync } from 'child_process';
 import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
 import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
-import { isLocalUrl } from './url.js';
+
 
 const require = createRequire(import.meta.url);
 
 /** Every capture sees the same wall clock, so dates and "x minutes ago" never drift. */
 export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
 
+/** Hosts that are always served from this machine. */
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
 const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 6;
 const NAVIGATION_TIMEOUT = 30_000;
 
-/** Keyed by "direct": a proxy-free browser for loopback, a proxied one for the rest. */
-const browsers = new Map<boolean, Promise<Browser>>();
+let browser: Browser | null = null;
 let browserLabel = '';
 const contexts = new Map<string, Promise<BrowserContext>>();
 
@@ -124,8 +126,6 @@ const LAUNCH_ARGS = [
 
 export interface LaunchOptions {
   headless?: boolean;
-  /** Ignore any configured proxy. Used for loopback targets. */
-  direct?: boolean;
 }
 
 /**
@@ -135,10 +135,12 @@ export interface LaunchOptions {
  * told, so on a corporate network or in a sandboxed container the probes can
  * succeed while every capture times out.
  *
- * NO_PROXY is passed through, but it does NOT keep local dev servers working:
- * Playwright forces loopback through the proxy whatever the bypass list says.
- * Loopback is handled by launching a second, proxy-free browser instead — see
- * getBrowser.
+ * Playwright appends `<-loopback>` to Chromium's bypass list whenever a launch
+ * proxy is set, which forces localhost *through* the proxy however NO_PROXY is
+ * written. A proxy that refuses localhost then serves its own error page on
+ * both sides of a comparison, the diff comes out byte-identical, and the run
+ * reports "no visual changes" for a PR that changed plenty. So loopback is
+ * named in the bypass list and the forcing is switched off at launch.
  */
 export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: string; bypass?: string } | undefined {
   const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
@@ -146,8 +148,11 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: st
   const noProxy = env.NO_PROXY || env.no_proxy;
   // Playwright wants a comma-separated bypass list and always resolves
   // loopback directly, so only non-empty custom entries are worth passing.
-  const bypass = noProxy ? noProxy.split(',').map(h => h.trim()).filter(Boolean).join(',') : '';
-  return { server, ...(bypass ? { bypass } : {}) };
+  const entries = (noProxy ?? '').split(',').map(h => h.trim()).filter(Boolean);
+  // Loopback is always direct: it is a dev server on this machine, never
+  // something the proxy could route to.
+  for (const host of LOOPBACK_HOSTS) if (!entries.includes(host)) entries.push(host);
+  return { server, bypass: entries.join(',') };
 }
 
 /**
@@ -159,7 +164,11 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: st
  */
 export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> {
   const headless = opts.headless ?? true;
-  const proxy = opts.direct ? undefined : proxyFromEnv();
+  const proxy = proxyFromEnv();
+  // Checked in Playwright's own process, so it has to be set here rather than
+  // passed to the browser. Without it the bypass list above is ignored for
+  // loopback.
+  if (proxy) process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK = '1';
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   if (customPath) {
     try {
@@ -229,32 +238,13 @@ export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<
   }
 }
 
-/**
- * A headless browser, launched (and installed) on first use.
- *
- * With no proxy configured there is exactly one. With a proxy configured,
- * loopback targets get a second, proxy-free browser: Playwright routes
- * localhost through the launch proxy even when NO_PROXY lists it, so a proxy
- * that refuses localhost renders its own error page on *both* sides of the
- * comparison and the run reports "no visual changes" for a PR that changed
- * plenty. A false negative is the worst answer this tool can give, so the
- * cost of a second browser process buys it away.
- */
-export async function getBrowser(direct = false): Promise<Browser> {
-  let pending = browsers.get(direct);
-  if (!pending) {
-    pending = launchBrowserOrInstall({ direct }).then(b => {
-      b.on('disconnected', () => { browsers.delete(direct); contexts.clear(); });
-      return b;
-    });
-    browsers.set(direct, pending);
+/** The process-wide headless browser, launched (and installed) on first use. */
+export async function getBrowser(): Promise<Browser> {
+  if (!browser) {
+    browser = await launchBrowserOrInstall();
+    browser.on('disconnected', () => { browser = null; contexts.clear(); });
   }
-  return pending;
-}
-
-/** Should `url` be captured through a proxy-free browser? Only when a proxy is configured. */
-function needsDirect(url: string): boolean {
-  return Boolean(proxyFromEnv()) && isLocalUrl(url);
+  return browser;
 }
 
 export function browserDescription(): string {
@@ -265,8 +255,8 @@ export function browserDescription(): string {
 // Contexts
 // ============================================================
 
-function contextKey(viewport: ViewportSize, scale: number, direct: boolean, auth?: AuthOptions): string {
-  return `${viewport.width}x${viewport.height}@${scale}|${direct ? 'direct' : 'proxied'}|${auth ? JSON.stringify(auth) : ''}`;
+function contextKey(viewport: ViewportSize, scale: number, auth?: AuthOptions): string {
+  return `${viewport.width}x${viewport.height}@${scale}|${auth ? JSON.stringify(auth) : ''}`;
 }
 
 const INIT_SCRIPT = `
@@ -283,12 +273,12 @@ const INIT_SCRIPT = `
   })();
 `;
 
-async function getContext(viewport: ViewportSize, scale: number, direct: boolean, auth?: AuthOptions): Promise<BrowserContext> {
-  const key = contextKey(viewport, scale, direct, auth);
+async function getContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
+  const key = contextKey(viewport, scale, auth);
   let pending = contexts.get(key);
   if (!pending) {
     pending = (async () => {
-      const b = await getBrowser(direct);
+      const b = await getBrowser();
       const ctx = await b.newContext({
         viewport,
         deviceScaleFactor: scale,
@@ -450,7 +440,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
   const settleTimeout = options.settleTimeout ?? 8000;
   const maxHeight = options.maxHeight ?? options.viewport.height * 3;
 
-  const ctx = await getContext(options.viewport, scale, needsDirect(url), options.auth);
+  const ctx = await getContext(options.viewport, scale, options.auth);
   await acquireSlot();
   const page = await ctx.newPage();
   trackRequests(page);
@@ -517,10 +507,10 @@ function classifyNavigationError(err: Error): NavigationError['kind'] {
  * Close the browser session and clean up resources.
  */
 export async function closeBrowser(): Promise<void> {
-  const pending = Array.from(browsers.values());
-  browsers.clear();
+  const b = browser;
+  browser = null;
   contexts.clear();
   activePages = 0;
   pageQueue.length = 0;
-  await Promise.all(pending.map(p => p.then(b => b.close()).catch(() => undefined)));
+  if (b) await b.close().catch(() => undefined);
 }
