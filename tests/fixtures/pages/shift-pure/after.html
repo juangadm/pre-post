@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Changelog</title>
+<style>
+body{margin:0;font:16px/1.6 system-ui,-apple-system,sans-serif;background:#fff;color:#111}
+main{padding:128px 40px;max-width:760px}
+h1{font-size:32px;margin:0 0 12px}
+h2{font-size:20px;margin:24px 0 8px}
+p{color:#444;margin:0 0 14px}
+.banner{display:none}
+.entry{padding:18px 20px;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:14px;background:#fff}
+.tag{display:inline-block;padding:3px 9px;border-radius:999px;background:#e5e7eb;color:#111;font-size:12px}
+.spacer{height:0}
+.btn{display:inline-block;margin-top:18px;padding:12px 22px;border-radius:8px;background:#2563eb;color:#fff;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<div class="banner">Scheduled maintenance this weekend.</div>
+<h1>Changelog</h1>
+<p>Everything that shipped, newest first.</p>
+<h2>March</h2>
+<div class="entry"><span class="tag">added</span><p>Route detection follows the import graph across packages.</p></div>
+<div class="entry"><span class="tag">fixed</span><p>Loopback captures no longer travel through the configured proxy.</p></div>
+<div class="entry"><span class="tag">added</span><p>The baseline worktree inherits local environment files.</p></div>
+<div class="spacer"></div>
+<h2>February</h2>
+<div class="entry"><span class="tag">changed</span><p>The change threshold is expressed in CSS pixels squared.</p></div>
+<div class="entry"><span class="tag">fixed</span><p>Servability decides the app root before file count does.</p></div>
+<div class="entry"><span class="tag">added</span><p>Continuous integration runs the browser suite on every push.</p></div>
+<h2>January</h2>
+<div class="entry"><span class="tag">added</span><p>Sticky pull request comments update themselves in place.</p></div>
+<div class="entry"><span class="tag">changed</span><p>Images publish to a dedicated assets branch, one commit per run.</p></div>
+<a class="btn" href="#">Subscribe to updates</a>
+</main>
+</body>
+</html>
