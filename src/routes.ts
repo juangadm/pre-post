@@ -134,9 +134,14 @@ function adapterFor(name: Framework): FrameworkAdapter {
 }
 
 /**
- * Can this directory actually be served as an app? A dev script is the same
- * test baseline.ts uses before serving a base commit, so detection and serving
- * agree; a recognised framework counts too, for apps started some other way.
+ * Does this directory hold an app whose routes are worth detecting?
+ *
+ * A dev script is the test baseline.ts applies before serving a base commit; a
+ * recognised framework counts too, since an app can be captured from a
+ * deployment without ever being served here. Both are stricter than "owns some
+ * changed files", which is the point: counting alone once picked this repo's
+ * tests/fixtures over its marketing site by a single file and then reported
+ * routes for a directory nothing can serve.
  */
 export function isServableApp(root: string): boolean {
   return devScript(root) !== null || frameworkForRoot(root) !== 'generic';
@@ -152,12 +157,6 @@ export function frameworkForRoot(root: string): Framework {
 
 const APP_SCAN_DEPTH = 3;
 
-/**
- * Directory names that can look like an app but never are the one under
- * review. Test fixtures in particular are whole little apps, and a PR touching
- * them can easily out-number the real app in the diff.
- */
-const NON_APP_DIRS = new Set(['tests', 'test', '__tests__', 'fixtures', 'examples', 'example', 'e2e', 'cypress', 'playwright']);
 
 /** Directories (depth ≤ 3) that look like an app: package.json, or app/ pages/ route folders. */
 export function findAppRoots(baseDir: string): string[] {
@@ -175,7 +174,7 @@ export function findAppRoots(baseDir: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (entry.isDirectory() && !SKIP_DIRS.has(entry.name) && !NON_APP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+      if (entry.isDirectory() && !SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
         walk(path.join(dir, entry.name), depth - 1);
       }
     }
@@ -305,21 +304,27 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
   // be served is not the app a branch changed, however much of the diff lands
   // in it; among candidates that can be served, the diff decides, deepest
   // first on a tie.
-  const scored = findAppRoots(root)
-    .map(dir => ({ dir, rel: toPosix(path.relative(root, dir)) }))
-    .filter(c => c.rel)
-    .map(c => ({
-      dir: c.dir,
-      count: allChanged.filter(f => f.startsWith(c.rel + '/')).length,
-      servable: isServableApp(c.dir),
-    }))
+  const owners = findAppRoots(root)
+    .map(dir => {
+      const rel = toPosix(path.relative(root, dir));
+      return { dir, count: rel ? allChanged.filter(f => f.startsWith(rel + '/')).length : 0 };
+    })
+    // Probing the filesystem is the expensive part, so only candidates that own
+    // some of the diff pay for it.
     .filter(c => c.count > 0)
+    .map(c => {
+      const framework = frameworkForRoot(c.dir);
+      return { ...c, framework, servable: devScript(c.dir) !== null || framework !== 'generic' };
+    })
     .sort((a, b) =>
       Number(b.servable) - Number(a.servable)
       || b.count - a.count
       || b.dir.length - a.dir.length);
-  const appRoot = scored[0]?.dir ?? root;
-  const adapter = adapterFor(options.framework || frameworkForRoot(appRoot));
+  const winner = owners[0];
+  const appRoot = winner?.dir ?? root;
+  // The winner's framework was already resolved while scoring; frameworkForRoot
+  // walks directories, so don't ask twice.
+  const adapter = adapterFor(options.framework || winner?.framework || frameworkForRoot(appRoot));
   const appPrefix = toPosix(path.relative(root, appRoot));
   const appRel = allChanged
     .filter(f => !appPrefix || f.startsWith(appPrefix + '/'))

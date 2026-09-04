@@ -166,9 +166,14 @@ describe('app root: servability outranks file count', () => {
     expect(detection.framework).toBe('nextjs-app');
   });
 
-  it('does not treat fixture directories as app roots at all', () => {
+  it('still finds servable apps in conventionally-named directories', () => {
+    // findAppRoots is shared with baseline serving, so excluding directories by
+    // name here would make a real app under examples/ unservable as a baseline.
+    put('examples/web/package.json', JSON.stringify({ scripts: { dev: 'next dev' }, dependencies: { next: '15' } }));
+    put('examples/web/app/page.tsx', 'export default () => null;');
     const roots = findAppRoots(repo).map(d => path.relative(repo, d));
-    expect(roots).not.toContain(path.join('tests', 'fixtures'));
+    expect(roots).toContain(path.join('examples', 'web'));
+    expect(isServableApp(path.join(repo, 'examples', 'web'))).toBe(true);
   });
 
   it('isServableApp requires a dev script or a real framework', () => {
