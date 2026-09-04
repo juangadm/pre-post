@@ -47,11 +47,17 @@ export interface Settings {
 export function resolveSettings(config: PrePostConfig = {}, overrides: Partial<Settings> = {}): Settings {
   const pick = <K extends keyof Settings>(key: K): Settings[K] =>
     (overrides[key] ?? (config as Partial<Settings>)[key] ?? CONFIG_DEFAULTS[key]) as Settings[K];
-  // minChangedPixels was device pixels. Fold it into the one precedence chain
-  // rather than silently ignoring a value someone tuned.
-  if (config.minChangedArea === undefined && config.minChangedPixels !== undefined) {
-    const scale = pick('scale');
-    config = { ...config, minChangedArea: config.minChangedPixels / (scale * scale) };
+  // minChangedPixels was device pixels, and library callers passed it as an
+  // override as well as setting it in the config file, so both levels have to
+  // be honoured rather than silently falling back to the new default. The new
+  // key wins over the legacy one at the same level; overrides win over config.
+  if (overrides.minChangedArea === undefined) {
+    const legacy = (overrides as Partial<PrePostConfig>).minChangedPixels
+      ?? (config.minChangedArea === undefined ? config.minChangedPixels : undefined);
+    if (legacy !== undefined) {
+      const scale = pick('scale');
+      config = { ...config, minChangedArea: legacy / (scale * scale) };
+    }
   }
   return {
     viewports: pick('viewports'),

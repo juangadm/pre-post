@@ -18,7 +18,7 @@ import { detectGenericRoutes } from './routes/generic.js';
 import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
-import { devScript, hasDependency } from './pkg.js';
+import { devScript, hasDependency, readPackage } from './pkg.js';
 import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
 export type { Framework };
@@ -145,6 +145,20 @@ function adapterFor(name: Framework): FrameworkAdapter {
  */
 export function isServableApp(root: string): boolean {
   return devScript(root) !== null || frameworkForRoot(root) !== 'generic';
+}
+
+/**
+ * Is this directory a package at all, rather than a folder that merely looks
+ * like one?
+ *
+ * findAppRoots accepts any directory holding `app/` or `pages/`, which is how
+ * this repo's own tests/fixtures — a pile of static HTML under pages/ with no
+ * package.json — became a candidate and, on a diff dominated by fixture files,
+ * the winner. Declaring a package (or matching a real framework) is the line
+ * between an app and a directory shaped like one.
+ */
+export function isAppLike(root: string): boolean {
+  return readPackage(root) !== null || frameworkForRoot(root) !== 'generic';
 }
 
 export function frameworkForRoot(root: string): Framework {
@@ -314,13 +328,31 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     .filter(c => c.count > 0)
     .map(c => {
       const framework = frameworkForRoot(c.dir);
-      return { ...c, framework, servable: devScript(c.dir) !== null || framework !== 'generic' };
+      return {
+        ...c,
+        framework,
+        appLike: readPackage(c.dir) !== null || framework !== 'generic',
+        servable: devScript(c.dir) !== null || framework !== 'generic',
+      };
     })
-    .sort((a, b) =>
-      Number(b.servable) - Number(a.servable)
-      || b.count - a.count
-      || b.dir.length - a.dir.length);
-  const winner = owners[0];
+    // A folder shaped like an app is not one; see isAppLike.
+    .filter(c => c.appLike)
+    .sort((a, b) => b.count - a.count || b.dir.length - a.dir.length);
+
+  // Among roots that own a comparable share of the diff, prefer one that can be
+  // served; outside that band the diff wins outright.
+  //
+  // Servability breaks near-ties, which is the case it was added for: this
+  // repo's tests/fixtures beat site/ by a single file and produced routes for a
+  // directory nothing can serve. It must not override a clear majority, though
+  // — a deployed or --before/--after comparison never serves anything locally,
+  // so a static app owning most of the diff still has the routes that changed,
+  // and handing detection to an incidental package with a start script would
+  // discard them.
+  const CONTENDER_SHARE = 0.5;
+  const leader = owners[0]?.count ?? 0;
+  const contenders = owners.filter(c => c.count >= leader * CONTENDER_SHARE);
+  const winner = contenders.find(c => c.servable) ?? owners[0];
   const appRoot = winner?.dir ?? root;
   // The winner's framework was already resolved while scoring; frameworkForRoot
   // walks directories, so don't ask twice.

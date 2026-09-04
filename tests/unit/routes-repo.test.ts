@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { detectRoutesForRepo, findAppRoots, frameworkForRoot, isDynamicRoute, isServableApp } from '../../src/routes';
+import { detectRoutesForRepo, findAppRoots, frameworkForRoot, isAppLike, isDynamicRoute, isServableApp } from '../../src/routes';
 
 let root: string;
 function write(rel: string, content: string): void {
@@ -153,14 +153,17 @@ describe('app root: servability outranks file count', () => {
     run('add -A');
     run('commit -q -m init');
     run('checkout -q -b feature');
+    // The real margin this rule exists for: fixtures beat the site by ONE file.
     put('site/app/page.tsx', 'export default () => <main>hi</main>;');
-    for (const n of ['b', 'c', 'd']) put(`tests/fixtures/pages/${n}.html`, `<p>${n}`);
+    put('site/app/about/page.tsx', 'export default () => null;');
+    put('site/app/globals.css', 'body{color:red}');
+    for (const n of ['b', 'c', 'd', 'e'] ) put(`tests/fixtures/pages/${n}.html`, `<p>${n}`);
     run('add -A');
     run('commit -q -m change');
   });
   afterAll(() => fs.rmSync(repo, { recursive: true, force: true }));
 
-  it('picks the servable app even when another dir owns more of the diff', () => {
+  it('picks the servable app when another dir owns slightly more of the diff', () => {
     const detection = detectRoutesForRepo({ cwd: repo });
     expect(path.relative(repo, detection.appRoot)).toBe('site');
     expect(detection.framework).toBe('nextjs-app');
@@ -179,5 +182,92 @@ describe('app root: servability outranks file count', () => {
   it('isServableApp requires a dev script or a real framework', () => {
     expect(isServableApp(path.join(repo, 'site'))).toBe(true);
     expect(isServableApp(path.join(repo, 'tests', 'fixtures'))).toBe(false);
+  });
+});
+
+/**
+ * Servability breaks near-ties; it must not override a clear majority. A
+ * deployed or --before/--after comparison never serves anything locally, so an
+ * app that owns most of the diff still has the routes that changed even when
+ * nothing here can start it.
+ */
+describe('app root: a clear diff majority outranks servability', () => {
+  let repo: string;
+  const put = (rel: string, content: string) => {
+    const file = path.join(repo, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  };
+  const run = (cmd: string) => execSync(`git ${cmd}`, { cwd: repo, stdio: 'pipe' });
+
+  beforeAll(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-major-')));
+    run('init -q -b main');
+    run('config user.email t@example.com');
+    run('config user.name t');
+    put('package.json', JSON.stringify({ name: 'root', private: true }));
+    // A static app: no dev script, no recognised framework.
+    put('apps/marketing/package.json', JSON.stringify({ name: 'marketing', scripts: { build: 'x' } }));
+    put('apps/marketing/index.html', '<h1>a');
+    // An incidental package that merely has a start script.
+    put('packages/cli/package.json', JSON.stringify({ name: 'cli', scripts: { start: 'node .' } }));
+    put('packages/cli/index.js', 'module.exports = {};');
+    run('add -A');
+    run('commit -q -m init');
+    run('checkout -q -b feature');
+    for (const n of ['a', 'b', 'c', 'd', 'e', 'f']) put(`apps/marketing/${n}.html`, `<p>${n}`);
+    put('packages/cli/index.js', 'module.exports = { x: 1 };');
+    run('add -A');
+    run('commit -q -m change');
+  });
+  afterAll(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  it('keeps the app owning most of the diff, though it cannot be served here', () => {
+    const detection = detectRoutesForRepo({ cwd: repo });
+    expect(path.relative(repo, detection.appRoot)).toBe(path.join('apps', 'marketing'));
+    expect(isServableApp(path.join(repo, 'apps', 'marketing'))).toBe(false);
+  });
+});
+
+/**
+ * findAppRoots accepts any directory holding app/ or pages/, which is how this
+ * repo's tests/fixtures — static HTML under pages/, no package.json — became a
+ * candidate. On a diff dominated by fixture files it would otherwise win
+ * outright, which is the original bug at a worse ratio.
+ */
+describe('app root: a folder shaped like an app is not one', () => {
+  let repo: string;
+  const put = (rel: string, content: string) => {
+    const file = path.join(repo, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  };
+  const run = (cmd: string) => execSync(`git ${cmd}`, { cwd: repo, stdio: 'pipe' });
+
+  beforeAll(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-shaped-')));
+    run('init -q -b main');
+    run('config user.email t@example.com');
+    run('config user.name t');
+    put('package.json', JSON.stringify({ name: 'root', private: true }));
+    put('site/package.json', JSON.stringify({ scripts: { dev: 'next dev' }, dependencies: { next: '15' } }));
+    put('site/app/page.tsx', 'export default () => null;');
+    put('tests/fixtures/pages/a.html', '<p>a');
+    run('add -A');
+    run('commit -q -m init');
+    run('checkout -q -b feature');
+    put('site/app/page.tsx', 'export default () => <main>hi</main>;');
+    // Fixtures outnumber the app many times over, as they do on this very PR.
+    for (let i = 0; i < 20; i++) put(`tests/fixtures/pages/f${i}.html`, `<p>${i}`);
+    run('add -A');
+    run('commit -q -m change');
+  });
+  afterAll(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  it('ignores a pages/ directory with no package.json, whatever its share of the diff', () => {
+    expect(isAppLike(path.join(repo, 'tests', 'fixtures'))).toBe(false);
+    const detection = detectRoutesForRepo({ cwd: repo });
+    expect(path.relative(repo, detection.appRoot)).toBe('site');
+    expect(detection.framework).toBe('nextjs-app');
   });
 });
