@@ -4,7 +4,7 @@
 A rebrand + feature fork of `vercel-labs/before-and-after`. Visual diff tool for PRs — captures pre/post screenshots of web pages. Used as a Claude Code skill or from the CLI.
 
 ## Goal
-Ship a polished, rebranded version ("pre-post") with a distinct visual identity: triangle logo, Biro Script + Departure Mono typography, "PRE vs Post" naming throughout. Deploy on Vercel at `site-puce-rho.vercel.app`.
+Ship a polished, rebranded version ("pre-post") with a distinct visual identity: triangle logo, Biro Script + Departure Mono typography, "PRE vs Post" naming throughout. Deploy on Vercel, served at `prepost.juangabriel.org` (`prepost.juangabriel.xyz` 301s to it).
 
 ## Key Architecture
 - `site/` — Next.js marketing site (App Router, Turbopack)

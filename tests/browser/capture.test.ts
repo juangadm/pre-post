@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import http from 'http';
 import path from 'path';
 import { captureScreenshot, captureBeforeAfter } from '../../src/capture';
+import { closeBrowser } from '../../src/browser';
+import { diffImages } from '../../src/diff';
+import { isChanged } from '../../src/run';
+import { CONFIG_DEFAULTS } from '../../src/config';
+import fs from 'fs';
 
 const TEST_PAGES = path.resolve(__dirname, '../fixtures/pages');
 
@@ -144,5 +150,96 @@ describe('captureBeforeAfter', () => {
     expect(result.after.selector).toBe('.card');
     expect(isValidPng(result.before.image)).toBe(true);
     expect(isValidPng(result.after.image)).toBe(true);
+  });
+});
+
+/**
+ * Playwright routes loopback through the launch proxy even when NO_PROXY lists
+ * localhost, so a proxy that refuses localhost used to render its own error
+ * page for both sides of a comparison — and the run reported "no visual
+ * changes" for a PR that changed plenty. Loopback must ignore the proxy.
+ */
+describe('loopback capture with a proxy configured', () => {
+  it.skipIf(!playwrightAvailable)('ignores the proxy for localhost and renders the real page', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><title>real page</title><body style="background:#0af">hello');
+    });
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as { port: number }).port;
+
+    // A proxy that is not listening at all: any request routed through it fails.
+    const saved = { https: process.env.HTTPS_PROXY, http: process.env.HTTP_PROXY, no: process.env.NO_PROXY };
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1';
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1';
+    delete process.env.NO_PROXY;
+    try {
+      await closeBrowser();
+      const result = await captureScreenshot({ url: `http://localhost:${port}/` });
+      expect(result.status).toBe(200);
+      expect(isValidPng(result.image)).toBe(true);
+    } finally {
+      await closeBrowser();
+      process.env.HTTPS_PROXY = saved.https ?? '';
+      process.env.HTTP_PROXY = saved.http ?? '';
+      if (saved.no === undefined) delete process.env.NO_PROXY; else process.env.NO_PROXY = saved.no;
+      if (!saved.https) delete process.env.HTTPS_PROXY;
+      if (!saved.http) delete process.env.HTTP_PROXY;
+      server.close();
+    }
+  });
+});
+
+/**
+ * The calibration ladder.
+ *
+ * Every rung is one deliberate visual change of increasing painted area; every
+ * noise fixture renders identically on both sides. Together they place the
+ * change threshold: real changes must all land above it and no-ops must all
+ * land at zero. Without this the threshold is a constant nobody can defend.
+ */
+describe('change threshold calibration', () => {
+  const SCALE = CONFIG_DEFAULTS.scale;
+  const AREA = CONFIG_DEFAULTS.minChangedArea;
+  const dirs = fs.existsSync(TEST_PAGES) ? fs.readdirSync(TEST_PAGES) : [];
+  const rungs = dirs.filter(d => d.startsWith('rung-')).sort();
+  const noise = dirs.filter(d => d.startsWith('noise-')).sort();
+
+  async function measure(name: string): Promise<number> {
+    const [before, after] = await Promise.all([
+      captureScreenshot({ url: fileUrl(`${name}/before.html`), fullPage: true, scale: SCALE }),
+      captureScreenshot({ url: fileUrl(`${name}/after.html`), fullPage: true, scale: SCALE }),
+    ]);
+    return diffImages(before.image, after.image).changedPixels / (SCALE * SCALE);
+  }
+
+  it.skipIf(!playwrightAvailable)('reports every no-op as no change', async () => {
+    expect(noise.length).toBeGreaterThan(0);
+    for (const name of noise) {
+      const area = await measure(name);
+      expect(area, `${name} should render identically`).toBe(0);
+    }
+  });
+
+  it.skipIf(!playwrightAvailable)('reports every deliberate change as changed', async () => {
+    expect(rungs.length).toBeGreaterThan(0);
+    for (const name of rungs) {
+      const area = await measure(name);
+      expect(
+        isChanged(
+          { changedPixels: area * SCALE * SCALE, changedRatio: 0 },
+          { minChangedArea: AREA, threshold: CONFIG_DEFAULTS.threshold, scale: SCALE },
+        ),
+        `${name} covers ${area.toFixed(0)} CSS px², threshold is ${AREA}`,
+      ).toBe(true);
+    }
+  });
+
+  it.skipIf(!playwrightAvailable)('keeps the threshold clear of the smallest real change', async () => {
+    // The smallest rung is a recoloured 16px icon. The threshold must sit well
+    // under it, because missing a real change is far worse than reporting a
+    // marginal one.
+    const areas = await Promise.all(rungs.map(measure));
+    expect(Math.min(...areas)).toBeGreaterThan(AREA * 2);
   });
 });

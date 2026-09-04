@@ -15,7 +15,8 @@ import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } f
 import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
-import { CaptureTask, joinUrl, routeSlug, runTasks } from '../run.js';
+import { CaptureTask, routeSlug, runTasks } from '../run.js';
+import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
@@ -80,7 +81,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
   // flight rather than after it.
-  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework });
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, log });
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const pr = await prLookup;
 

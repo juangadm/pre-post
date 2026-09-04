@@ -14,10 +14,14 @@ import { spawnSync } from 'child_process';
 import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
 import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
 
+
 const require = createRequire(import.meta.url);
 
 /** Every capture sees the same wall clock, so dates and "x minutes ago" never drift. */
 export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
+
+/** Hosts that are always served from this machine. */
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
 
 const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 6;
 const NAVIGATION_TIMEOUT = 30_000;
@@ -129,8 +133,14 @@ export interface LaunchOptions {
  *
  * Node's fetch and Chromium each ignore the standard proxy variables unless
  * told, so on a corporate network or in a sandboxed container the probes can
- * succeed while every capture times out. NO_PROXY is passed through so local
- * dev servers still connect directly.
+ * succeed while every capture times out.
+ *
+ * Playwright appends `<-loopback>` to Chromium's bypass list whenever a launch
+ * proxy is set, which forces localhost *through* the proxy however NO_PROXY is
+ * written. A proxy that refuses localhost then serves its own error page on
+ * both sides of a comparison, the diff comes out byte-identical, and the run
+ * reports "no visual changes" for a PR that changed plenty. So loopback is
+ * named in the bypass list and the forcing is switched off at launch.
  */
 export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: string; bypass?: string } | undefined {
   const server = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
@@ -138,8 +148,11 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: st
   const noProxy = env.NO_PROXY || env.no_proxy;
   // Playwright wants a comma-separated bypass list and always resolves
   // loopback directly, so only non-empty custom entries are worth passing.
-  const bypass = noProxy ? noProxy.split(',').map(h => h.trim()).filter(Boolean).join(',') : '';
-  return { server, ...(bypass ? { bypass } : {}) };
+  const entries = (noProxy ?? '').split(',').map(h => h.trim()).filter(Boolean);
+  // Loopback is always direct: it is a dev server on this machine, never
+  // something the proxy could route to.
+  for (const host of LOOPBACK_HOSTS) if (!entries.includes(host)) entries.push(host);
+  return { server, bypass: entries.join(',') };
 }
 
 /**
@@ -152,6 +165,10 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): { server: st
 export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> {
   const headless = opts.headless ?? true;
   const proxy = proxyFromEnv();
+  // Checked in Playwright's own process, so it has to be set here rather than
+  // passed to the browser. Without it the bypass list above is ignored for
+  // loopback.
+  if (proxy) process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK = '1';
   const customPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
   if (customPath) {
     try {

@@ -127,6 +127,8 @@ export interface RouteDetectionOptions {
   framework?: Framework;
   /** Maximum number of routes to return (default: 6) */
   maxRoutes?: number;
+  /** Where warnings go. Left unset, they are silent. */
+  log?: (msg: string) => void;
 }
 
 // ============================================================
@@ -149,6 +151,9 @@ export interface PrePostConfig {
   /** Change ratio (fraction 0..1) at or above which a route counts as changed. Default 0.001 */
   threshold?: number;
   /** Absolute changed-pixel floor at or above which a route counts as changed, so small edits on tall pages register. Default 40 */
+  /** Smallest painted change that counts, in CSS pixels². */
+  minChangedArea?: number;
+  /** @deprecated device pixels; use minChangedArea. Converted at the capture scale. */
   minChangedPixels?: number;
   /** Max detected routes. Default 6 */
   maxRoutes?: number;

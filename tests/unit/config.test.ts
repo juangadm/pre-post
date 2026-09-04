@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadConfig, saveConfig, updateConfig, CONFIG_FILENAME, CONFIG_DEFAULTS } from '../../src/config';
+import { loadConfig, resolveSettings, saveConfig, updateConfig, CONFIG_FILENAME, CONFIG_DEFAULTS } from '../../src/config';
 
 let root: string;
 beforeEach(() => { root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-config-'))); });
@@ -31,5 +31,34 @@ describe('config', () => {
     expect(CONFIG_DEFAULTS.scale).toBe(2);
     expect(CONFIG_DEFAULTS.fullPage).toBe(true);
     expect(CONFIG_DEFAULTS.assetsBranch).toBe('pre-post-assets');
+  });
+});
+
+/**
+ * minChangedPixels was device pixels and library callers passed it both in
+ * .pre-post.json and as an override to runPr/runCompare. Dropping either would
+ * silently reset a tuned value to the new default.
+ */
+describe('legacy minChangedPixels', () => {
+  it('converts the config value at the capture scale', () => {
+    expect(resolveSettings({ minChangedPixels: 400 }).minChangedArea).toBe(100);
+    expect(resolveSettings({ minChangedPixels: 400, scale: 1 }).minChangedArea).toBe(400);
+  });
+
+  it('converts an override too, not just the config field', () => {
+    expect(resolveSettings({}, { minChangedPixels: 800 } as never).minChangedArea).toBe(200);
+  });
+
+  it('lets the new key win over the legacy one at the same level', () => {
+    expect(resolveSettings({ minChangedPixels: 400, minChangedArea: 55 }).minChangedArea).toBe(55);
+    expect(resolveSettings({ minChangedPixels: 4000 }, { minChangedArea: 12 }).minChangedArea).toBe(12);
+  });
+
+  it('lets an override beat the config file', () => {
+    expect(resolveSettings({ minChangedArea: 999 }, { minChangedPixels: 800 } as never).minChangedArea).toBe(200);
+  });
+
+  it('falls back to the default when neither is set', () => {
+    expect(resolveSettings({}).minChangedArea).toBe(100);
   });
 });

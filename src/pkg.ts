@@ -33,3 +33,17 @@ export function hasDependency(root: string, name: string): boolean {
   const pkg = readPackage(root);
   return Boolean(pkg?.dependencies?.[name] || pkg?.devDependencies?.[name]);
 }
+
+/**
+ * The script that starts a dev server for this package, preferring `dev`.
+ *
+ * This is the test for "is this directory an app we could actually serve?",
+ * used both when picking the app root to detect routes for and when serving a
+ * base commit. The two must agree: a directory that cannot be served is not
+ * the app a PR changed, however many of its files the diff touched.
+ */
+export function devScript(dir: string): string | null {
+  const scripts = readPackage(dir)?.scripts as Record<string, string> | undefined;
+  if (!scripts) return null;
+  return ['dev', 'start:dev', 'serve', 'start'].find(name => typeof scripts[name] === 'string') ?? null;
+}

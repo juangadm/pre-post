@@ -16,7 +16,7 @@ import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit } from './deployments.js';
 import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
-import { isLocalUrl, normalizeUrl } from './run.js';
+import { isLocalUrl, normalizeUrl } from './url.js';
 import { PrePostConfig } from './types.js';
 import { mergeBase } from './git.js';
 

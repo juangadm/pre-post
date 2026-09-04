@@ -13,7 +13,8 @@ import { ensureBrowser } from '../doctor.js';
 import { diffImages } from '../diff.js';
 import { parseViewport } from '../viewport.js';
 import { resolveAuth } from '../sessions.js';
-import { CaptureTask, isChanged, joinUrl, normalizeUrl, runTasks } from '../run.js';
+import { CaptureTask, isChanged, runTasks } from '../run.js';
+import { joinUrl, normalizeUrl } from '../url.js';
 
 export interface CompareOptions extends Partial<Settings> {
   before: string;
@@ -48,7 +49,9 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
       route: path.basename(before),
       resolvedRoute: before,
       viewport: 'image',
-      status: isChanged(diff, settings.threshold, settings.minChangedPixels) ? 'changed' : 'unchanged',
+      // Two PNGs off disk were not captured at our scale — their pixels are
+      // already whatever scale they were saved at, so compare area 1:1.
+      status: isChanged(diff, { ...settings, scale: 1 }) ? 'changed' : 'unchanged',
       changedRatio: diff.changedRatio,
       sizeChanged: diff.sizeChanged,
       files: { before, after, diff: diff.highlight ? diffPath : undefined },

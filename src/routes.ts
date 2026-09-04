@@ -18,7 +18,7 @@ import { detectGenericRoutes } from './routes/generic.js';
 import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
-import { hasDependency } from './pkg.js';
+import { devScript, hasDependency, readPackage } from './pkg.js';
 import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
 export type { Framework };
@@ -133,6 +133,34 @@ function adapterFor(name: Framework): FrameworkAdapter {
   return FRAMEWORKS.find(f => f.name === name) ?? FRAMEWORKS[FRAMEWORKS.length - 1];
 }
 
+/**
+ * Does this directory hold an app whose routes are worth detecting?
+ *
+ * A dev script is the test baseline.ts applies before serving a base commit; a
+ * recognised framework counts too, since an app can be captured from a
+ * deployment without ever being served here. Both are stricter than "owns some
+ * changed files", which is the point: counting alone once picked this repo's
+ * tests/fixtures over its marketing site by a single file and then reported
+ * routes for a directory nothing can serve.
+ */
+export function isServableApp(root: string): boolean {
+  return devScript(root) !== null || frameworkForRoot(root) !== 'generic';
+}
+
+/**
+ * Is this directory a package at all, rather than a folder that merely looks
+ * like one?
+ *
+ * findAppRoots accepts any directory holding `app/` or `pages/`, which is how
+ * this repo's own tests/fixtures — a pile of static HTML under pages/ with no
+ * package.json — became a candidate and, on a diff dominated by fixture files,
+ * the winner. Declaring a package (or matching a real framework) is the line
+ * between an app and a directory shaped like one.
+ */
+export function isAppLike(root: string): boolean {
+  return readPackage(root) !== null || frameworkForRoot(root) !== 'generic';
+}
+
 export function frameworkForRoot(root: string): Framework {
   return FRAMEWORKS.find(f => f.matches(root))!.name;
 }
@@ -142,6 +170,7 @@ export function frameworkForRoot(root: string): Framework {
 // ============================================================
 
 const APP_SCAN_DEPTH = 3;
+
 
 /** Directories (depth ≤ 3) that look like an app: package.json, or app/ pages/ route folders. */
 export function findAppRoots(baseDir: string): string[] {
@@ -194,13 +223,13 @@ export function deduplicateRoutes(routes: DetectedRoute[]): DetectedRoute[] {
   return Array.from(byPath.values());
 }
 
-function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn = true): DetectedRoute[] {
+function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn?: (msg: string) => void): DetectedRoute[] {
   let out = deduplicateRoutes(routes);
   out.sort((a, b) => CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence] || a.path.localeCompare(b.path));
   if (out.length > maxRoutes) {
     const original = out.length;
     out = out.slice(0, maxRoutes);
-    if (warn) console.warn(`Detected ${original} routes, capping at ${maxRoutes}. Use --max-routes to increase.`);
+    warn?.(`Detected ${original} routes, capping at ${maxRoutes}. Use --max-routes to increase.`);
   }
   return out;
 }
@@ -229,7 +258,7 @@ export function getChangedFiles(diffTarget?: string, cwd = process.cwd()): strin
 export function detectRoutes(changedFiles: string[], options: RouteDetectionOptions = {}): DetectedRoute[] {
   if (changedFiles.length === 0) return [];
   const adapter = adapterFor(options.framework || detectFramework());
-  return rankAndCap(adapter.directRoutes(changedFiles.map(adapter.normalize)), options.maxRoutes ?? CONFIG_DEFAULTS.maxRoutes);
+  return rankAndCap(adapter.directRoutes(changedFiles.map(adapter.normalize)), options.maxRoutes ?? CONFIG_DEFAULTS.maxRoutes, options.log);
 }
 
 // ============================================================
@@ -255,6 +284,8 @@ export interface RepoDetectionOptions {
   diffTarget?: string;
   /** Override changed files (tests) */
   changedFiles?: string[];
+  /** Where warnings go. Left unset, they are silent — --json must stay parseable. */
+  log?: (msg: string) => void;
 }
 
 /** For a layout-only route (no page of its own), the closest static page beneath it. */
@@ -276,22 +307,56 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     .filter(f => f !== CONFIG_FILENAME)
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
 
-  // Choose the app root that owns the most changed files (deepest wins ties).
-  // The repo root contains every changed file, so it would always match at least
-  // as many as any app nested inside it. Score the nested app roots only, and
-  // fall back to the repo root when none of them owns a changed file.
-  let appRoot = root;
-  let best = 0;
-  for (const candidate of findAppRoots(root)) {
-    const rel = toPosix(path.relative(root, candidate));
-    if (!rel) continue;
-    const count = allChanged.filter(f => f.startsWith(rel + '/')).length;
-    if (count > best || (count === best && count > 0 && candidate.length > appRoot.length)) {
-      best = count;
-      appRoot = candidate;
-    }
-  }
-  const adapter = adapterFor(options.framework || frameworkForRoot(appRoot));
+  // Choose the app root the PR is about. The repo root contains every changed
+  // file, so it would always match at least as many as any app nested inside
+  // it; score the nested app roots only, and fall back to the repo root when
+  // none of them owns a changed file.
+  //
+  // Servability outranks file count. Counting alone once picked this repo's
+  // own tests/fixtures over its marketing site by a single file, and then
+  // reported routes for a directory nothing can serve. A directory that cannot
+  // be served is not the app a branch changed, however much of the diff lands
+  // in it; among candidates that can be served, the diff decides, deepest
+  // first on a tie.
+  const owners = findAppRoots(root)
+    .map(dir => {
+      const rel = toPosix(path.relative(root, dir));
+      return { dir, count: rel ? allChanged.filter(f => f.startsWith(rel + '/')).length : 0 };
+    })
+    // Probing the filesystem is the expensive part, so only candidates that own
+    // some of the diff pay for it.
+    .filter(c => c.count > 0)
+    .map(c => {
+      const framework = frameworkForRoot(c.dir);
+      return {
+        ...c,
+        framework,
+        appLike: readPackage(c.dir) !== null || framework !== 'generic',
+        servable: devScript(c.dir) !== null || framework !== 'generic',
+      };
+    })
+    // A folder shaped like an app is not one; see isAppLike.
+    .filter(c => c.appLike)
+    .sort((a, b) => b.count - a.count || b.dir.length - a.dir.length);
+
+  // Among roots that own a comparable share of the diff, prefer one that can be
+  // served; outside that band the diff wins outright.
+  //
+  // Servability breaks near-ties, which is the case it was added for: this
+  // repo's tests/fixtures beat site/ by a single file and produced routes for a
+  // directory nothing can serve. It must not override a clear majority, though
+  // — a deployed or --before/--after comparison never serves anything locally,
+  // so a static app owning most of the diff still has the routes that changed,
+  // and handing detection to an incidental package with a start script would
+  // discard them.
+  const CONTENDER_SHARE = 0.5;
+  const leader = owners[0]?.count ?? 0;
+  const contenders = owners.filter(c => c.count >= leader * CONTENDER_SHARE);
+  const winner = contenders.find(c => c.servable) ?? owners[0];
+  const appRoot = winner?.dir ?? root;
+  // The winner's framework was already resolved while scoring; frameworkForRoot
+  // walks directories, so don't ask twice.
+  const adapter = adapterFor(options.framework || winner?.framework || frameworkForRoot(appRoot));
   const appPrefix = toPosix(path.relative(root, appRoot));
   const appRel = allChanged
     .filter(f => !appPrefix || f.startsWith(appPrefix + '/'))
@@ -359,7 +424,7 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     framework: adapter.name,
     appRoot,
     changedFiles: allChanged,
-    routes: rankAndCap(resolved, maxRoutes, false),
+    routes: rankAndCap(resolved, maxRoutes, options.log),
     skippedDynamic: Array.from(skippedDynamic),
     durationMs: Date.now() - started,
   };

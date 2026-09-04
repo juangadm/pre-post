@@ -55,11 +55,17 @@ Comment: https://github.com/acme/web/pull/42#issuecomment-1
    lazy content primed. 2x device scale, full page (capped at 2400 CSS px), desktop + mobile.
    All routes and viewports run concurrently.
 3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed,
-   the bounding box, a red-highlight image, and a tight crop of the changed region.
+   the bounding box, and a tight crop of the changed region. A route counts as changed when
+   the painted difference covers at least `minChangedArea` CSS pixels² (default 100, roughly
+   a third of a 16px icon) or at least `threshold` of the canvas — the first rule is what
+   decides on a page, the second on a small image.
 4. **Publish.** Images go to a `pre-post-assets` branch in the same repository via the GitHub
    API, as one commit per run. Nothing is committed to the PR branch, no CI is triggered,
-   and the blob URLs render on private repos. `pre-post prune` removes images for PRs
-   closed more than 90 days ago.
+   and the blob URLs render on private repos — a screenshot is visible to exactly whoever
+   can see the repository. `pre-post prune` removes images for PRs closed more than 90 days
+   ago, but note that it commits a deletion rather than rewriting history: the older commits
+   still hold the blobs, so a link handed out earlier keeps working. Treat anything captured
+   as permanent, and think twice before pointing pre-post at a preview holding real data.
 5. **Comment.** One sticky comment per PR, updated in place on every run. Changed routes show
    a Pre/Post crop with the full page and diff collapsed underneath; unchanged routes fold
    into a single line.
@@ -118,7 +124,7 @@ Optional `.pre-post.json` in the repo root:
   "maxHeight": 2400,
   "scale": 2,
   "threshold": 0.001,
-  "minChangedPixels": 40,
+  "minChangedArea": 100,
   "maxRoutes": 6,
   "ignore": ["apps/docs"],
   "headers": {},

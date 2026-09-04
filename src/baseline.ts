@@ -17,7 +17,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
-import { readPackage } from './pkg.js';
+import { devScript } from './pkg.js';
 import { findAppRoots } from './routes.js';
 
 export interface LocalBaseline {
@@ -25,6 +25,7 @@ export interface LocalBaseline {
   /** Stop the dev server and delete the worktree. Safe to call twice. */
   stop: () => Promise<void>;
 }
+
 
 interface PackageManager {
   bin: string;
@@ -73,11 +74,38 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
   return null;
 }
 
-/** The script that starts a dev server, preferring `dev`. */
-export function devScript(dir: string): string | null {
-  const scripts = readPackage(dir)?.scripts as Record<string, string> | undefined;
-  if (!scripts) return null;
-  return ['dev', 'start:dev', 'serve', 'start'].find(name => typeof scripts[name] === 'string') ?? null;
+/** Local env files, in the order a framework would layer them. */
+const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local'];
+
+/**
+ * Copy the working checkout's local env files into a throwaway worktree.
+ *
+ * .env files are gitignored, so a fresh worktree of the base commit has none.
+ * An app that needs one to boot then either never starts or serves an error
+ * page — and an error page diffed against the real branch reports a wall of
+ * changes the PR never made, which is worse than reporting no baseline at all.
+ *
+ * Only ever writes inside `to`, and returns names, never values: these files
+ * are exactly the ones that hold secrets.
+ */
+export function copyEnvFiles(from: string, to: string, appPrefix?: string): string[] {
+  const copied: string[] = [];
+  const root = path.resolve(to);
+  for (const dir of appPrefix ? ['', appPrefix] : ['']) {
+    for (const name of ENV_FILES) {
+      const src = path.join(from, dir, name);
+      const dest = path.resolve(root, dir, name);
+      // The worktree is the only place this may write.
+      if (dest !== root && !dest.startsWith(root + path.sep)) continue;
+      if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        copied.push(path.posix.join(dir, name));
+      } catch { /* best effort: a missing env file is not fatal on its own */ }
+    }
+  }
+  return copied;
 }
 
 /** An OS-assigned free port. */
@@ -142,6 +170,12 @@ export async function serveWorkingTree(opts: Omit<BaselineOptions, 'sha'>): Prom
 
 async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null> {
   const log = opts.log ?? (() => undefined);
+  const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';
+  /** Every caller treats null as "try the next option", so say why before returning it. */
+  const skip = (detail: string): null => {
+    log(`Could not serve ${what}: ${detail}`);
+    return null;
+  };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
 
@@ -181,26 +215,27 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
     } catch {
       await cleanup();
-      return null;
+      return skip('the worktree checkout failed.');
     }
+    const copied = copyEnvFiles(opts.repoRoot, worktree, opts.appPrefix);
+    if (copied.length) log(`Using local env file(s) for the baseline: ${copied.join(', ')}`);
   }
 
   const app = servableDir(worktree, opts.appPrefix);
   if (!app) {
     await cleanup();
-    return null;
+    return skip('no package with a dev, serve or start script was found.');
   }
   const { dir: appDir, script } = app;
 
   const pm = detectPackageManager(appDir, worktree);
-  const what = opts.sha ? `base commit ${opts.sha.slice(0, 7)}` : 'the working tree';
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
   if (!fs.existsSync(path.join(appDir, 'node_modules'))) {
     try {
       execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
     } catch {
       await cleanup();
-      return null;
+      return skip(`${pm.bin} install failed; run it by hand in ${appDir} to see why.`);
     }
   }
 
@@ -217,7 +252,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const ready = await waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null);
   if (!ready) {
     await cleanup();
-    return null;
+    return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);
   }
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);

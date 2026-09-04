@@ -12,7 +12,17 @@ export const CONFIG_FILENAME = '.pre-post.json';
 export const CONFIG_DEFAULTS = {
   viewports: ['desktop', 'mobile'] as string[],
   threshold: 0.001,
-  minChangedPixels: 40,
+  /**
+   * Smallest painted change that counts, in CSS pixels².
+   *
+   * Roughly a third of a 16px icon. Against the fixture ladder every real
+   * change measures 242 CSS px² or more while every no-op measures exactly 0,
+   * so this sits in the middle of a wide empty band — low enough that missing
+   * a real change (the worse error by far: the tool would report "no visual
+   * changes" on a PR that changed something) stays implausible, high enough to
+   * absorb antialiasing differences between two machines.
+   */
+  minChangedArea: 100,
   maxRoutes: 6,
   fullPage: true,
   maxHeight: 2400,
@@ -24,7 +34,7 @@ export const CONFIG_DEFAULTS = {
 export interface Settings {
   viewports: string[];
   threshold: number;
-  minChangedPixels: number;
+  minChangedArea: number;
   maxRoutes: number;
   fullPage: boolean;
   maxHeight: number;
@@ -37,10 +47,22 @@ export interface Settings {
 export function resolveSettings(config: PrePostConfig = {}, overrides: Partial<Settings> = {}): Settings {
   const pick = <K extends keyof Settings>(key: K): Settings[K] =>
     (overrides[key] ?? (config as Partial<Settings>)[key] ?? CONFIG_DEFAULTS[key]) as Settings[K];
+  // minChangedPixels was device pixels, and library callers passed it as an
+  // override as well as setting it in the config file, so both levels have to
+  // be honoured rather than silently falling back to the new default. The new
+  // key wins over the legacy one at the same level; overrides win over config.
+  if (overrides.minChangedArea === undefined) {
+    const legacy = (overrides as Partial<PrePostConfig>).minChangedPixels
+      ?? (config.minChangedArea === undefined ? config.minChangedPixels : undefined);
+    if (legacy !== undefined) {
+      const scale = pick('scale');
+      config = { ...config, minChangedArea: legacy / (scale * scale) };
+    }
+  }
   return {
     viewports: pick('viewports'),
     threshold: pick('threshold'),
-    minChangedPixels: pick('minChangedPixels'),
+    minChangedArea: pick('minChangedArea'),
     maxRoutes: pick('maxRoutes'),
     fullPage: pick('fullPage'),
     maxHeight: pick('maxHeight'),
