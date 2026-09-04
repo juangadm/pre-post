@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, devScript, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
-import type { BaselineSkip } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
+import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
 let dir: string;
@@ -109,19 +109,17 @@ describe('serveBaseCommit skip reasons', () => {
     git('commit -q -m init');
     const sha = execSync('git rev-parse HEAD', { cwd: repo, encoding: 'utf-8' }).trim();
 
-    const skips: BaselineSkip[] = [];
-    const result = await serveBaseCommit({ repoRoot: repo, sha, onSkip: s => skips.push(s) });
+    const logs: string[] = [];
+    const result = await serveBaseCommit({ repoRoot: repo, sha, log: m => logs.push(m) });
     expect(result).toBeNull();
-    expect(skips).toHaveLength(1);
-    expect(skips[0].code).toBe('not-servable');
-    expect(skips[0].detail).toMatch(/dev, serve or start script/);
+    expect(logs.join('\n')).toMatch(/Could not serve base commit .*dev, serve or start script/);
   });
 
   it('reports a worktree it cannot check out', async () => {
-    const skips: BaselineSkip[] = [];
-    const result = await serveBaseCommit({ repoRoot: repo, sha: '0'.repeat(40), onSkip: s => skips.push(s) });
+    const logs: string[] = [];
+    const result = await serveBaseCommit({ repoRoot: repo, sha: '0'.repeat(40), log: m => logs.push(m) });
     expect(result).toBeNull();
-    expect(skips[0]?.code).toBe('worktree');
+    expect(logs.join('\n')).toMatch(/worktree checkout failed/);
   });
 });
 

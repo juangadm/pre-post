@@ -15,7 +15,8 @@ import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } f
 import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
-import { CaptureTask, joinUrl, routeSlug, runTasks } from '../run.js';
+import { CaptureTask, routeSlug, runTasks } from '../run.js';
+import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 
 export interface PrCommandOptions extends Partial<Settings> {

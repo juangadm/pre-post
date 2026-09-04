@@ -5,7 +5,7 @@
  */
 
 import { getBrowser, launchBrowserOrInstall } from './browser.js';
-import { hostOf } from './run.js';
+import { hostOf } from './url.js';
 import { BrowserNotFoundError, HttpStatusError, NeedsHumanError, isVercelResponse } from './errors.js';
 export { NeedsHumanError } from './errors.js';
 

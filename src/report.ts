@@ -4,7 +4,7 @@
  */
 
 import { PrRunResult, RouteCaptureOutcome } from './types.js';
-import { hostOf, isLocalUrl } from './run.js';
+import { hostOf, isLocalUrl } from './url.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
 

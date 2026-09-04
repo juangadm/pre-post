@@ -6,7 +6,7 @@
 import readline from 'readline';
 import { launchHeadedBrowser } from '../doctor.js';
 import { saveSession } from '../sessions.js';
-import { normalizeUrl } from '../run.js';
+import { normalizeUrl } from '../url.js';
 
 function waitForEnter(prompt: string): Promise<void> {
   return new Promise(resolve => {

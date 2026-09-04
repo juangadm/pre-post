@@ -10,10 +10,7 @@ import { captureScreenshot } from './browser.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
-import { hostOf, isLocalUrl, joinUrl, normalizeUrl } from './url.js';
-
-// Re-exported so existing importers of run.js keep working.
-export { hostOf, isLocalUrl, joinUrl, normalizeUrl };
+import { hostOf, joinUrl } from './url.js';
 
 export interface CaptureTask {
   route: string;
@@ -136,7 +133,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   else if (before.status && before.status >= 400) notes.push(`production returned ${before.status}`);
   if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
 
-  const changed = isChanged(diff, { minChangedArea: opts.minChangedArea, threshold: opts.threshold, scale: opts.scale });
+  const changed = isChanged(diff, opts);
   opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${(diff.changedRatio * 100).toFixed(2)}%, ${Date.now() - started}ms)`);
   return {
     ...base,

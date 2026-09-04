@@ -43,29 +43,20 @@ export interface Settings {
   pruneDays: number;
 }
 
-/**
- * Back-compat: minChangedPixels was device pixels, so honour it at the capture
- * scale rather than silently ignoring a setting someone tuned.
- */
-function minChangedArea(config: PrePostConfig, overrides: Partial<Settings>): number {
-  if (overrides.minChangedArea !== undefined) return overrides.minChangedArea;
-  if (config.minChangedArea !== undefined) return config.minChangedArea;
-  const legacy = config.minChangedPixels;
-  if (legacy !== undefined) {
-    const scale = overrides.scale ?? config.scale ?? CONFIG_DEFAULTS.scale;
-    return legacy / (scale * scale);
-  }
-  return CONFIG_DEFAULTS.minChangedArea;
-}
-
 /** Defaults < .pre-post.json < explicit overrides (undefined overrides are ignored). */
 export function resolveSettings(config: PrePostConfig = {}, overrides: Partial<Settings> = {}): Settings {
   const pick = <K extends keyof Settings>(key: K): Settings[K] =>
     (overrides[key] ?? (config as Partial<Settings>)[key] ?? CONFIG_DEFAULTS[key]) as Settings[K];
+  // minChangedPixels was device pixels. Fold it into the one precedence chain
+  // rather than silently ignoring a value someone tuned.
+  if (config.minChangedArea === undefined && config.minChangedPixels !== undefined) {
+    const scale = pick('scale');
+    config = { ...config, minChangedArea: config.minChangedPixels / (scale * scale) };
+  }
   return {
     viewports: pick('viewports'),
     threshold: pick('threshold'),
-    minChangedArea: minChangedArea(config, overrides),
+    minChangedArea: pick('minChangedArea'),
     maxRoutes: pick('maxRoutes'),
     fullPage: pick('fullPage'),
     maxHeight: pick('maxHeight'),

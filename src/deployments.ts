@@ -7,7 +7,7 @@
  */
 
 import { GitHub } from './github.js';
-import { normalizeUrl } from './run.js';
+import { normalizeUrl } from './url.js';
 
 /**
  * Bots whose PR comments may be read for a preview URL. A comment is only
