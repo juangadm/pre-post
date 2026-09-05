@@ -8,7 +8,7 @@ import { browserDescription } from '../browser.js';
 import { configPath, CONFIG_FILENAME, loadConfig } from '../config.js';
 import { ensureBrowser, scanDevServers } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
-import { repoRoot } from '../git.js';
+import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
 import { getToken } from '../github.js';
 import { closeBrowser } from '../browser.js';
@@ -43,6 +43,24 @@ export function doctorExitCode(checks: DoctorCheck[]): number {
   return checks.some(c => c.required && !c.ok) ? 1 : 0;
 }
 
+/**
+ * Can `pr` name the repository it would publish to?
+ *
+ * Being inside a git repository is not enough: `runPr` calls
+ * `resolveOwnerRepo` unconditionally, which needs a parseable `origin` or
+ * `GH_REPO`/`GITHUB_REPOSITORY`. A checkout with neither — a clone from a
+ * mirror, a bare worktree, `origin` pointing at something that is not GitHub —
+ * passes the git check and then throws before the pipeline starts. Reporting
+ * "ready" there is exactly the lie the exit-code contract exists to prevent.
+ */
+export function repoIdentityCheck(root: string): DoctorCheck {
+  try {
+    return { name: 'repo', ok: true, detail: resolveOwnerRepo(root), required: true };
+  } catch (err) {
+    return { name: 'repo', ok: false, detail: (err as Error).message, required: true };
+  }
+}
+
 export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   try {
@@ -68,6 +86,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     : { name: 'devserver', ok: false, detail: `none found on the usual ports${ignored ? ` (not a dev server: ${ignored})` : ''}` });
   try {
     const root = repoRoot(cwd);
+    checks.push(repoIdentityCheck(root));
     const cfg = loadConfig(root);
     checks.push(cfg.before ? { name: 'before', ok: true, detail: cfg.before } : { name: 'before', ok: false, detail: 'not set — pass --before once and it is saved' });
     checks.push({ name: 'config', ok: true, detail: fs.existsSync(configPath(root)) ? CONFIG_FILENAME : 'none (defaults)' });

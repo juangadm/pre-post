@@ -143,7 +143,7 @@ Exit codes, so a script or an agent can branch on them:
 | code | meaning |
 |---|---|
 | 0 | done; for `doctor`, `pre-post pr` can run |
-| 1 | `doctor` only: a required check failed, so `pre-post pr` cannot run |
+| 1 | the run failed — every capture errored, or an unexpected error; for `doctor`, a required check failed |
 | 2 | the arguments could not be parsed |
 | 3 | something needs a human; the message says what |
 
