@@ -521,7 +521,8 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       throw new NavigationError(classifyNavigationError(err), url, err);
     });
     const status = response?.status();
-    if (status === 401 || status === 403) throw new HttpStatusError(status, url, isVercelResponse({ get: n => response!.headers()[n] ?? null }));
+    const vercel = response ? isVercelResponse({ get: n => response.headers()[n] ?? null }) : false;
+    if (status === 401 || status === 403) throw new HttpStatusError(status, url, vercel);
 
     await settlePage(page, settleTimeout);
 
@@ -559,6 +560,11 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       if (height > maxHeight) clip = { x: 0, y: 0, width: options.viewport.width, height: maxHeight };
     }
 
+    // Where the browser actually ended up, and what the page calls itself: a
+    // sign-in wall answers with 200 after a redirect, so the status says nothing.
+    const finalUrl = page.url();
+    const title = await page.title().catch(() => '');
+
     const image = await page.screenshot({
       type: 'png',
       fullPage: options.fullPage ?? false,
@@ -573,6 +579,9 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       viewport: options.viewport,
       url,
       status,
+      finalUrl,
+      title,
+      vercel,
       selector: options.selector,
       durationMs: Date.now() - started,
     };

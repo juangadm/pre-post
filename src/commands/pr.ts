@@ -12,6 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
+import { signInHint } from '../landing.js';
 import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
@@ -182,6 +183,15 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   } finally {
     await closeBrowser();
     await cleanupComparison();
+  }
+
+  // Every route walled means the run never saw the site. Publishing "no visual
+  // changes" — or anything else — from that would be a confident lie, so stop
+  // with the one thing a human has to do.
+  const walled = outcomes.filter(o => o.blocked);
+  if (walled.length === outcomes.length && walled.length > 0) {
+    const { side, vercel } = walled[0].blocked!;
+    throw new NeedsHumanError(signInHint(side === 'before' ? comparison.before.url : comparison.after.url, vercel));
   }
 
   // --- Publish -------------------------------------------------------------------
