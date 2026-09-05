@@ -1,8 +1,18 @@
 # pre-post optimization plan
 
-Goal: a developer at the company types `/pre-post` on a PR and, in well under a
-minute and a few thousand tokens of model context, gets a nicely formatted
-before/after comment on GitHub that a human reviewer can judge at a glance.
+Goal: pre-post gives a reviewer the visual answer before they read a line of the
+diff. Anyone shipping a front-end change — a PM, a marketer, a designer, an
+engineer — runs one command, on an open PR or while preparing one, and the
+before/after screenshots for every route the branch touches land at the top of the
+PR description, Pre beside Post. Nothing to scroll to, nothing pasted by hand, no
+screenshots in model context.
+
+Two properties carry the whole tool. It has to be **fast**: a run finishes while
+you are still looking at the PR — seconds, not minutes — because a tool you wait
+on is a tool you stop reaching for. And it has to **just work**: the right routes
+without configuration, identical pages reported as identical, and an honest
+account of anything it could not check. A reviewer who trusts the images stops
+opening the preview deployment; one who does not ignores the tool entirely.
 
 ## 1. Where the time and tokens go today
 
@@ -54,7 +64,7 @@ Quality gaps:
 | Frameworks | Next.js (App and Pages Router) and Vite apps first; generic fallback stays |
 | "Before" | Production URL (what is on main). "After" is the local dev server |
 | Storage | Dedicated orphan branch `pre-post-assets` written via the GitHub Contents API. No PR-branch commits, no CI triggers, works on private repos, prunable |
-| Output | One sticky PR comment updated in place. Markdown also printed for manual paste |
+| Output | A delimited block at the top of the PR description, replaced in place on re-run. A sticky comment only when the description cannot be edited. Markdown also printed for manual paste |
 | Unchanged routes | Collapsed into a single "no visual change" line so reviewers know they were checked |
 | Automation | No GitHub Action for now. The skill is the product; first run must self-heal |
 | Login-protected pages | `pre-post login <url>` opens a browser once, the developer signs in, the session is saved locally and reused |
@@ -80,7 +90,8 @@ which is the "after" state.
         ├─ capture     headless shell, one context per viewport, settle-based waits, 2x, full page
         ├─ diff        pixelmatch → % changed, changed-region crop, highlight image
         ├─ publish     Contents API → pre-post-assets branch → blob URLs
-        └─ comment     sticky PR comment (marker-based upsert)
+        └─ describe    block at the top of the PR description (marker-based
+                       upsert; sticky comment only if it cannot be edited)
    └─ prints a ≤15-line summary table; --json for agents
 ```
 
@@ -104,7 +115,7 @@ Each phase ships on its own and is useful alone. Status: all phases implemented 
 - Skill rewritten to ~40 lines: preflight, run the command, relay the summary.
 - The model no longer asks for approval per image; the human reviews on GitHub.
 - Outcome: a run is one tool call and one short result.
-- Risk: posting without a preview. Mitigated by the sticky comment being
+- Risk: posting without a preview. Mitigated by the description block being
   replaceable on re-run and by `--dry-run` printing the markdown only.
 
 ### Phase 3: GitHub-native storage
