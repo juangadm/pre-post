@@ -191,6 +191,31 @@ describe('loopback capture with a proxy configured', () => {
 });
 
 /**
+ * A page that animates on its own timers used to be captured at whatever frame
+ * the network happened to deliver, so the same unchanged page read as changed
+ * whenever one side was slower than the other. Capture time must not be an
+ * input to what gets captured.
+ */
+describe('timer-driven animation', () => {
+  const animated = fileUrl('animated-timeline/page.html');
+
+  it.skipIf(!playwrightAvailable)('captures the same frame however long after load it is captured', async () => {
+    const first = await captureScreenshot({ url: animated, fullPage: true });
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const second = await captureScreenshot({ url: animated, fullPage: true });
+    expect(diffImages(first.image, second.image).changedPixels).toBe(0);
+  });
+
+  it.skipIf(!playwrightAvailable)('still moves the page forward when asked to wait', async () => {
+    // Guards the test above against passing because the fixture stopped
+    // animating: --wait runs the page's timeline on, so this must differ.
+    const settled = await captureScreenshot({ url: animated, fullPage: true });
+    const later = await captureScreenshot({ url: animated, fullPage: true, wait: 1500 });
+    expect(diffImages(settled.image, later.image).changedPixels).toBeGreaterThan(0);
+  });
+});
+
+/**
  * The calibration ladder.
  *
  * Every rung is one deliberate visual change of increasing painted area; every
