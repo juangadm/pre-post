@@ -80,9 +80,16 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = ensureBrowser();
-  const prLookup = gh
+  const lookup = gh
     ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
     : Promise.resolve(null);
+  // A dry run used to touch GitHub not at all, and must still work when it
+  // cannot: it is what someone runs before anything is set up. A stale token or
+  // an unreachable API degrades it to "no PR", never ends the run. A real run
+  // needs the PR to publish against, so there the failure still surfaces.
+  const prLookup = opts.dryRun
+    ? lookup.catch(err => { log(`GitHub lookup failed (${err instanceof Error ? err.message : err}); continuing without it.`); return null; })
+    : lookup;
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
   const explicitAfter = opts.after ?? config.after;
