@@ -60,6 +60,12 @@ export interface CaptureResult {
   selector?: string;
   /** HTTP status of the main document */
   status?: number;
+  /** URL the browser ended on, which is not the requested one after a redirect */
+  finalUrl?: string;
+  /** Document title, used to recognise a sign-in wall that answered with 200 */
+  title?: string;
+  /** Response looked like it came from Vercel (deployment protection) */
+  vercel?: boolean;
   /** Wall-clock milliseconds for navigation + settle + screenshot */
   durationMs: number;
 }
@@ -218,6 +224,16 @@ export interface RouteCaptureOutcome {
   note?: string;
   /** Vertical displacement of Post against Pre, when one explains the change */
   shift?: RouteShift;
+  /** A side answered with a sign-in wall, so nothing was really compared */
+  blocked?: BlockedSide;
+}
+
+export interface BlockedSide {
+  side: 'before' | 'after';
+  /** The sign-in page the capture landed on */
+  finalUrl: string;
+  /** Deployment protection, so the bypass secret is the fix */
+  vercel: boolean;
 }
 
 export interface RouteShift {
