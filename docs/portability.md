@@ -291,7 +291,7 @@ Confirmed on a real machine against the real hosts. Three failures, all of the
 confident-and-wrong class, none of them fixed — recorded here so the next session starts
 from evidence.
 
-**1. A protected deployment is captured as a login page and diffed. — confirmed**
+**1. A protected deployment is captured as a login page and diffed. — FIXED**
 
 `browser.ts` raises `HttpStatusError` on 401/403, and `resolveAuth` sends
 `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is set. Neither helps
@@ -312,6 +312,33 @@ sign-in host, or a page whose content says so, is not the site. Stop with `Needs
 (exit 3) naming `VERCEL_AUTOMATION_BYPASS_SECRET` in one sentence. A generic version of the
 "~100% changed means the two sides are different sites" check from chunk 2 belongs here too:
 a diff that large is a bug report about the run, not a result.
+
+**What the wall actually does**, measured against the live protected preview rather than
+assumed — the assumption would have been wrong in the direction that matters:
+
+```
+status=200
+final=https://vercel.com/login?next=%2Fsso-api%3Furl%3D...%26nonce%3D...
+<title>Login – Vercel</title>
+```
+
+A redirect off-site, answered 200. Had it served the login inline at the same URL, a check
+keyed on "the browser moved" would have silently done nothing — the same class of failure
+one level up.
+
+**Done.** `landing.ts` judges where a capture ended: blocked requires both that the browser
+moved *and* that where it moved to is sign-in shaped, so an ordinary canonical-domain
+(`.xyz` → `.org`, apex → `www`) or trailing-slash redirect still passes. `browser.ts` records
+the final URL, the title and whether the response looked like Vercel. `run.ts` produces no
+diff for a walled side, and `pr.ts` exits 3 naming the bypass secret when every route is
+walled. Against a server shaped like the real wall, the old code reported
+`changed / @ desktop (0.30%)`; it now reports that the site was never captured. Sixteen unit
+tests in `tests/unit/landing.test.ts` (including the live URL and title above) and two
+pipeline tests in `tests/browser/wall.test.ts`.
+
+**Still open from this chunk.** The "~100% changed means these are different sites" backstop
+is not built. It is the general case of the same idea and would have caught this run without
+knowing anything about sign-in pages.
 
 **2. Any port that answers is treated as the dev server. — confirmed**
 
@@ -395,6 +422,13 @@ onlyBuiltDependencies:
 With that line, `pnpm install --config.strict-dep-builds=true` completes in 2.7s from a
 clean clone. The npm path deserves one sentence in the README as well: pnpm and npm cannot
 share a `node_modules`, so `rm -rf node_modules` before switching.
+
+**Fixed in passing, because it blocked a test.** `diff-pool.ts` transferred each job's
+buffers to the worker, detaching them in the calling thread. The `error` handler that exists
+to finish a job inline when a worker dies was therefore holding a payload it could not read,
+and failed with "Cannot perform Construct on a detached ArrayBuffer". Latent in production —
+the worker only dies when its module cannot load — but the fallback could never have worked.
+Jobs are copied now.
 
 **Noticed in passing, not acted on.** `package.json` still carries `"prepare": "npm run
 build"`, so every install compiles TypeScript — the thing Phase 1 of the optimization plan
