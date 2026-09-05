@@ -1,8 +1,7 @@
 /**
  * Browser automation via Playwright (playwright-core + Chromium headless shell).
  *
- * One browser per process, one context per viewport/auth combination, and a
- * small page pool. Captures are deterministic: fixed clock, reduced motion,
+ * One browser per process, a fresh context per capture, and a small page pool. Captures are deterministic: fixed clock, reduced motion,
  * animations finished, caret hidden, fonts and images settled, layout stable.
  */
 
@@ -28,7 +27,6 @@ const NAVIGATION_TIMEOUT = 30_000;
 
 let browser: Browser | null = null;
 let browserLabel = '';
-const contexts = new Map<string, Promise<BrowserContext>>();
 
 let activePages = 0;
 const pageQueue: Array<() => void> = [];
@@ -242,7 +240,7 @@ export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<
 export async function getBrowser(): Promise<Browser> {
   if (!browser) {
     browser = await launchBrowserOrInstall();
-    browser.on('disconnected', () => { browser = null; contexts.clear(); });
+    browser.on('disconnected', () => { browser = null; });
   }
   return browser;
 }
@@ -254,10 +252,6 @@ export function browserDescription(): string {
 // ============================================================
 // Contexts
 // ============================================================
-
-function contextKey(viewport: ViewportSize, scale: number, auth?: AuthOptions): string {
-  return `${viewport.width}x${viewport.height}@${scale}|${auth ? JSON.stringify(auth) : ''}`;
-}
 
 const INIT_SCRIPT = `
   (() => {
@@ -273,40 +267,40 @@ const INIT_SCRIPT = `
   })();
 `;
 
-async function getContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
-  const key = contextKey(viewport, scale, auth);
-  let pending = contexts.get(key);
-  if (!pending) {
-    pending = (async () => {
-      const b = await getBrowser();
-      const ctx = await b.newContext({
-        viewport,
-        deviceScaleFactor: scale,
-        reducedMotion: 'reduce',
-        colorScheme: 'light',
-        locale: 'en-US',
-        timezoneId: 'UTC',
-        ignoreHTTPSErrors: true,
-        serviceWorkers: 'block',
-        extraHTTPHeaders: auth?.headers,
-        bypassCSP: true,
-      });
-      await ctx.clock.setFixedTime(FIXED_TIME);
-      await ctx.addInitScript(INIT_SCRIPT);
-      if (auth?.cookies?.length) {
-        await ctx.addCookies(auth.cookies.map(c => ({
-          name: c.name,
-          value: c.value,
-          ...(c.url ? { url: c.url } : { domain: c.domain!, path: c.path || '/' }),
-        })));
-      }
-      ctx.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
-      ctx.setDefaultTimeout(10_000);
-      return ctx;
-    })();
-    contexts.set(key, pending);
+/**
+ * A context per capture, not one shared per viewport.
+ *
+ * Pages that share a context share more than the viewport: storage, caches and
+ * anything else a previous capture left behind. The two sides of a comparison
+ * have to start from the same state to be comparable, so each capture gets its
+ * own.
+ */
+async function createContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
+  const b = await getBrowser();
+  const ctx = await b.newContext({
+    viewport,
+    deviceScaleFactor: scale,
+    reducedMotion: 'reduce',
+    colorScheme: 'light',
+    locale: 'en-US',
+    timezoneId: 'UTC',
+    ignoreHTTPSErrors: true,
+    serviceWorkers: 'block',
+    extraHTTPHeaders: auth?.headers,
+    bypassCSP: true,
+  });
+  await ctx.clock.setFixedTime(FIXED_TIME);
+  await ctx.addInitScript(INIT_SCRIPT);
+  if (auth?.cookies?.length) {
+    await ctx.addCookies(auth.cookies.map(c => ({
+      name: c.name,
+      value: c.value,
+      ...(c.url ? { url: c.url } : { domain: c.domain!, path: c.path || '/' }),
+    })));
   }
-  return pending;
+  ctx.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+  ctx.setDefaultTimeout(10_000);
+  return ctx;
 }
 
 // ============================================================
@@ -440,8 +434,8 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
   const settleTimeout = options.settleTimeout ?? 8000;
   const maxHeight = options.maxHeight ?? options.viewport.height * 3;
 
-  const ctx = await getContext(options.viewport, scale, options.auth);
   await acquireSlot();
+  const ctx = await createContext(options.viewport, scale, options.auth);
   const page = await ctx.newPage();
   trackRequests(page);
   try {
@@ -491,6 +485,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
     };
   } finally {
     await page.close().catch(() => undefined);
+    await ctx.close().catch(() => undefined);
     releaseSlot();
   }
 }
@@ -509,7 +504,6 @@ function classifyNavigationError(err: Error): NavigationError['kind'] {
 export async function closeBrowser(): Promise<void> {
   const b = browser;
   browser = null;
-  contexts.clear();
   activePages = 0;
   pageQueue.length = 0;
   if (b) await b.close().catch(() => undefined);
