@@ -76,8 +76,11 @@ export class DiffPool {
       }
       const pending = this.queue.shift()!;
       slot.busy = pending;
-      const { before, after } = pending.job;
-      slot.worker.postMessage(pending.job, [before.buffer, after.buffer]);
+      // Copied, not transferred. Transferring detaches the buffers here, which
+      // leaves the `error` handler above holding a job it cannot run inline —
+      // so the fallback it exists to provide could never work. A structured
+      // clone of two PNGs costs far less than the diff that follows it.
+      slot.worker.postMessage(pending.job);
     }
   }
 
