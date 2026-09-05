@@ -10,7 +10,7 @@ import { PrePostConfig } from './types.js';
 export const CONFIG_FILENAME = '.pre-post.json';
 
 export const CONFIG_DEFAULTS = {
-  viewports: ['desktop', 'mobile'] as string[],
+  viewports: ['desktop'] as string[],
   threshold: 0.001,
   /**
    * Smallest painted change that counts, in CSS pixels².

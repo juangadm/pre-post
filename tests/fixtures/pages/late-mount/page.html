@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Late Mount</title>
+    <!--
+      The element a selector names does not exist at DOMContentLoaded: it is
+      mounted by a timer, the way a client-rendered component is. Nothing can
+      be found here until the page's timeline has been run forward.
+    -->
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; }
+        .card { width: 240px; height: 120px; background: #2563eb; color: #fff; padding: 1rem; }
+    </style>
+</head>
+<body>
+    <h1>Late mount</h1>
+    <div id="host"></div>
+    <script>
+      setTimeout(function () {
+        var el = document.createElement('div');
+        el.className = 'card';
+        el.textContent = 'Mounted on a timer.';
+        document.getElementById('host').appendChild(el);
+      }, 200);
+    </script>
+</body>
+</html>

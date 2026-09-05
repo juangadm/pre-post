@@ -21,8 +21,9 @@ Ship a polished, rebranded version ("pre-post") with a distinct visual identity:
 ### Step 0: VERIFY THE REPO BEFORE ANY EDITS
 Before modifying ANY file, run `git remote -v` and confirm origin points to `juangadm/pre-post`. If origin points to `vercel-labs/before-and-after`, you are in the WRONG directory. STOP.
 - `/private/tmp/before-and-after/` is the UPSTREAM clone — NEVER edit files here
-- **Fork clone**: `/Users/juangabrieldelgadomontes/My Drive/4. Gen AI/pre-post/`
-- Always work in the fork clone directory above
+- The fork is checked out in different places on different machines (a laptop clone, a
+  container, a sandbox), so no absolute path can identify it. `git remote -v` is the
+  only reliable test: if origin is `juangadm/pre-post`, you are in the right tree.
 
 ### GitHub CLI
 - `gh pr create --repo juangadm/pre-post` — always pass `--repo`

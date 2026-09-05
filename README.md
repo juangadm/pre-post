@@ -64,9 +64,12 @@ Comment: https://github.com/acme/web/pull/42
    graph: a change to `components/ui/button.tsx` marks every page that imports it. Next.js
    App Router and Pages Router, Vite apps (React Router, file-based `src/pages`), and a
    generic fallback. Monorepos are handled by picking the app that owns the changed files.
-2. **Capture.** Playwright + Chromium headless shell. Fixed clock, reduced motion,
-   animations finished, caret hidden, fonts and images settled, layout stable across frames,
-   lazy content primed. 2x device scale, full page (capped at 2400 CSS px), desktop + mobile.
+2. **Capture.** Playwright + Chromium headless shell. The page's own clock is held
+   still while it loads and then run forward by a fixed budget, so a page that animates
+   on a timer is photographed at the same frame on both sides however fast each host
+   answered. Reduced motion, animations finished, caret hidden, fonts and images settled,
+   layout stable, lazy content primed. 2x device scale, full page (capped at 2400 CSS
+   px), desktop (add mobile with `-r`).
    All routes and viewports run concurrently.
 3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed,
    the bounding box, and a tight crop of the changed region. A route counts as changed when
@@ -148,7 +151,7 @@ Optional `.pre-post.json` in the repo root:
   "before": "https://acme.com",
   "routes": ["/"],
   "samples": { "/blog/[slug]": "/blog/hello-world" },
-  "viewports": ["desktop", "mobile"],
+  "viewports": ["desktop"],
   "fullPage": true,
   "maxHeight": 2400,
   "scale": 2,

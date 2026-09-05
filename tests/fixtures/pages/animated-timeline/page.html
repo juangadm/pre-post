@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Animated Timeline</title>
+    <!--
+      A page whose appearance is a function of how long it has been open:
+      a setInterval counter, a requestAnimationFrame marker, and a setTimeout
+      reveal. Captured twice at different moments this used to produce a
+      "visual change" on a page nobody had touched.
+    -->
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: #fff; padding: 2rem; }
+        h1 { font-size: 1.25rem; margin-bottom: 1rem; }
+        .row { display: flex; gap: 4px; margin-bottom: 1rem; }
+        .block { width: 24px; height: 24px; background: #2563eb; }
+        .track { position: relative; height: 32px; background: #eee; margin-bottom: 1rem; }
+        .marker { position: absolute; top: 0; width: 32px; height: 32px; background: #db2777; }
+        .reveal { display: none; padding: 1rem; background: #f5f5f5; border: 1px solid #ddd; }
+        .reveal.shown { display: block; }
+    </style>
+</head>
+<body>
+    <h1>Animated timeline</h1>
+    <div class="row" id="blocks"></div>
+    <div class="track"><div class="marker" id="marker"></div></div>
+    <div class="reveal" id="reveal">Revealed on a timer, like a splash screen or a late mount.</div>
+
+    <script>
+      // setInterval: a bar that grows a block every 100ms and wraps around.
+      var ticks = 0;
+      setInterval(function () {
+        ticks = (ticks + 1) % 20;
+        var html = '';
+        for (var i = 0; i < ticks; i++) html += '<div class="block"></div>';
+        document.getElementById('blocks').innerHTML = html;
+      }, 100);
+
+      // requestAnimationFrame: a marker that walks across the track.
+      var frames = 0;
+      function step() {
+        frames++;
+        document.getElementById('marker').style.left = (frames % 40) * 8 + 'px';
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+
+      // setTimeout: content that only exists after a delay.
+      setTimeout(function () {
+        document.getElementById('reveal').className = 'reveal shown';
+      }, 300);
+    </script>
+</body>
+</html>

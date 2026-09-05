@@ -28,7 +28,7 @@ src/
   config.ts           .pre-post.json and resolveSettings (defaults < config < CLI flags)
   pkg.ts              cached package.json reads
   run.ts              capture+diff for a list of route×viewport tasks (concurrent)
-  browser.ts          Playwright launch chain, per-viewport contexts, settle logic, capture
+  browser.ts          Playwright launch chain, per-capture contexts, frozen page timeline, settle logic, capture
   diff.ts             pixelmatch + pngjs: ratio, bounding box, highlight, crops
   diff-worker.ts / diff-pool.ts   worker-thread pool for diffs
   routes.ts           framework adapter table + repo-aware detection (monorepo app root, import graph, samples)
