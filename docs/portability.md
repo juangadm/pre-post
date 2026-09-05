@@ -57,21 +57,76 @@ with the remote removed it exits 3 with one sentence. Seven tests in
 
 ---
 
-## 2. The Post side assumes a local dev server — to verify
+## 2. The Post side assumes a local dev server — FIXED
 
-`pre-post pr` serves the working tree locally for "Post" and the base commit for
-"Pre". A sandbox may not be able to run a dev server, and a PM or designer may not
-have a dev environment at all — yet they are in the goal's audience.
+**What was actually wrong.** Not the ordering: `resolveComparison` already tried
+`deployed` before `local`, so "two deployed URLs" was never a fallback after local serving
+failed. The bug was one step inside it. `deployedBaseline` had exactly one way to find Pre —
+a successful **production** GitHub Deployment recorded against **exactly `pr.base.sha`** —
+while the Post side had two (the Deployments API, and the deploy bot's PR comment). So the
+run would find the preview, find no baseline, log *"comparing locally instead"*, and land on
+a dev server the person almost certainly does not have. Two reasons that baseline lookup
+almost never succeeds:
 
-**Scope.** Make "two deployed URLs" (preview vs production) a first-class path rather
-than a fallback, and make `pre-post pr` choose it automatically when a preview
-deployment for the head SHA exists. Check what `deployments.ts` already resolves
-before writing anything.
+- Production is a branch, not a commit. A repository has a production deployment at the
+  exact fork point only by coincidence.
+- Vercel — the most common host for the apps this is pointed at — records **no GitHub
+  Deployment at all**. Confirmed on this repo: PR #19's head commit carries one commit
+  status (`context: "Vercel"`, `target_url` → the Vercel dashboard) plus a `vercel[bot]`
+  comment, and nothing else. That is exactly why `previewUrlFromComments` exists for the
+  preview side; the baseline side had no equivalent.
 
-**Validate.** A run with no local dev server, no `--before`, and a preview deployment
-present produces a full comparison.
+**Reproduced** with the real payload shapes from PR #19, replayed to the built CLI through
+`GITHUB_API_URL` (this sandbox's network policy blocks `api.github.com` and `*.vercel.app`,
+so the two deployment hosts were local stand-ins). No dev server, no `--before`:
 
-**Size.** M.
+```
+$ pre-post pr --no-local-baseline --no-comment
+Preview deployment found but no reachable deployed baseline; comparing locally instead.
+
+No preview deployment for this commit and no dev server on the usual ports (3000, 5173, ...).
+$ echo $?
+3
+```
+
+Note the second line: a preview *was* found. The message is the opposite of what happened,
+which is the same failure class as #17 — confident and wrong — aimed at the one user who
+can do least about it. The control (a production deployment recorded at `base.sha`) produced
+a full deployed comparison on the first try, which isolated the fault to the baseline lookup
+rather than to the strategy or its ordering.
+
+**Done.** The baseline now has the same breadth the preview always had, tried in order and
+always named in the run's output: `--before` → `.pre-post.json` → production deployment for
+the base commit → **newest production deployment, whatever commit it was built from** (new
+`latestProductionDeployment`, reports that commit rather than implying the base) → **the
+site's published address** (new `src/homepage.ts`: the website on the GitHub repository,
+then `homepage` in package.json; rejects loopback, non-HTTP and code-host URLs, so a library
+whose homepage is its own repo is not screenshotted as if it were the app). Two smaller
+things were in the way of the same path: `previewForHead` demanded an open PR, though hosts
+build on push, so it now keys on the head commit and uses the PR only for the comment
+fallback; and `--dry-run` withheld the GitHub client entirely, making it the one mode that
+could never choose a deployment — reads now use `gh`, writes use `writeGh`. The dead-end
+error was replaced by `NoDeployedBaselineError`, which names the preview it found and the
+one flag that fixes it. The preview is looked up first and alone, so a run with no preview
+spends no baseline requests; a deployed run costs six GitHub calls end to end.
+
+**Validated.** Same harness, no dev server, no `--before`: a preview plus a production
+deployment at a *different* commit, and a preview plus no deployments at all but a
+repository website, both now produce a full comparison (`Pre … Production deployment for
+aaaaaaa` / `production site, from the repository homepage`), capture, diff at 99.6%/99.9%,
+and markdown — including under `--dry-run`. 261 tests pass with `TEST_BROWSER=true`.
+
+**Found on the way, not fixed here.**
+
+- Nothing sanity-checks the baseline. If the published address resolves to an unrelated site
+  (a docs page, a parked domain), every route reads as ~100% changed and the result still
+  looks like a real one. A cheap guard — treat "every route changed by ~100%" as a signal
+  that the two sides are different sites, and say so instead of publishing — belongs with
+  the noise-floor work already listed below.
+- `doctor` reports on the dev server and the browser but says nothing about the deployed
+  path, so it cannot tell a user whether the zero-setup route is available to them.
+- Route detection still needs a git checkout. Someone with no clone at all is out of reach
+  of every chunk here; that is a bigger question than portability.
 
 ---
 
