@@ -148,8 +148,15 @@ function strongest(a: number | null | undefined, b: number | null | undefined): 
   return Math.max(a, b);
 }
 
-/** The one sentence a human needs when the two sides are not the same site. */
-export function differentSitesHint(beforeUrl: string, beforeDetail: string, afterUrl: string): string {
-  return `Pre (${beforeUrl} — ${beforeDetail}) and Post (${afterUrl}) share no wording on any route, ` +
+/**
+ * The one sentence a human needs when the two sides are not the same site.
+ *
+ * `beforeDetail` is how Pre was chosen ("production deployment for 26aa6cd").
+ * It is optional because a caller that was handed both URLs by hand — the
+ * two-URL mode — has no provenance to report, only the URLs themselves.
+ */
+export function differentSitesHint(beforeUrl: string, beforeDetail: string | undefined, afterUrl: string): string {
+  const pre = beforeDetail ? `${beforeUrl} — ${beforeDetail}` : beforeUrl;
+  return `Pre (${pre}) and Post (${afterUrl}) share no wording on any route, ` +
     `so they are not the same site: re-run with --before pointing at this site's own deployment.`;
 }

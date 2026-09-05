@@ -7,8 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import { AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
-import { checkLanding } from './landing.js';
-import { textOverlap, titleOverlap } from './sameness.js';
+import { checkLanding, signInHint } from './landing.js';
+import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap } from './sameness.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
@@ -23,6 +23,30 @@ export interface CaptureTask {
   afterUrl: string;
 }
 
+/** Where the two sides came from, so a verdict about them can say which is which. */
+export interface RunSides {
+  before: { url: string; detail?: string };
+  after: { url: string; detail?: string };
+}
+
+/**
+ * Why this run cannot be reported as a comparison.
+ *
+ * Two ways to reach the same conclusion, kept apart because they need
+ * different advice: a wall wants credentials, a wrong baseline wants a URL.
+ */
+export interface RunVerdict {
+  kind: 'walled' | 'different-sites';
+  /** The single actionable sentence a human needs. */
+  hint: string;
+}
+
+export interface RunResult {
+  outcomes: RouteCaptureOutcome[];
+  /** Non-null when the run did not compare what it claims to have compared. */
+  verdict: RunVerdict | null;
+}
+
 export interface PipelineOptions {
   outputDir: string;
   fullPage: boolean;
@@ -32,6 +56,12 @@ export interface PipelineOptions {
   minChangedArea: number;
   wait?: number;
   auth?: AuthOptions;
+  /**
+   * How resolution chose the two sides. Optional: without it a verdict still
+   * fires and names the URLs the captures actually used, which is enough to
+   * act on — it just cannot say *why* that baseline was picked.
+   */
+  sides?: RunSides;
   log?: (msg: string) => void;
 }
 
@@ -202,12 +232,49 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   };
 }
 
-export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Promise<RouteCaptureOutcome[]> {
+/**
+ * Did this run compare the two sites, or something standing in front of them?
+ *
+ * This lives beside the code that produces the evidence, not in the command
+ * that happens to want it. Both checks used to be written out in `pr`, and
+ * `compare` — the other caller of this pipeline — therefore had neither, and
+ * would print a confident percentage for two unrelated sites. Returning the
+ * verdict with the outcomes makes that omission impossible to repeat: a caller
+ * cannot get the numbers without also being handed the reason not to trust
+ * them.
+ *
+ * Order matters. A wall is the more specific diagnosis and has the more
+ * actionable fix, and a walled run also looks like two different sites — the
+ * sign-in page shares no words with the site — so it is answered first.
+ */
+export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): RunVerdict | null {
+  // Every route walled means the run never saw the site. Publishing anything
+  // from that, "no visual changes" included, would be a confident lie.
+  const walled = outcomes.filter(o => o.blocked);
+  if (walled.length > 0 && walled.length === outcomes.length) {
+    const { side, vercel } = walled[0].blocked!;
+    return { kind: 'walled', hint: signInHint(side === 'before' ? sides.before.url : sides.after.url, vercel) };
+  }
+  if (looksLikeDifferentSites(outcomes)) {
+    return { kind: 'different-sites', hint: differentSitesHint(sides.before.url, sides.before.detail, sides.after.url) };
+  }
+  return null;
+}
+
+export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Promise<RunResult> {
   fs.mkdirSync(opts.outputDir, { recursive: true });
   const pool = new DiffPool();
+  let outcomes: RouteCaptureOutcome[];
   try {
-    return await Promise.all(tasks.map(t => runTask(t, opts, pool)));
+    outcomes = await Promise.all(tasks.map(t => runTask(t, opts, pool)));
   } finally {
     await pool.close();
   }
+  // Falling back to the first task's URLs keeps the verdict available to a
+  // caller that never resolved a pair — `compare`, given two URLs by hand.
+  const sides = opts.sides ?? {
+    before: { url: tasks[0]?.beforeUrl ?? '' },
+    after: { url: tasks[0]?.afterUrl ?? '' },
+  };
+  return { outcomes, verdict: verdictFor(outcomes, sides) };
 }

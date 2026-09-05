@@ -52,7 +52,7 @@ describe('a side behind a sign-in wall', () => {
     servers.push(site, wall);
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-wall-'));
-    const outcomes = await runTasks(
+    const { outcomes } = await runTasks(
       [{
         route: '/',
         resolvedRoute: '/',
@@ -81,7 +81,7 @@ describe('a side behind a sign-in wall', () => {
     servers.push(a, b);
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-wall-'));
-    const outcomes = await runTasks(
+    const { outcomes } = await runTasks(
       [{
         route: '/',
         resolvedRoute: '/',
