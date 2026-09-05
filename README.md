@@ -138,6 +138,20 @@ pre-post doctor                              # browser, token, dev server, confi
 When something needs a human, the CLI exits with code 3 and one sentence saying what to do
 (log in, start the dev server, pass `--before`). Re-running picks up where it left off.
 
+Exit codes, so a script or an agent can branch on them:
+
+| code | meaning |
+|---|---|
+| 0 | done; for `doctor`, `pre-post pr` can run |
+| 1 | `doctor` only: a required check failed, so `pre-post pr` cannot run |
+| 2 | the arguments could not be parsed |
+| 3 | something needs a human; the message says what |
+
+`doctor` marks a check **FAIL** only when `pre-post pr` has no way to proceed without it —
+the browser, a GitHub token, and being inside a git repository. Everything else prints as
+**note**: no dev server running, or no `--before` saved, narrows *which* strategy a run
+picks rather than stopping it, so those never change the exit code.
+
 Results go into a delimited block at the top of the PR description, which re-runs replace in
 place, leaving your own text untouched. If the PR cannot be edited — a fork, a read-only
 token — it falls back to a single sticky comment.
