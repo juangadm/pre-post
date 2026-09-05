@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -54,6 +54,16 @@ describe('repoIdentityCheck', () => {
   };
   afterAll(() => made.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
+  // resolveOwnerRepo reads GH_REPO and GITHUB_REPOSITORY before it looks at
+  // the remote, and GitHub Actions always sets GITHUB_REPOSITORY. A test that
+  // leaves them alone therefore asserts one thing on a laptop and another in
+  // CI — which is how this suite went green locally and red on the runner.
+  beforeEach(() => {
+    vi.stubEnv('GH_REPO', '');
+    vi.stubEnv('GITHUB_REPOSITORY', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
   it('names the repository when origin is a GitHub remote', () => {
     const check = repoIdentityCheck(repo('https://github.com/juangadm/pre-post.git'));
     expect(check.ok).toBe(true);
@@ -67,5 +77,13 @@ describe('repoIdentityCheck', () => {
     expect(check.detail).toContain('GH_REPO');
     // The point: this must be able to turn a "ready" into a "not ready".
     expect(doctorExitCode([check])).toBe(1);
+  });
+
+  // The path CI itself takes, and the reason the check does not fire there.
+  it('takes GITHUB_REPOSITORY over a missing remote, as on a CI runner', () => {
+    vi.stubEnv('GITHUB_REPOSITORY', 'juangadm/pre-post');
+    const check = repoIdentityCheck(repo());
+    expect(check.ok).toBe(true);
+    expect(check.detail).toBe('juangadm/pre-post');
   });
 });
