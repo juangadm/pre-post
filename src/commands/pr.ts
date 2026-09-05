@@ -14,7 +14,7 @@ import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
 import { signInHint } from '../landing.js';
 import { differentSitesHint, looksLikeDifferentSites } from '../sameness.js';
-import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
@@ -82,6 +82,13 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = ensureBrowser();
+  // Whether the token may write, asked at the same time as the PR lookup so it
+  // costs no wall clock, and answered before anything expensive begins. A token
+  // that cannot read fails the lookup below and never reaches capture; one that
+  // reads but cannot write passes every check this run makes until the publish,
+  // which is a whole capture pass later — 22.7s for one route at one viewport,
+  // measured on a runner.
+  const writeAccess = writeGh ? checkWriteAccess(writeGh, ownerRepo) : null;
   const lookup = gh
     ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
     : Promise.resolve(null);
@@ -103,6 +110,16 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const head = headSha(root);
   const pr = await prLookup;
+
+  // Before the local baseline, which can install and build a whole app, and
+  // long before the captures. An answer that is not about access — a 500, a
+  // dropped connection — is not evidence of anything, so it says so and the run
+  // continues to fail wherever it really fails.
+  const access = await writeAccess;
+  if (access?.writable === false) {
+    if (access.reason === 'rejected') throw new NeedsHumanError(cannotPublishHint(ownerRepo));
+    log(`Could not check whether the token can publish (${access.detail}); continuing.`);
+  }
 
   // --- What are we comparing? ---------------------------------------------------
   const headers = headersFor(config, opts);
