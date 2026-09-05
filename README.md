@@ -9,12 +9,19 @@ It works out both sides itself, cheapest option first:
 | | Pre (the baseline) | Post (this branch) |
 |---|---|---|
 | 1 | `--before` | `--after` |
-| 2 | `before` in `.pre-post.json` | the PR's preview deployment |
+| 2 | `before` in `.pre-post.json` | the preview deployment for this commit |
 | 3 | the production deployment for the base commit | a local dev server |
-| 4 | the base commit, served locally | |
+| 4 | whatever is on production now | |
+| 5 | the site's published address | |
+| 6 | the base commit, served locally | |
 
-Deployments come from the GitHub Deployments API, so Vercel, Cloudflare Pages, Netlify and
-Render all work with no extra token and nothing to configure.
+Rows 2 to 5 need no dev environment at all, which is the point: a preview deployment and a
+production URL are enough for anyone who can open the PR. Deployments come from the GitHub
+Deployments API, so Vercel, Cloudflare Pages, Netlify and Render all work with no extra
+token and nothing to configure. Hosts that record no GitHub Deployment (Vercel is the
+common one) are read from the deployment bot's own PR comment for the preview side, and
+from the website on the GitHub repository — or `homepage` in package.json — for the
+baseline. Whichever it picks, the run prints which commit each side came from.
 
 The last baseline needs no network at all: it checks the base commit into a throwaway
 worktree and boots its dev script. That keeps pre-post working inside a sandboxed agent
