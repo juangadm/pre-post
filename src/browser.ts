@@ -514,17 +514,21 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       await settlePage(page, Math.min(settleTimeout, 2000));
     }
 
-    if (options.selector) {
-      const locator = page.locator(options.selector);
-      if ((await locator.count()) === 0) throw new Error(`Element not found: ${options.selector}`);
-      await locator.first().scrollIntoViewIfNeeded();
-    }
-
     // The page is loaded and quiet; now give its own timeline a fixed run so
     // whatever it animates lands on the same frame here as on the other side.
     await advanceTimeline(page, TIMELINE_BUDGET_MS);
     // Timers that just fired may have asked for more content; let it arrive.
     await settlePage(page, Math.min(settleTimeout, 2000));
+
+    // Only now look for the selector: an element mounted by a timer does not
+    // exist until that timer has fired, and with the clock held that is not
+    // until the budget above has run.
+    if (options.selector) {
+      const locator = page.locator(options.selector);
+      if ((await locator.count()) === 0) throw new Error(`Element not found: ${options.selector}`);
+      await locator.first().scrollIntoViewIfNeeded();
+      await advanceTimeline(page, FRAME_MS * 2);
+    }
 
     // `--wait` means "give this page longer": real time for anything still in
     // flight, and the same again on the page's timeline for anything animating.
