@@ -116,10 +116,18 @@ export async function checkWriteAccess(gh: GitHub, ownerRepo: string): Promise<W
  * The one thing to do about a token that cannot publish. Inside a runner
  * `gh auth login` is not something anyone can do, and the workflow file is;
  * outside one the reverse holds, so the sentence follows the environment.
+ *
+ * The runner sentence names both permissions, though only `contents` is what
+ * this check tested. Naming `contents` alone would be advice that fails on its
+ * own terms: a `permissions:` block sets every scope it omits to none, so
+ * following it leaves a token that uploads the screenshots and is then refused
+ * the PR description — measured on this repository, `PATCH /pulls/23` answers
+ * 403 with only `contents: write` and 200 with `pull-requests: write` beside it.
+ * A second trip through 30 seconds of capture is not worth the tighter sentence.
  */
 export function cannotPublishHint(ownerRepo: string): string {
   return process.env.GITHUB_ACTIONS === 'true'
-    ? `This workflow's token cannot write to ${ownerRepo}, so the screenshots would have nowhere to go: add "permissions: contents: write" to the job and re-run.`
+    ? `This workflow's token cannot write to ${ownerRepo}, so the screenshots would have nowhere to go: give the job "permissions: { contents: write, pull-requests: write }" and re-run.`
     : `This token cannot write to ${ownerRepo}, so the screenshots would have nowhere to go: run gh auth login as someone with write access, or set GH_TOKEN to a token carrying repo scope.`;
 }
 

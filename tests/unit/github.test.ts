@@ -216,10 +216,14 @@ describe('checkWriteAccess', () => {
 describe('cannotPublishHint', () => {
   afterEach(() => { delete process.env.GITHUB_ACTIONS; });
 
-  it('names the workflow permission inside a runner, where gh auth login is not an option', () => {
+  // Both permissions, not just the one the check tested: a permissions block
+  // sets every scope it omits to none, so naming contents alone would leave a
+  // token that uploads the images and is then refused the PR description.
+  it('names the workflow permissions inside a runner, where gh auth login is not an option', () => {
     process.env.GITHUB_ACTIONS = 'true';
     const hint = cannotPublishHint('acme/web');
-    expect(hint).toContain('permissions: contents: write');
+    expect(hint).toContain('contents: write');
+    expect(hint).toContain('pull-requests: write');
     expect(hint).not.toContain('gh auth login');
   });
 
@@ -227,7 +231,7 @@ describe('cannotPublishHint', () => {
     const hint = cannotPublishHint('acme/web');
     expect(hint).toContain('gh auth login');
     expect(hint).toContain('acme/web');
-    expect(hint).not.toContain('permissions:');
+    expect(hint).not.toContain('permissions');
   });
 
   // AGENTS.md: a NeedsHumanError carries a single actionable sentence.
