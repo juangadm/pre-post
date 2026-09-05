@@ -6,8 +6,9 @@ Guidelines for AI agents working on this project.
 
 `pre-post` is a CLI (and Claude Code skill) that produces before/after screenshots for pull
 requests: route detection from the git diff, deterministic Playwright captures, a pixel
-diff, publishing to a `pre-post-assets` branch through the GitHub API, and one sticky PR
-comment. Forked from `vercel-labs/before-and-after`.
+diff, publishing to a `pre-post-assets` branch through the GitHub API, and one block at the
+top of the PR description (a sticky comment only when the description cannot be edited).
+Forked from `vercel-labs/before-and-after`.
 
 The design goal is that an agent runs **one command** (`pre-post pr`) and reads a short
 summary. Never add steps that put screenshots or page content into model context.
@@ -17,7 +18,7 @@ summary. Never add steps that put screenshots or page content into model context
 ```
 src/
   bin/cli.ts          argument parsing and dispatch only
-  commands/pr.ts      the one-shot pipeline (resolve → detect → capture → diff → publish → comment)
+  commands/pr.ts      the one-shot pipeline (resolve → detect → capture → diff → publish → describe)
   commands/compare.ts two-URL / two-image mode
   commands/login.ts   headed browser login, saves a session per host
   commands/prune.ts   deletes assets for long-closed PRs
@@ -35,8 +36,9 @@ src/
   routes/vite.ts      Vite: React Router declarations + file-based pages
   routes/generic.ts   Remix/SvelteKit/generic fallback
   routes/imports.ts   regex import graph with tsconfig alias resolution
-  github.ts           REST client: PR lookup, Git Data API publish, sticky comment, prune
-  report.ts           PR comment markdown + terminal summary
+  github.ts           REST client: PR lookup, Git Data API publish, PR description upsert
+                      (sticky comment fallback), prune
+  report.ts           PR markdown + terminal summary
   doctor.ts           browser install, dev server probe, auth hints, NeedsHumanError
   sessions.ts         saved login sessions and resolveAuth (config headers, CLI headers, Vercel bypass, cookies)
   git.ts              git subprocess helpers

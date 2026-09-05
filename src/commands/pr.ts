@@ -25,6 +25,8 @@ export interface PrCommandOptions extends Partial<Settings> {
   after?: string;
   routes?: string[];
   framework?: Framework;
+  /** Diff against this ref instead of the detected fork point. */
+  base?: string;
   headers?: Record<string, string>;
   cookies?: Array<{ name: string; value: string }>;
   wait?: number;
@@ -81,7 +83,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
   // flight rather than after it.
-  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, log });
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const pr = await prLookup;
 
@@ -89,6 +91,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const headers = headersFor(config, opts);
   const comparison: Comparison = await resolveComparison({
     gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+    // Detection already established this; the baseline must be built from the
+    // same commit, or Pre and the route list disagree about what changed.
+    baseSha: detection.base?.sha,
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log,
