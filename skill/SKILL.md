@@ -9,8 +9,8 @@ allowed-tools:
 
 # pre-post
 
-One command does everything: detects the routes this branch changed, screenshots them at
-desktop and mobile, pixel-diffs them, uploads the images to a `pre-post-assets` branch, and
+One command does everything: detects the routes this branch changed, screenshots them on
+desktop, pixel-diffs them, uploads the images to a `pre-post-assets` branch, and
 posts or updates a single comment on the open PR. The human reviews on GitHub.
 
 It picks both sides itself:
@@ -72,7 +72,7 @@ overlay, no percentage. A page that moved says `Content shifted down 48px`; rela
 | Flag | Use when |
 |------|----------|
 | `--routes /a,/b` | The user names the pages |
-| `--viewports desktop` | Desktop only (default is desktop + mobile) |
+| `-r`, `--responsive` | Desktop and mobile (default is desktop only) |
 | `--viewport-only` | First screen only instead of full page |
 | `--pr <n>` | The branch has several PRs or the lookup fails |
 | `--dry-run` | Preview locally, post nothing |

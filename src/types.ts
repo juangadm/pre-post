@@ -162,7 +162,7 @@ export interface PrePostConfig {
   routes?: string[];
   /** Sample URLs for dynamic routes, e.g. { "/blog/[slug]": "/blog/hello" } */
   samples?: Record<string, string>;
-  /** Viewports to capture. Default: ["desktop", "mobile"] */
+  /** Viewports to capture. Default: ["desktop"] */
   viewports?: Array<ViewportPreset | string>;
   /** Extra headers for every request */
   headers?: Record<string, string>;

@@ -80,7 +80,8 @@ OPTIONS
   --after <url>             Local base URL (auto-detected)
   --routes /a,/b            Explicit routes instead of detection
   --max-routes <n>          Cap on detected routes (default 6)
-  --viewports desktop,mobile,1440x900   Viewports (default desktop,mobile)
+  --viewports desktop,mobile,1440x900   Viewports (default desktop)
+  -r, --responsive          Desktop and mobile
   -m, --mobile  -t, --tablet  --size WxH   Single-viewport shorthands
   -f, --full | --viewport-only          Full page (default for pr) or first screen only
   --scale <n>               Device scale factor (default 2)

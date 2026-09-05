@@ -66,7 +66,8 @@ Comment: https://github.com/acme/web/pull/42
    generic fallback. Monorepos are handled by picking the app that owns the changed files.
 2. **Capture.** Playwright + Chromium headless shell. Fixed clock, reduced motion,
    animations finished, caret hidden, fonts and images settled, layout stable across frames,
-   lazy content primed. 2x device scale, full page (capped at 2400 CSS px), desktop + mobile.
+   lazy content primed. 2x device scale, full page (capped at 2400 CSS px), desktop
+   (add mobile with `-r`).
    All routes and viewports run concurrently.
 3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed,
    the bounding box, and a tight crop of the changed region. A route counts as changed when
@@ -148,7 +149,7 @@ Optional `.pre-post.json` in the repo root:
   "before": "https://acme.com",
   "routes": ["/"],
   "samples": { "/blog/[slug]": "/blog/hello-world" },
-  "viewports": ["desktop", "mobile"],
+  "viewports": ["desktop"],
   "fullPage": true,
   "maxHeight": 2400,
   "scale": 2,

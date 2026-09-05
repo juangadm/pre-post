@@ -27,7 +27,7 @@ describe('config', () => {
   });
 
   it('has sane defaults', () => {
-    expect(CONFIG_DEFAULTS.viewports).toEqual(['desktop', 'mobile']);
+    expect(CONFIG_DEFAULTS.viewports).toEqual(['desktop']);
     expect(CONFIG_DEFAULTS.scale).toBe(2);
     expect(CONFIG_DEFAULTS.fullPage).toBe(true);
     expect(CONFIG_DEFAULTS.assetsBranch).toBe('pre-post-assets');
