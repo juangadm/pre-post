@@ -81,9 +81,14 @@ describe('layout shift calibration', () => {
     expect(by('shift-pure').shiftCssPx, 'pure shift should be detected').toBe(80);
     expect(by('shift-pure').alignedArea, 'pure shift should leave no other change').toBe(0);
 
-    // A shift larger than the viewport is still one offset.
+    // A shift larger than the viewport is still one offset. The banner that
+    // caused it is content Post gained, and alignment has to show it rather
+    // than step over it -- reporting an inserted banner as "nothing else
+    // changed" is exactly the confident wrong answer this feature removes.
     expect(by('shift-viewport').shiftCssPx, 'shift larger than the viewport').toBeGreaterThan(800);
-    expect(by('shift-viewport').alignedArea).toBe(0);
+    expect(by('shift-viewport').alignedArea!, 'the inserted banner must survive alignment')
+      .toBeGreaterThan(CONFIG_DEFAULTS.minChangedArea);
+    expect(by('shift-viewport').cropped, 'and must be croppable').toBe(true);
 
     // A change inside the region that moved must survive alignment and crop.
     expect(by('shift-change-below').shiftCssPx).toBe(80);

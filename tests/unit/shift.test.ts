@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PNG } from 'pngjs';
-import { detectShift, alignImage, rowHashes } from '../../src/shift';
+import { detectShift, alignBefore, insertedBand, rowHashes } from '../../src/shift';
 
 const WHITE: [number, number, number] = [255, 255, 255];
 
@@ -90,21 +90,40 @@ describe('detectShift', () => {
   });
 });
 
-describe('alignImage', () => {
-  it('puts shifted content back where the other side has it', () => {
-    const before = image([...blank(10), ...content, ...blank(10)]);
-    const after = image([...blank(20), ...content]);
-    const shift = detectShift(before, after)!;
-    const aligned = alignImage(after, shift, WHITE);
-    expect(rowHashes(aligned)).toEqual(rowHashes(before));
+describe('insertedBand', () => {
+  it('reports the rows Post gained when content moved down', () => {
+    expect(insertedBand({ dy: 10, from: 4, coverage: 1 })).toEqual({ y: 4, height: 10 });
   });
 
-  it('fills rows the shift leaves without a source with the pad colour', () => {
+  it('reports nothing when content moved up, since Post gained no rows', () => {
+    expect(insertedBand({ dy: -10, from: 4, coverage: 1 })).toBeNull();
+  });
+});
+
+describe('alignBefore', () => {
+  it('re-spaces Pre so it lands where Post has the same content', () => {
     const before = image([...blank(10), ...content, ...blank(10)]);
     const after = image([...blank(20), ...content]);
-    const aligned = alignImage(after, detectShift(before, after)!, WHITE);
-    const last = (aligned.height - 1) * aligned.width * 4;
-    expect([aligned.data[last], aligned.data[last + 1], aligned.data[last + 2]]).toEqual(WHITE);
+    const aligned = alignBefore(before, detectShift(before, after)!, WHITE);
+    expect(rowHashes(aligned)).toEqual(rowHashes(after));
+  });
+
+  it('leaves the rows Post gained as background, so new content reads as new', () => {
+    // Post puts something in the gap that Pre never had. Aligning must not
+    // step over it: those rows have to stay background so the diff sees it.
+    const before = image([...blank(10), ...content, ...blank(10)]);
+    const after = image([...blank(10), ...blank(10).map(() => 0x0000ff), ...content]);
+    const shift = detectShift(before, after)!;
+    expect(shift.dy).toBe(10);
+    const aligned = alignBefore(before, shift, WHITE);
+    const band = insertedBand(shift)!;
+    for (let y = band.y; y < band.y + band.height; y++) {
+      const i = y * aligned.width * 4;
+      expect([aligned.data[i], aligned.data[i + 1], aligned.data[i + 2]], `row ${y}`).toEqual(WHITE);
+    }
+    // And the inserted rows still differ from Post, which is the whole point.
+    expect(rowHashes(aligned).slice(band.y, band.y + band.height))
+      .not.toEqual(rowHashes(after).slice(band.y, band.y + band.height));
   });
 
   it('leaves rows above the shift untouched', () => {
@@ -112,7 +131,22 @@ describe('alignImage', () => {
     const bottom = content.slice(12);
     const before = image([...top, ...bottom, ...blank(8)]);
     const after = image([...top, ...blank(8), ...bottom]);
-    const aligned = alignImage(after, detectShift(before, after)!, WHITE);
+    const aligned = alignBefore(before, detectShift(before, after)!, WHITE);
     expect(rowHashes(aligned).slice(0, 12)).toEqual(rowHashes(before).slice(0, 12));
+  });
+
+  it('surfaces removed content when the page moved up', () => {
+    // Pre has a block Post does not. Aligning keeps it where Pre had it, so it
+    // lands against whatever Post moved up into that space and reads as gone.
+    const top = content.slice(0, 10);
+    const bottom = content.slice(10);
+    const removed = blank(8).map((_, i) => 0xaa0000 + i);
+    const before = image([...top, ...removed, ...bottom]);
+    const after = image([...top, ...bottom, ...blank(8)]);
+    const shift = detectShift(before, after)!;
+    expect(shift.dy).toBe(-8);
+    const aligned = alignBefore(before, shift, WHITE);
+    expect(rowHashes(aligned).slice(10, 18)).toEqual(rowHashes(before).slice(10, 18));
+    expect(rowHashes(aligned).slice(10, 18)).not.toEqual(rowHashes(after).slice(10, 18));
   });
 });

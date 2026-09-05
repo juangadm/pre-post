@@ -140,22 +140,39 @@ export function detectShift(before: PNG, after: PNG): ShiftCandidate | null {
 }
 
 /**
- * Rebuild Post with its shifted content put back where Pre has it, so the two
- * can be compared for what changed other than the move.
- *
- * Rows the shift leaves without a source are filled with the padding colour,
- * which is what Pre holds there too: a page that grew by `dy` is padded over
- * exactly the rows Post no longer reaches.
+ * Rows Post has that Pre never did. A downward shift means something new
+ * pushed the page down, and those rows are that something.
  */
-export function alignImage(after: PNG, shift: ShiftCandidate, pad: [number, number, number]): PNG {
-  const { width, height } = after;
+export function insertedBand(shift: ShiftCandidate): { y: number; height: number } | null {
+  return shift.dy > 0 ? { y: shift.from, height: shift.dy } : null;
+}
+
+/**
+ * Rebuild Pre in Post's coordinates: content above the shift stays where it
+ * is, content below it moves down by `dy`, and an insertion leaves a gap.
+ *
+ * Aligning this way round rather than pulling Post back is what makes an
+ * insertion visible. Mapping every Pre row onto a Post row steps straight over
+ * the rows Post gained, so a banner nobody had seen before would contribute
+ * nothing and the report would call it "nothing else changed". Left as
+ * background, whatever Post put there reads as what it is: new content.
+ *
+ * It also means the Post image published beside it is the real capture rather
+ * than a synthesis, and the re-spaced side is the one being compared against.
+ */
+export function alignBefore(before: PNG, shift: ShiftCandidate, pad: [number, number, number]): PNG {
+  const { width, height } = before;
   const out = new PNG({ width, height });
   const stride = width * 4;
+  const gap = insertedBand(shift);
   for (let y = 0; y < height; y++) {
-    const source = y < shift.from ? y : y + shift.dy;
+    // Above the shift the two sides agree on position; below it Pre sits `dy`
+    // higher than Post does.
+    const source = y < shift.from ? y : y - shift.dy;
+    const inGap = gap !== null && y >= gap.y && y < gap.y + gap.height;
     const target = y * stride;
-    if (source >= 0 && source < height) {
-      after.data.copy(out.data, target, source * stride, source * stride + stride);
+    if (!inGap && source >= 0 && source < height) {
+      before.data.copy(out.data, target, source * stride, source * stride + stride);
     } else {
       for (let i = target; i < target + stride; i += 4) {
         out.data[i] = pad[0]; out.data[i + 1] = pad[1]; out.data[i + 2] = pad[2]; out.data[i + 3] = 255;

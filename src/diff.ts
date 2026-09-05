@@ -9,7 +9,7 @@
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import { DiffRegion, DiffResult, ShiftSummary } from './types.js';
-import { alignImage, detectShift } from './shift.js';
+import { alignBefore, detectShift, insertedBand } from './shift.js';
 
 export interface DiffOptions {
   /** Padding around the change region for crops, in device pixels. Default 80 */
@@ -43,14 +43,18 @@ const CROP_MAX_RATIO = 0.5;
  * accounts for most of the difference. This is the whole test: an offset that
  * does not remove the pixels it claims to explain is not the story.
  *
- * Measured on the shift ladder, as a share of the original changed pixels:
- * a pure shift and a shift larger than the viewport leave 0, the two fixtures
- * carrying a real change leave 0.21 and 0.23, and the horizontal reflow — the
- * one case no vertical offset explains — leaves 0.45. The band between 0.23
- * and 0.45 is empty, and this sits inside it, nearer the real changes so a
- * genuine shift carrying a larger change still reads as one. Erring low is
- * deliberate: rejecting a shift falls back to the old behaviour, while
- * claiming one that isn't there tells a reviewer something untrue.
+ * Judged over the rows Pre and Post share. Content Post gained is excluded
+ * from both sides of the comparison, because an insertion is the reason for
+ * the move rather than evidence against it: a page pushed down by a banner
+ * would otherwise be refused for the size of the banner.
+ *
+ * Measured on the shift ladder, as a share of the changed pixels over those
+ * shared rows: every true shift leaves 0.23 or less, and the horizontal
+ * reflow — the one case no vertical offset explains — leaves 0.45. This sits
+ * in the empty band between, nearer the real changes so a genuine shift
+ * carrying a larger change still reads as one. Erring low is deliberate:
+ * rejecting a shift falls back to the old behaviour, while claiming one that
+ * isn't there tells a reviewer something untrue.
  */
 const MAX_ALIGNED_SHARE = 0.3;
 
@@ -99,6 +103,20 @@ export function downscale(src: PNG, factor: number): PNG {
 
 export function decodePng(buffer: Buffer): PNG {
   return PNG.sync.read(buffer);
+}
+
+/** Diff-coloured pixels within a row range, for weighing one band against another. */
+function countChangedRows(diff: PNG, y0: number, y1: number): number {
+  const { width, data } = diff;
+  let count = 0;
+  for (let y = Math.max(0, y0); y < Math.min(diff.height, y1); y++) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4;
+      if (data[i] === DIFF_COLOR[0] && data[i + 1] === DIFF_COLOR[1] && data[i + 2] === DIFF_COLOR[2]) count++;
+    }
+  }
+  return count;
 }
 
 /** Bounding box of pixels painted with the diff color. */
@@ -180,14 +198,14 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
   // zoom in. Comparing Post put back in register with Pre isolates the change
   // the branch actually made, which is small enough to crop and to describe.
   let shift: ShiftSummary | undefined;
-  let alignedAfter: PNG | undefined;
+  let alignedBefore: PNG | undefined;
   let alignedDiff: PNG | undefined;
   if (changedPixels > 0) {
     const candidate = detectShift(before, after);
     if (candidate) {
-      const aligned = alignImage(after, candidate, bg);
+      const aligned = alignBefore(before, candidate, bg);
       const diffOfAligned = new PNG({ width, height });
-      const alignedChangedPixels = pixelmatch(before.data, aligned.data, diffOfAligned.data, width, height, {
+      const alignedChangedPixels = pixelmatch(aligned.data, after.data, diffOfAligned.data, width, height, {
         threshold: PIXEL_THRESHOLD,
         includeAA: false,
         alpha: 0.5,
@@ -195,14 +213,22 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
         aaColor: AA_COLOR,
         diffMask: false,
       });
-      if (alignedChangedPixels <= changedPixels * MAX_ALIGNED_SHARE) {
+      // Weigh the offset only on rows both sides have. Whatever Post put in
+      // the gap is new content, and it still counts as a change -- it just
+      // does not get a vote on whether the move happened.
+      const gap = insertedBand(candidate);
+      const insertedChanged = gap ? countChangedRows(diffOfAligned, gap.y, gap.y + gap.height) : 0;
+      const rawInGap = gap ? countChangedRows(diff, gap.y, gap.y + gap.height) : 0;
+      const mappedChanged = alignedChangedPixels - insertedChanged;
+      const rawMapped = changedPixels - rawInGap;
+      if (mappedChanged <= rawMapped * MAX_ALIGNED_SHARE) {
         shift = {
           dy: candidate.dy,
           from: candidate.from,
           alignedChangedPixels,
           alignedChangedRatio: alignedChangedPixels / (width * height),
         };
-        alignedAfter = aligned;
+        alignedBefore = aligned;
         alignedDiff = diffOfAligned;
       }
     }
@@ -226,7 +252,7 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
   // With a shift, crop what is left once the move is undone; without one, crop
   // the change itself. A pure shift leaves nothing over and gets no crop: the
   // sentence is the report, and the full pages are already published.
-  const cropAgainst = alignedAfter ?? after;
+  const cropFrom = alignedBefore ?? before;
   const cropRegion = alignedDiff ? boundingBox(alignedDiff) : region;
   if (cropRegion) {
     const area = cropRegion.width * cropRegion.height;
@@ -240,8 +266,8 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
       // Only crop when it meaningfully zooms in.
       if (expanded.width * expanded.height < width * height * 0.8) {
         result.crop = {
-          before: crop(before, expanded),
-          after: crop(cropAgainst, expanded),
+          before: crop(cropFrom, expanded),
+          after: crop(after, expanded),
           region: expanded,
         };
       }
