@@ -96,10 +96,12 @@ preview it found and the one flag that fixes it.
 
 **Cut, deliberately.** A first pass added a baseline guessed from the repository website or
 `homepage` in package.json, for hosts recording no deployments. Once the premise collapsed
-it had no case: a baseline that is quietly the wrong site reads as ~100% changed on every
-route and looks exactly like a real result. Widening now stops at deployments a host
-actually recorded. Add it back only if a real host is found that records none, and only
-behind a check that the two sides are the same site.
+it had no case: a baseline that is quietly the wrong site looks exactly like a real result.
+Widening now stops at deployments a host actually recorded. Add it back only if a real host
+is found that records none, and only behind a check that the two sides are the same site —
+that check now exists, see the different-sites backstop below. (The reason given here at the
+time — "reads as ~100% changed on every route" — was never measured and is false; it reads
+as a *small* change. The backstop section has the numbers.)
 
 **Still open.**
 
@@ -108,9 +110,9 @@ behind a check that the two sides are the same site.
   new paths are proven against shapes, not against Vercel. Whether a Vercel deployment
   *status* carries `environment_url` — which decides whether the pinned lookup returns a URL
   at all — is still unchecked: `GET /repos/{owner}/{repo}/deployments/{id}/statuses`.
-- **Nothing sanity-checks the baseline.** Every route at ~100% changed almost certainly
-  means the two sides are different sites, not that the branch rewrote everything. Say so
-  instead of publishing. Belongs with the noise-floor work below.
+- ~~**Nothing sanity-checks the baseline.**~~ Done, though not the way this bullet said: the
+  premise ("every route at ~100% changed means different sites") is measurably wrong in both
+  directions. See the different-sites backstop below.
 - `doctor` says nothing about the deployed path, so it cannot tell a user whether the
   zero-setup route is available to them.
 
@@ -336,11 +338,57 @@ walled. Against a server shaped like the real wall, the old code reported
 tests in `tests/unit/landing.test.ts` (including the live URL and title above) and two
 pipeline tests in `tests/browser/wall.test.ts`.
 
-**Still open from this chunk.** The "~100% changed means these are different sites" backstop
-is not built. It is the general case of the same idea and would have caught this run without
-knowing anything about sign-in pages.
+**The general case, built — but not on the signal this chunk proposed.** A backstop that
+notices "these are two different sites" would have caught this run without knowing anything
+about sign-in pages. That much held. The proposed *signal* — a diff near 100% on every route
+— did not survive measurement.
 
-**2. Any port that answers is treated as the dev server. — confirmed**
+Measured, on real pages and on the fixture set:
+
+| pair | changed |
+|---|---|
+| the marketing site vs an unrelated real site, served locally | 2.66% desktop / 5.02% mobile |
+| fixture pricing page vs three unrelated fixtures | 0.72% – 7.99% |
+| the same site with a full theme change (`scenario-theme-change`) | 99.14% |
+| the same site redesigned (`rung-7-redesign`) | 99.60% |
+
+The rule is backwards. Web pages are mostly background and a pixel diff counts the pixels
+that differ, so two *unrelated* pages agree on most of the canvas and read as a small
+change — landing in the same 1–8% band as the login-page run at the top of this section
+(4.53% / 1.99%). Meanwhile a legitimate redesign, the PR most worth screenshotting, reads
+~100%. A threshold at 100% would have missed every occurrence on record and fired on the
+best runs. It is the same mistake this file keeps recording: an intuition about how the
+world looks, never measured against it.
+
+What separates them is the **words**. A redesign changes how a page looks, not what it says;
+a different site says something else. Containment of the smaller page's vocabulary in the
+larger, with common English words removed (without that filter, two unrelated English pages
+score 0.18 on shared articles and prepositions alone, close enough to the weakest same-site
+pair at 0.20 to be unusable):
+
+```
+different sites   0.000, 0.000, 0.000, 0.071
+same site         0.200 (weakest fixture), 0.417 – 1.000, and 1.000 for real pages
+```
+
+**Done.** `sameness.ts` holds the floor (0.1, in the empty band above) and the rule: a page
+with fewer than ten distinct words is not judged at all, and *every* judgeable route has to
+disagree before the run stops — one rewritten page is a branch doing its job, every page is
+the wrong site. Captures carry their visible text, read after the screenshot so it cannot
+influence the pixels being compared. `pr.ts` raises `NeedsHumanError` naming both sides
+instead of publishing.
+
+Verified end to end against two real sites served locally: caught at 1.69% / 2.91% changed —
+numbers no ratio rule would flag — while a dark redesign of the same site at >50% changed
+passes untouched. Twelve unit tests in `tests/unit/sameness.test.ts`, three pipeline tests in
+`tests/browser/sameness.test.ts`.
+
+**What it does not catch.** Two sides that are the same site at different *versions* but
+wrongly paired (last year's production against this branch) share their vocabulary and pass,
+correctly — that is a real comparison, just a stale one. A site with almost no text on any
+route is never judged, by design.
+
+**2. Any port that answers is treated as the dev server. — FIXED**
 
 `detectDevServer` (`doctor.ts:51`) accepts a port when `status !== null` — any status at all.
 `DEV_PORTS` includes 5000, which on macOS is **AirPlay Receiver**. With no dev server
@@ -357,7 +405,28 @@ precisely when nothing else is listening — the case the message exists to desc
 reachable socket. Drop 5000 and 7000 on darwin, or probe them last and never accept a 401/403
 from them. `NoDevServerError` should win over any inference drawn from a stranger's port.
 
-**3. Serving the base commit needs a package manager on PATH. — confirmed**
+**Done.** `looksLikeDevServer` in `doctor.ts` decides: never a 401/403, a redirect on its own
+terms, otherwise an HTML document. Reproduced first against a server shaped like the real
+one — 403, `Content-Length: 0` — which the old probe adopted and the new one refuses,
+naming the port it passed over.
+
+Two deliberate departures from the scope above, both to avoid trading one wrong answer for
+another:
+
+- **A 404 or 500 that renders still counts.** The spec said 2xx/3xx, but a dev server with no
+  `/` route, or one with a compile error, answers 404 or 500 with a page and is still the dev
+  server. Refusing it would send someone hunting for a server they are already running — the
+  same class of wrong advice, pointed the other way.
+- **5000 is kept, not dropped.** The status rule already rejects AirPlay's 403 on every
+  platform, so dropping the port would only cost the people running something real on it
+  (Flask defaults there). It is probed last instead, behind every port a framework actually
+  defaults to. 7000 was never in the list, so there was nothing to drop.
+
+`scanDevServers` also reports what it passed over, and `doctor` prints it: "none found on the
+usual ports" reads as a lie to someone who knows a service is listening on one of them. Nine
+tests in `tests/unit/devserver.test.ts`.
+
+**3. Serving the base commit needs a package manager on PATH. — FIXED**
 
 ```
 Could not serve base commit 864ce15: pnpm install failed; run it by hand in
@@ -374,6 +443,23 @@ stacked.
 **Scope.** Choose the package manager from what the repo declares and what is actually on
 PATH, fall back to `npm`, and say which one failed and how to run it by hand.
 
+**Done.** `detectPackageManager` now reads the `packageManager` field before the lockfile —
+the field is the deliberate statement, and a repository mid-migration can carry two
+lockfiles. `resolvePackageManager` intersects that with `onPath` (a PATH scan, not a
+`--version` subprocess) and falls back to npm, which ships with Node. The fallback says so,
+including that it will not honour the declared lockfile; when npm is missing too, that is the
+message rather than an install failure.
+
+Reproduced with pnpm off PATH in a repo declaring it: the old code reported "pnpm install
+failed" and gave up, the new one boots the baseline on npm.
+
+**One thing the scope did not name.** "Run it by hand in `<dir>`" pointed into the throwaway
+worktree, which `cleanup()` deletes *before* the message is printed — advice to visit a
+directory that no longer exists. The failure now names the command in full and the same
+relative directory in the caller's own checkout, which is still there to run it in.
+
+Seven tests in `tests/unit/baseline.test.ts`.
+
 ---
 
 ## Findings: the first five minutes
@@ -389,8 +475,8 @@ construction, since the checkout is somewhere else again. Fixed: the fork is ide
 `git remote -v` showing `juangadm/pre-post`, which is the test Step 0 already required and
 the only one that travels between machines.
 
-**A clean machine cannot install this.** Getting the CLI running took four attempts. Both
-halves reproduce from a fresh clone:
+**A clean machine cannot install this. — FIXED**  Getting the CLI running took four
+attempts. Both halves reproduce from a fresh clone:
 
 ```
 $ pnpm install                    # with strict-dep-builds enabled
@@ -405,13 +491,18 @@ $ echo $?
 ```
 
 pnpm 10 blocks dependency build scripts until they are approved; where `strict-dep-builds`
-is set the warning is an error and the whole install fails on exit 1. Both packages belong
-to `site/`, so the CLI — which needs neither — cannot be installed because of the marketing
-site. Falling back to npm then fails on its own: npm cannot read the symlinked tree pnpm
-left behind, and the error names none of that.
+is set the warning is an error and the whole install fails on exit 1. Falling back to npm
+then fails on its own: npm cannot read the symlinked tree pnpm left behind, and the error
+names none of that.
 
-The repository declares no allow-list, which is what makes approval necessary. Verified fix,
-not applied here (out of scope for the noise-floor work): add to `pnpm-workspace.yaml`
+**Correction to the note as first written.** It said "both packages belong to `site/`, so the
+CLI — which needs neither — cannot be installed because of the marketing site". Half of that
+is wrong, and it is the half that assigns blame. `sharp` does arrive with `next` in `site/`.
+`esbuild` arrives with `vitest → vite` at the **root**: it is the CLI's own test runner
+pulling it in, not the site. Traced in `pnpm-lock.yaml` rather than assumed from the package
+names.
+
+**Done.** `pnpm-workspace.yaml` now declares the allow-list:
 
 ```yaml
 onlyBuiltDependencies:
@@ -419,9 +510,15 @@ onlyBuiltDependencies:
   - sharp
 ```
 
-With that line, `pnpm install --config.strict-dep-builds=true` completes in 2.7s from a
-clean clone. The npm path deserves one sentence in the README as well: pnpm and npm cannot
-share a `node_modules`, so `rm -rf node_modules` before switching.
+Reproduced before the fix (exit 1, `ERR_PNPM_IGNORED_BUILDS`, `esbuild@0.27.2` and
+`sharp@0.34.5`) and after, from a deleted `node_modules`: `pnpm install
+--config.strict-dep-builds=true` completes on exit 0 in 3.6s.
+
+The npm path is now a paragraph in the README's Development section. Both halves were
+verified: `npm install` over pnpm's tree fails with `Cannot read properties of null (reading
+'edgesOut')`, and after `rm -rf node_modules site/node_modules` it succeeds and builds the
+CLI. One detail worth having in the note — npm installs the CLI only, since `site/` is a
+pnpm workspace member and npm does not read `pnpm-workspace.yaml`.
 
 **Fixed in passing, because it blocked a test.** `diff-pool.ts` transferred each job's
 buffers to the worker, detaching them in the calling thread. The `error` handler that exists
