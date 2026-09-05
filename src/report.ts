@@ -125,3 +125,5 @@ export function buildSummary(result: PrRunResult): string {
   if (result.commentUrl) lines.push(`Comment: ${result.commentUrl}`);
   return lines.join('\n');
 }
+
+// Touched during end-to-end validation of the pr pipeline; no behaviour change.
