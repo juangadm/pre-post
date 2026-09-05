@@ -150,6 +150,12 @@ interface DeployedAttempt {
   comparison: Comparison | null;
   /** The preview that exists for this commit, whether or not it could be paired. */
   preview: Side | null;
+  /**
+   * A deployed baseline that was found and then rejected, with the probe that
+   * rejected it. "None recorded" and "recorded but behind a login wall" need
+   * different instructions, and only this knows which happened.
+   */
+  rejectedBaseline?: { side: Side; probe: ProbeResult | null };
 }
 
 /**
@@ -172,7 +178,7 @@ async function deployedPair(ctx: ResolveContext): Promise<DeployedAttempt> {
   const baselineProbe = baseline && !isLocalUrl(baseline.url) ? await ctx.probe(baseline.url) : null;
   if (!baseline || !baselineProbe || !isUsable(baselineProbe)) {
     ctx.log('Preview deployment found but no reachable deployed baseline; comparing locally instead.');
-    return { comparison: null, preview };
+    return { comparison: null, preview, rejectedBaseline: baseline ? { side: baseline, probe: baselineProbe } : undefined };
   }
   return { comparison: pair('deployed', { ...baseline, probe: baselineProbe }, { ...preview, probe: previewProbe }), preview };
 }
@@ -184,7 +190,7 @@ async function deployedPair(ctx: ResolveContext): Promise<DeployedAttempt> {
  * servers it starts: every exit below either hands their teardown to the
  * Comparison or runs it before throwing.
  */
-async function localPair(ctx: ResolveContext, preview: Side | null): Promise<Comparison> {
+async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promise<Comparison> {
   const running = await ctx.devServer;
   let after: Side | null = ctx.after
     ? side(ctx.after, 'passed with --after')
@@ -198,7 +204,7 @@ async function localPair(ctx: ResolveContext, preview: Side | null): Promise<Com
     postServer = await (ctx.servePost ?? serveWorkingTree)({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, log: ctx.log });
     if (postServer) after = side(postServer.url, 'working tree, served locally');
   }
-  if (!after) throw preview ? new NoDeployedBaselineError(preview.url) : new NoPostError();
+  if (!after) throw deployed.preview ? new NoDeployedBaselineError(deployed.preview.url, deployed.rejectedBaseline) : new NoPostError();
   const stopPost = postServer ? postServer.stop : noop;
 
   // A baseline the caller named wins even if it is remote; they asked for it.
@@ -232,7 +238,7 @@ export async function resolveComparison(ctx: ResolveContext): Promise<Comparison
   const explicit = explicitPair(ctx);
   if (explicit) return explicit;
   const deployed = await deployedPair(ctx);
-  return deployed.comparison ?? localPair(ctx, deployed.preview);
+  return deployed.comparison ?? localPair(ctx, deployed);
 }
 
 export class NoPostError extends NeedsHumanError {
@@ -248,12 +254,28 @@ export class NoPostError extends NeedsHumanError {
  * Worth its own error because the generic one says "no preview deployment for
  * this commit", which in this case is the opposite of what happened — and the
  * person hitting it is the one least able to act on advice about dev servers.
+ *
+ * The instruction depends on *why* there was no baseline. Telling someone to
+ * pass `--before` when the baseline was found and turned them away at a login
+ * wall sends them back to the same URL for the same failure; the fix there is
+ * access, not an argument.
  */
 export class NoDeployedBaselineError extends NeedsHumanError {
-  constructor(previewUrl: string) {
-    super(`Found the preview deployment for this commit (${previewUrl}) but nothing to compare it against: no production deployment is recorded for this repository and no dev server is running. Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).`);
+  constructor(previewUrl: string, rejected?: { side: Side; probe: ProbeResult | null }) {
+    super(`Found the preview deployment for this commit (${previewUrl}) but nothing to compare it against: ${reasonFor(rejected)} No dev server is running either.`);
     this.name = 'NoDeployedBaselineError';
   }
+}
+
+const PIN_HINT = 'Re-run with --before https://your-production-url (it is saved to .pre-post.json for next time).';
+
+function reasonFor(rejected?: { side: Side; probe: ProbeResult | null }): string {
+  if (!rejected) return `no production deployment is recorded for this repository. ${PIN_HINT}`;
+  const { side: baseline, probe } = rejected;
+  if (probe && (probe.status === 401 || probe.status === 403)) {
+    return `the baseline (${baseline.url} — ${baseline.detail}) returned ${probe.status}, so it is behind access control.${probe.vercel ? ' Set VERCEL_AUTOMATION_BYPASS_SECRET, or' : ''} run \`pre-post login ${baseline.url}\`, then re-run.`;
+  }
+  return `the baseline (${baseline.url} — ${baseline.detail}) could not be reached. Check it is up, or ${PIN_HINT[0].toLowerCase()}${PIN_HINT.slice(1)}`;
 }
 
 export class NoBaselineError extends NeedsHumanError {

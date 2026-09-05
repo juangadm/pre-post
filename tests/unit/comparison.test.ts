@@ -143,7 +143,7 @@ describe('resolveComparison', () => {
       gh: gh({
         '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
         '/deployments?sha=base': [],
-        '/deployments?per_page=30': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
         '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
         '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
       }),
@@ -154,13 +154,30 @@ describe('resolveComparison', () => {
     expect(c.before.detail).toContain('prod999');
   });
 
+  it('says the baseline is behind access control rather than telling you to pin it', async () => {
+    const failure = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=base': [{ id: 2, environment: 'Production' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/2/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+      probe: async url => ({ status: url.includes('prod') ? 401 : 200, vercel: true }),
+    })).catch(e => e);
+    expect(failure).toBeInstanceOf(NoDeployedBaselineError);
+    expect(failure.message).toContain('https://prod.com');
+    expect(failure.message).toContain('401');
+    // Pinning --before to the same protected URL would fail the same way.
+    expect(failure.message).not.toContain('--before');
+  });
+
   it('finds the preview for a commit before a PR is opened', async () => {
     const c = await resolveComparison(ctx({
       pr: null,
       headSha: 'loose1234567',
       gh: gh({
         '/deployments?sha=loose': [{ id: 1, environment: 'Preview' }],
-        '/deployments?per_page=30': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
         '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
         '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
       }),
@@ -178,7 +195,7 @@ describe('resolveComparison', () => {
       return inner(m, p);
     };
     await expect(resolveComparison(ctx({ gh: client }))).rejects.toBeInstanceOf(NoPostError);
-    expect(seen.some(p => p.includes('per_page=30'))).toBe(false);
+    expect(seen.some(p => p.includes('/deployments?per_page='))).toBe(false);
   });
 
   it('names the preview it found when there is nothing to compare it against', async () => {
@@ -186,7 +203,7 @@ describe('resolveComparison', () => {
       gh: gh({
         '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
         '/deployments?sha=base': [],
-        '/deployments?per_page=30': [],
+        '/deployments?per_page=100': [],
         '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
       }),
     })).catch(e => e);
