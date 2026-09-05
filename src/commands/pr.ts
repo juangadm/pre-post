@@ -12,7 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findToken, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
@@ -74,12 +74,36 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // entirely made --dry-run the one mode that could never use a deployment,
   // so it always demanded a dev server — from the person least likely to have
   // one. Reads use `gh`; publishing and commenting use `writeGh`.
-  const token = opts.dryRun ? getToken() : requireToken();
-  const gh = token ? new GitHub(token) : null;
+  const found = opts.dryRun ? findToken() : requireToken();
+  const gh = found ? new GitHub(found.token) : null;
   const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = ensureBrowser();
+  /**
+   * Everything this run started, in a form every early exit can call.
+   *
+   * The browser is launched from here rather than at the capture, so any throw
+   * before that block owns closing it: the CLI's `process.exit` hides the
+   * difference, but a caller using `runPr()` as a library catches the error and
+   * is left with a Chromium nothing references. Awaiting the launch first is
+   * what makes it work — `closeBrowser()` drops a pending launch and closes
+   * nothing, and the launch then resolves into an orphan.
+   */
+  const stopEverything = async (): Promise<void> => {
+    await browserReady.catch(() => undefined);
+    await closeBrowser();
+    await cleanupComparison();
+  };
+  // Whether the token may write, asked at the same time as the PR lookup so it
+  // costs no wall clock, and answered before anything expensive begins. A token
+  // that cannot read fails the lookup below and never reaches capture; one that
+  // reads but cannot write passes every check this run makes until the publish,
+  // which is a whole capture pass later — 22.7s for one route at one viewport,
+  // measured on a runner.
+  const writeAccess = writeGh && found
+    ? checkWriteAccess(writeGh, ownerRepo).then(access => ({ access, source: found.source }))
+    : null;
   const lookup = gh
     ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
     : Promise.resolve(null);
@@ -101,6 +125,19 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const head = headSha(root);
   const pr = await prLookup;
+
+  // Before the local baseline, which can install and build a whole app, and
+  // long before the captures. An answer that is not about access — a 500, a
+  // dropped connection — is not evidence of anything, so it says so and the run
+  // continues to fail wherever it really fails.
+  const write = await writeAccess;
+  if (write && !write.access.writable) {
+    if (write.access.reason === 'rejected') {
+      await stopEverything();
+      throw new NeedsHumanError(cannotPublishHint(ownerRepo, write.source));
+    }
+    log(`Could not check whether the token can publish (${write.access.detail}); continuing.`);
+  }
 
   // --- What are we comparing? ---------------------------------------------------
   const headers = headersFor(config, opts);
@@ -147,7 +184,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // Resolution already probed whatever it chose; this catches a side that died
   // in between, and names which one so the message is actionable.
   const fail = async (message: string): Promise<never> => {
-    await cleanupComparison();
+    await stopEverything();
     throw new NeedsHumanError(message);
   };
   const [probe, afterProbe] = await Promise.all([
@@ -184,8 +221,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       sides: { before: comparison.before, after: comparison.after },
     });
   } finally {
-    await closeBrowser();
-    await cleanupComparison();
+    await stopEverything();
   }
   const { outcomes } = run;
 

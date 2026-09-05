@@ -10,7 +10,7 @@ import { ensureBrowser, scanDevServers } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
 import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
-import { getToken } from '../github.js';
+import { cannotPublishHint, checkWriteAccess, findToken, GitHub } from '../github.js';
 import { closeBrowser } from '../browser.js';
 
 export interface DoctorCheck {
@@ -61,6 +61,38 @@ export function repoIdentityCheck(root: string): DoctorCheck {
   }
 }
 
+/**
+ * "Token found" was an all-clear that a token cannot earn by existing. In a
+ * Claude Code web sandbox both `GH_TOKEN` and `GITHUB_TOKEN` are set to a
+ * placeholder the egress proxy substitutes on some paths and not others, and
+ * this check said `ok  token found` while every call `pr` makes answered 401.
+ * So ask the API the question the run depends on, and report its answer.
+ *
+ * Which outcomes are `required` follows what `pr` actually enforces, or the
+ * contract would promise something the run does not keep: a missing or refused
+ * token stops it, while an API that cannot be reached only makes it say so and
+ * carry on, so that one is advisory.
+ */
+async function githubCheck(cwd?: string): Promise<DoctorCheck> {
+  const found = findToken();
+  // Required because `pr` calls requireToken() on any run that is not a dry
+  // run, so without one the command stops before it captures anything.
+  if (!found) return { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true };
+  let ownerRepo: string;
+  try {
+    ownerRepo = resolveOwnerRepo(repoRoot(cwd));
+  } catch {
+    // There is nothing to ask the API about. The `repo` check below carries
+    // that as the required failure, so this one only records what went
+    // unchecked rather than reporting the same problem twice.
+    return { name: 'github', ok: false, detail: `${found.source} found, but no repository to check it against` };
+  }
+  const access = await checkWriteAccess(new GitHub(found.token), ownerRepo);
+  if (access.writable) return { name: 'github', ok: true, detail: `token can publish to ${ownerRepo}`, required: true };
+  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo, found.source), required: true };
+  return { name: 'github', ok: false, detail: `could not reach GitHub to check the token (${access.detail})` };
+}
+
 export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   try {
@@ -71,11 +103,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   } finally {
     await closeBrowser();
   }
-  // Required because `pr` calls requireToken() on any run that is not a dry
-  // run, so without one the command stops before it captures anything.
-  checks.push(getToken()
-    ? { name: 'github', ok: true, detail: 'token found', required: true }
-    : { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true });
+  checks.push(await githubCheck(cwd));
   // Name the ports that answered but were passed over. "None found on the
   // usual ports" reads as a lie to anyone who knows something is listening on
   // one of them, and the usual something is a macOS system service on 5000.

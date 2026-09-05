@@ -14,22 +14,42 @@ export { GitHubError } from './errors.js';
 
 export const API_BASE = process.env.GITHUB_API_URL || 'https://api.github.com';
 
-export function getToken(): string | null {
-  const env = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  if (env) return env;
+/** Where a token came from. Which one it is decides how a rejection is fixed. */
+export type TokenSource = 'GH_TOKEN' | 'GITHUB_TOKEN' | 'gh';
+
+export interface FoundToken {
+  token: string;
+  source: TokenSource;
+}
+
+/**
+ * The token this run will use, and where it came from.
+ *
+ * The source is not bookkeeping: the env vars take precedence over the `gh`
+ * CLI, so advice aimed at the wrong one is advice that cannot work. Someone
+ * whose `GH_TOKEN` is refused gains nothing from `gh auth login`, because the
+ * variable still wins on the next run.
+ */
+export function findToken(): FoundToken | null {
+  if (process.env.GH_TOKEN) return { token: process.env.GH_TOKEN, source: 'GH_TOKEN' };
+  if (process.env.GITHUB_TOKEN) return { token: process.env.GITHUB_TOKEN, source: 'GITHUB_TOKEN' };
   try {
     const out = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return out || null;
+    return out ? { token: out, source: 'gh' } : null;
   } catch {
     return null;
   }
 }
 
-/** A token, or the one sentence telling the human how to get one. */
-export function requireToken(purpose = 'publish screenshots'): string {
-  const token = getToken();
-  if (!token) throw new NeedsHumanError(`GitHub access is needed to ${purpose}. ${GH_LOGIN_HINT}`);
-  return token;
+export function getToken(): string | null {
+  return findToken()?.token ?? null;
+}
+
+/** A token and its source, or the one sentence telling the human how to get one. */
+export function requireToken(purpose = 'publish screenshots'): FoundToken {
+  const found = findToken();
+  if (!found) throw new NeedsHumanError(`GitHub access is needed to ${purpose}. ${GH_LOGIN_HINT}`);
+  return found;
 }
 
 export class GitHub {
@@ -62,6 +82,88 @@ export class GitHub {
     }
     return json as T;
   }
+}
+
+/** What one write attempt established about this token's access to a repository. */
+export type WriteAccess =
+  /** The token wrote an object. It may still be refused a ref by a ruleset. */
+  | { writable: true }
+  /** GitHub refused the write. Nothing this run publishes will land. */
+  | { writable: false; reason: 'rejected' }
+  /** Nobody answered, or answered something that is not about access. */
+  | { writable: false; reason: 'unknown'; detail: string };
+
+/**
+ * Can this token write to `ownerRepo`?
+ *
+ * `getToken()` checks that a token exists, which is a different question. A
+ * GitHub Actions job that maps `secrets.GITHUB_TOKEN` gets one that reads
+ * everything this tool reads and writes nothing: measured on this repository,
+ * `GET /repos/juangadm/pre-post` answers 200 with `permissions.push: false`
+ * and `POST .../git/blobs` answers 403. Those reads are the ones `pr` makes
+ * before it captures, so without this the run spends its screenshots first and
+ * discovers the refusal after.
+ *
+ * The probe is the first write `publishAssets` makes, on the one piece of
+ * content that cannot add anything: the empty blob already exists in every
+ * repository, so a successful call stores nothing new. A read cannot stand in
+ * for it — `permissions.push` describes the account's access to the repository,
+ * not the scopes the token carries, so it can report `true` for a credential
+ * the write still refuses. That is the confident all-clear this check exists to
+ * avoid, which is why it writes.
+ *
+ * What it proves is bounded: the token may write objects. Creating the assets
+ * *ref* is a separate permission a ruleset can refuse, so `writable: true` is
+ * "not this failure", never "the publish will work".
+ */
+export async function checkWriteAccess(gh: GitHub, ownerRepo: string): Promise<WriteAccess> {
+  try {
+    await gh.request('POST', `/repos/${ownerRepo}/git/blobs`, { content: '', encoding: 'utf-8' });
+    return { writable: true };
+  } catch (err) {
+    // 401/403 arrive as NeedsHumanError from `request`; a repository an
+    // installation cannot write is often hidden as 404 rather than refused.
+    if (err instanceof NeedsHumanError) return { writable: false, reason: 'rejected' };
+    if (err instanceof GitHubError) {
+      if (err.status === 404) return { writable: false, reason: 'rejected' };
+      return { writable: false, reason: 'unknown', detail: `GitHub answered ${err.status}` };
+    }
+    return { writable: false, reason: 'unknown', detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * The one thing to do about a token that cannot publish.
+ *
+ * It follows the credential that was actually chosen, not just the
+ * environment. Being inside a runner does not make `permissions:` the fix: a
+ * workflow that sets `GH_TOKEN` to a PAT is refused by that PAT, and rewriting
+ * the job's permissions changes only the `GITHUB_TOKEN` the run never reaches.
+ * The same holds the other way round on a laptop, where `gh auth login` cannot
+ * help while an env var is shadowing it.
+ *
+ * The runner sentence names both permissions, though only `contents` is what
+ * this check tested. Naming `contents` alone would be advice that fails on its
+ * own terms: a `permissions:` block sets every scope it omits to none, so
+ * following it leaves a token that uploads the screenshots and is then refused
+ * the PR description — measured on this repository, `PATCH /pulls/23` answers
+ * 403 with only `contents: write` and 200 with `pull-requests: write` beside it.
+ * A second trip through a full capture is not worth the tighter sentence.
+ */
+export function cannotPublishHint(ownerRepo: string, source: TokenSource): string {
+  const inActions = process.env.GITHUB_ACTIONS === 'true';
+  const perms = '"permissions: { contents: write, pull-requests: write }"';
+  const nowhere = `cannot write to ${ownerRepo}, so the screenshots would have nowhere to go`;
+  if (source === 'gh') {
+    return `The gh CLI login ${nowhere}: run gh auth login as someone with write access, or set GH_TOKEN to a token carrying repo scope.`;
+  }
+  if (inActions && source === 'GITHUB_TOKEN') {
+    return `This workflow's GITHUB_TOKEN ${nowhere}: give the job ${perms} and re-run.`;
+  }
+  if (inActions) {
+    return `The GH_TOKEN this workflow sets ${nowhere}: give that credential write access, or unset it so the job's own GITHUB_TOKEN is used with ${perms}.`;
+  }
+  return `The ${source} set in this environment ${nowhere}: set it to a token carrying repo scope, or unset it to fall back on your gh CLI login.`;
 }
 
 export interface PullRequestRef {
