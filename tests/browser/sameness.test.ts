@@ -7,6 +7,8 @@ import { runTasks } from '../../src/run';
 import { closeBrowser } from '../../src/browser';
 import { CONFIG_DEFAULTS } from '../../src/config';
 import { looksLikeDifferentSites } from '../../src/sameness';
+import { runCompare } from '../../src/commands/compare';
+import { NeedsHumanError } from '../../src/errors';
 
 const playwrightAvailable = process.env.TEST_BROWSER === 'true';
 
@@ -61,8 +63,9 @@ describe('telling a different site from a changed one', () => {
     const other = await serve(wrap('Ledgerly', OTHER_BODY, '#fff', '#111'));
     servers.push(site, other);
 
-    const outcomes = await compare(site, other);
+    const { outcomes, verdict } = await compare(site, other);
     expect(looksLikeDifferentSites(outcomes)).toBe(true);
+    expect(verdict?.kind).toBe('different-sites');
     // The point of the check: the pixel ratio does not give this away. Two
     // mostly-white pages differ in only a few percent of their pixels, which is
     // why a "~100% changed" rule would never have caught it.
@@ -75,8 +78,9 @@ describe('telling a different site from a changed one', () => {
     const dark = await serve(wrap('pre-post', SITE_BODY, '#0b0f19', '#e9edf5'));
     servers.push(light, dark);
 
-    const outcomes = await compare(light, dark);
+    const { outcomes, verdict } = await compare(light, dark);
     expect(looksLikeDifferentSites(outcomes)).toBe(false);
+    expect(verdict).toBe(null);
     // Guards the assertion above against passing because the redesign stopped
     // being a redesign: it has to be a large visual change and still pass.
     expect(Math.max(...outcomes.map(o => o.changedRatio ?? 0))).toBeGreaterThan(0.5);
@@ -93,12 +97,44 @@ describe('telling a different site from a changed one', () => {
     const rewritten = await serve(wrap('pre-post', OTHER_BODY, '#fff', '#111'));
     servers.push(before, rewritten);
 
-    const outcomes = await compare(before, rewritten);
+    const { outcomes, verdict } = await compare(before, rewritten);
     // The body text genuinely shares nothing — the guard is the title, and the
     // fact that one route cannot corroborate itself across viewports.
     for (const o of outcomes) expect(o.textOverlap).toBeLessThan(0.1);
     expect(outcomes.every(o => (o.titleOverlap ?? 0) > 0.1)).toBe(true);
     expect(looksLikeDifferentSites(outcomes)).toBe(false);
+    expect(verdict).toBe(null);
+  });
+
+  /**
+   * The hole this move closed. Both gates used to be written out in `pr`, so
+   * the two-URL mode had neither and printed a confident percentage for two
+   * unrelated sites. The verdict now comes back with the outcomes, so a caller
+   * cannot get the numbers without the reason not to trust them.
+   */
+  it.skipIf(!playwrightAvailable)('stops the two-URL mode too, not just pr', async () => {
+    const site = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));
+    const other = await serve(wrap('Ledgerly', OTHER_BODY, '#fff', '#111'));
+    servers.push(site, other);
+
+    await expect(runCompare({
+      before: `http://127.0.0.1:${port(site)}/`,
+      after: `http://127.0.0.1:${port(other)}/`,
+      output: fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-compare-')),
+    })).rejects.toThrow(NeedsHumanError);
+  });
+
+  it.skipIf(!playwrightAvailable)('still compares two URLs that are the same site', async () => {
+    const a = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));
+    const b = await serve(wrap('pre-post', SITE_BODY, '#0b0f19', '#e9edf5'));
+    servers.push(a, b);
+
+    const result = await runCompare({
+      before: `http://127.0.0.1:${port(a)}/`,
+      after: `http://127.0.0.1:${port(b)}/`,
+      output: fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-compare-')),
+    });
+    expect(result.outcomes[0].status).toBe('changed');
   });
 
   it.skipIf(!playwrightAvailable)('is quiet about the same site captured twice', async () => {
@@ -106,8 +142,9 @@ describe('telling a different site from a changed one', () => {
     const b = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));
     servers.push(a, b);
 
-    const outcomes = await compare(a, b);
+    const { outcomes, verdict } = await compare(a, b);
     expect(looksLikeDifferentSites(outcomes)).toBe(false);
+    expect(verdict).toBe(null);
     for (const o of outcomes) expect(o.textOverlap).toBe(1);
   });
 });

@@ -14,6 +14,7 @@ import { diffImages } from '../diff.js';
 import { parseViewport } from '../viewport.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, isChanged, runTasks } from '../run.js';
+import { NeedsHumanError } from '../errors.js';
 import { joinUrl, normalizeUrl } from '../url.js';
 
 export interface CompareOptions extends Partial<Settings> {
@@ -69,11 +70,24 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
     }
     const auth = resolveAuth({ headers: opts.headers, urls: [before, after] });
     await ensureBrowser();
+    let run;
     try {
-      outcomes = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log: opts.log });
+      run = await runTasks(tasks, {
+        outputDir, ...settings, wait: opts.wait, auth, log: opts.log,
+        // Both sides arrived as positional arguments, so `--before` is not the
+        // fix here and naming it would send someone to a flag this mode has no
+        // use for.
+        sides: { before: { url: before }, after: { url: after }, fix: 'pass two URLs from the same site' },
+      });
     } finally {
       await closeBrowser();
     }
+    // Two URLs named by hand are still two URLs that can turn out to be a
+    // sign-in wall or two different sites, and a percentage printed for either
+    // is the confident-and-wrong answer. This mode used to have no such check
+    // at all, because both lived in `pr`.
+    if (run.verdict) throw new NeedsHumanError(run.verdict.hint);
+    outcomes = run.outcomes;
   }
 
   return { repo: '', beforeBase: before, afterBase: after, outcomes, skippedDynamic: [], durationMs: Date.now() - started, markdown: '', outputDir };

@@ -17,6 +17,48 @@ export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+  /**
+   * True when `pre-post pr` cannot run at all without this.
+   *
+   * The distinction is the whole exit-code contract. Most of what doctor
+   * reports narrows *which strategy* a run will pick — no dev server just
+   * means a deployment or the base commit will be served instead — and
+   * failing the command for those would make the check useless, because
+   * nearly every healthy machine trips one. Only the three things with no
+   * alternative are required.
+   */
+  required?: boolean;
+}
+
+/**
+ * doctor's contract, relied on by anything that runs it before a run:
+ *
+ *   exit 0  every required check passed; `pre-post pr` can run
+ *   exit 1  a required check failed; it cannot
+ *
+ * Advisory failures never change the exit code — they are printed so a human
+ * can see what was narrowed, not to fail the command.
+ */
+export function doctorExitCode(checks: DoctorCheck[]): number {
+  return checks.some(c => c.required && !c.ok) ? 1 : 0;
+}
+
+/**
+ * Can `pr` name the repository it would publish to?
+ *
+ * Being inside a git repository is not enough: `runPr` calls
+ * `resolveOwnerRepo` unconditionally, which needs a parseable `origin` or
+ * `GH_REPO`/`GITHUB_REPOSITORY`. A checkout with neither — a clone from a
+ * mirror, a bare worktree, `origin` pointing at something that is not GitHub —
+ * passes the git check and then throws before the pipeline starts. Reporting
+ * "ready" there is exactly the lie the exit-code contract exists to prevent.
+ */
+export function repoIdentityCheck(root: string): DoctorCheck {
+  try {
+    return { name: 'repo', ok: true, detail: resolveOwnerRepo(root), required: true };
+  } catch (err) {
+    return { name: 'repo', ok: false, detail: (err as Error).message, required: true };
+  }
 }
 
 /**
@@ -25,21 +67,29 @@ export interface DoctorCheck {
  * placeholder the egress proxy substitutes on some paths and not others, and
  * this check said `ok  token found` while every call `pr` makes answered 401.
  * So ask the API the question the run depends on, and report its answer.
+ *
+ * Which outcomes are `required` follows what `pr` actually enforces, or the
+ * contract would promise something the run does not keep: a missing or refused
+ * token stops it, while an API that cannot be reached only makes it say so and
+ * carry on, so that one is advisory.
  */
 async function githubCheck(cwd?: string): Promise<DoctorCheck> {
   const token = getToken();
-  if (!token) return { name: 'github', ok: false, detail: GH_LOGIN_HINT };
+  // Required because `pr` calls requireToken() on any run that is not a dry
+  // run, so without one the command stops before it captures anything.
+  if (!token) return { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true };
   let ownerRepo: string;
   try {
     ownerRepo = resolveOwnerRepo(repoRoot(cwd));
   } catch {
-    // Nothing to ask about. Naming what went unchecked keeps this from reading
-    // as the all-clear it replaced.
-    return { name: 'github', ok: false, detail: 'token found, but no GitHub remote to check it against' };
+    // There is nothing to ask the API about. The `repo` check below carries
+    // that as the required failure, so this one only records what went
+    // unchecked rather than reporting the same problem twice.
+    return { name: 'github', ok: false, detail: 'token found, but no repository to check it against' };
   }
   const access = await checkWriteAccess(new GitHub(token), ownerRepo);
-  if (access.writable) return { name: 'github', ok: true, detail: `token can publish to ${ownerRepo}` };
-  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo) };
+  if (access.writable) return { name: 'github', ok: true, detail: `token can publish to ${ownerRepo}`, required: true };
+  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo), required: true };
   return { name: 'github', ok: false, detail: `could not reach GitHub to check the token (${access.detail})` };
 }
 
@@ -47,9 +97,9 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   try {
     await ensureBrowser();
-    checks.push({ name: 'browser', ok: true, detail: browserDescription() });
+    checks.push({ name: 'browser', ok: true, detail: browserDescription(), required: true });
   } catch (err) {
-    checks.push({ name: 'browser', ok: false, detail: (err as Error).message });
+    checks.push({ name: 'browser', ok: false, detail: (err as Error).message, required: true });
   } finally {
     await closeBrowser();
   }
@@ -64,6 +114,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     : { name: 'devserver', ok: false, detail: `none found on the usual ports${ignored ? ` (not a dev server: ${ignored})` : ''}` });
   try {
     const root = repoRoot(cwd);
+    checks.push(repoIdentityCheck(root));
     const cfg = loadConfig(root);
     checks.push(cfg.before ? { name: 'before', ok: true, detail: cfg.before } : { name: 'before', ok: false, detail: 'not set — pass --before once and it is saved' });
     checks.push({ name: 'config', ok: true, detail: fs.existsSync(configPath(root)) ? CONFIG_FILENAME : 'none (defaults)' });
@@ -75,7 +126,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
       ? { name: 'servable', ok: true, detail: `${path.relative(root, app.dir) || '.'} (${app.script})` }
       : { name: 'servable', ok: false, detail: 'no dev/serve/start script found; the local baseline is unavailable' });
   } catch {
-    checks.push({ name: 'git', ok: false, detail: 'not a repository' });
+    checks.push({ name: 'git', ok: false, detail: 'not a repository', required: true });
   }
   return checks;
 }

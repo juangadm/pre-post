@@ -12,8 +12,6 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { signInHint } from '../landing.js';
-import { differentSitesHint, looksLikeDifferentSites } from '../sameness.js';
 import { AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
@@ -195,31 +193,24 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   log(`Capturing ${tasks.length * 2} screenshots (${routes.length} route(s) × ${viewports.length} viewport(s)) ...`);
 
   await browserReady;
-  let outcomes;
+  let run;
   try {
-    outcomes = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log });
+    run = await runTasks(tasks, {
+      outputDir, ...settings, wait: opts.wait, auth, log,
+      // So the verdict can name how Pre was chosen, not just where it points.
+      sides: { before: comparison.before, after: comparison.after },
+    });
   } finally {
     await closeBrowser();
     await cleanupComparison();
   }
+  const { outcomes } = run;
 
-  // Every route walled means the run never saw the site. Publishing "no visual
-  // changes" — or anything else — from that would be a confident lie, so stop
-  // with the one thing a human has to do.
-  const walled = outcomes.filter(o => o.blocked);
-  if (walled.length === outcomes.length && walled.length > 0) {
-    const { side, vercel } = walled[0].blocked!;
-    throw new NeedsHumanError(signInHint(side === 'before' ? comparison.before.url : comparison.after.url, vercel));
-  }
-
-  // The general case of the same failure: both sides answered, neither is a
-  // wall, and they are simply not the same site — a baseline pointed at the
-  // wrong host, or a production URL that has moved. The diff between two
-  // different sites is a number, and publishing it as "visual changes" for
-  // this branch is the confident-and-wrong answer this tool exists to avoid.
-  if (looksLikeDifferentSites(outcomes)) {
-    throw new NeedsHumanError(differentSitesHint(comparison.before.url, comparison.before.detail, comparison.after.url));
-  }
+  // The pipeline judges whether it compared the two sites or something standing
+  // in front of them — a sign-in wall, or a baseline that is a different site
+  // altogether. Either way there is no honest result to publish, so stop with
+  // the one thing a human has to do.
+  if (run.verdict) throw new NeedsHumanError(run.verdict.hint);
 
   // --- Publish -------------------------------------------------------------------
   const changed = outcomes.filter(o => o.status === 'changed' && o.files);

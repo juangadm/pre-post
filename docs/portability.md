@@ -359,9 +359,15 @@ the capture is read from `pr.ts`, not measured.
 
 **Still open.** The preflight tests one permission and the run needs two, so a token granted
 `contents: write` alone still fails on the description after publishing; the hint keeps people
-out of that state rather than the check catching them in it. And `doctor` still exits 0
-whatever it finds, so this reads as advice rather than a verdict — chunk 7's exit-code
-contract is where that gets decided.
+out of that state rather than the check catching them in it.
+
+**Reconciled with chunk 7,** which landed while this was being written and gave `doctor` an
+exit-code contract. Which outcomes of this check are `required` follows what `pr` enforces,
+not what sounds serious: a missing or refused token stops the run, so both fail the command;
+an API that cannot be reached only makes the run say so and carry on, so it prints as a note.
+Promising more than the run keeps is the same lie in a different place. Naming the repository
+is chunk 7's own `repo` check, so a token that cannot be checked for want of a remote records
+that and leaves the required failure to it rather than reporting one problem twice.
 
 ---
 
@@ -397,7 +403,7 @@ fix in one sentence.
 
 ---
 
-## 7. Errors that leak Node internals — confirmed
+## 7. Errors that leak Node internals — FIXED
 
 An unknown flag prints a raw `ERR_PARSE_ARGS_UNKNOWN_OPTION` stack trace:
 
@@ -417,6 +423,52 @@ fail by exit code.
 **Validate.** Unknown flag exits non-zero with one line and no stack.
 
 **Size.** S.
+
+**Done.** The parse is wrapped: an unknown flag now prints Node's own first line and
+`Run: pre-post --help`, and exits 2. Only the parse is caught, so this reformats a failure
+rather than deciding what counts as one.
+
+The exit-code contract is the half with teeth, and the interesting part was deciding it
+rather than implementing it. `doctor` reported seven things and exited 1 for exactly one of
+them (a missing browser), undocumented. Failing on *any* FAIL would have been no better:
+"no dev server running" is the normal state of a healthy machine now that a deployment or
+the base commit can be served instead, so every automated preflight would refuse to proceed.
+
+So a check is **required** only when `pre-post pr` has no way around it — the browser, a
+token (`requireToken()` runs on any non-dry run), and being in a git repository. Everything
+else prints as `note` and never changes the exit code. `doctorExitCode` is one exported
+function with the contract in its doc comment, the README carries the table, and the command
+ends with a plain verdict line: `ready — pre-post pr can run`, or `not ready — fix: ...`.
+
+Measured before and after, outside a repository with no token: seven checks, three of them
+failing, exit **0**. Now exit **1**, naming `github, git`. Five tests in
+`tests/unit/doctor-exit.test.ts`.
+
+---
+
+## 8. The safety gates lived in one command — FIXED
+
+Not in the original plan; it fell out of a review of the different-sites work.
+
+`run.ts` produces the evidence that a run did not compare what it claims to — `blocked` for a
+sign-in wall, `textOverlap` for a baseline that is a different site — but both gates that act
+on it were written out in `commands/pr.ts`. `commands/compare.ts` calls the same pipeline and
+had **neither**, so `pre-post <wrong-site> <localhost:3000>` printed a confident percentage:
+the exact failure class both mechanisms exist to prevent, one call site away.
+
+**Done.** `runTasks` returns `{ outcomes, verdict }`, where `verdictFor` answers "did this run
+compare the two sites, or something standing in front of them?" A caller can no longer take
+the numbers without being handed the reason not to trust them, which is the property that was
+missing — not the check itself, which existed. Both commands now raise `NeedsHumanError` on a
+verdict.
+
+The wall is answered before the different-sites case: a sign-in page shares no words with the
+site, so a walled run trips both, and the wall is the more specific diagnosis with the more
+actionable fix (credentials, not a URL).
+
+Six tests in `tests/unit/verdict.test.ts` and two pipeline tests covering the two-URL mode —
+one that it now refuses two unrelated sites, one that it still compares a redesign of the
+same site, so the first cannot pass by the mode simply breaking.
 
 ---
 
