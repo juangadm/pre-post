@@ -149,7 +149,7 @@ function strongest(a: number | null | undefined, b: number | null | undefined): 
 }
 
 /** What to do about it, when the caller says nothing: the `pr` path, which chose Pre itself. */
-export const DEFAULT_DIFFERENT_SITES_FIX = "re-run with --before pointing at this site's own deployment";
+const DEFAULT_DIFFERENT_SITES_FIX = "re-run with --before pointing at this site's own deployment";
 
 /**
  * The one sentence a human needs when the two sides are not the same site.
