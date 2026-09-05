@@ -24,6 +24,7 @@ interface Deployment {
   id: number;
   environment: string;
   created_at: string;
+  sha?: string;
 }
 
 interface DeploymentStatus {
@@ -35,12 +36,53 @@ interface DeploymentStatus {
 export interface DeploymentUrl {
   url: string;
   environment: string;
+  /** The commit the deployment was built from, when the API reported one. */
+  sha?: string;
 }
 
 const PRODUCTION = /^prod/i;
 
 /** How many deployments to inspect per commit; each costs one status request. */
 const MAX_DEPLOYMENTS = 5;
+
+/**
+ * The newest successful deployment URL matching a query.
+ *
+ * Shared by the two questions callers ask — "what was deployed for this
+ * commit?" and "what is deployed to production right now?" — so both apply the
+ * same production/preview split and the same "success with a URL" rule.
+ */
+async function newestSuccessful(
+  gh: GitHub,
+  ownerRepo: string,
+  query: string,
+  production: boolean,
+): Promise<DeploymentUrl | null> {
+  let deployments: Deployment[];
+  try {
+    deployments = await gh.request<Deployment[]>('GET', `/repos/${ownerRepo}/deployments?${query}`);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(deployments)) return null;
+
+  const candidates = deployments
+    .filter(d => PRODUCTION.test(d.environment || '') === production)
+    .slice(0, MAX_DEPLOYMENTS);
+
+  const ready = await Promise.all(candidates.map(async deployment => {
+    try {
+      const statuses = await gh.request<DeploymentStatus[]>('GET', `/repos/${ownerRepo}/deployments/${deployment.id}/statuses?per_page=20`);
+      if (!Array.isArray(statuses)) return null;
+      const ok = statuses.find((s): s is DeploymentStatus & { environment_url: string } => s.state === 'success' && !!s.environment_url);
+      return ok ? { url: ok.environment_url, environment: deployment.environment, sha: deployment.sha } : null;
+    } catch {
+      return null;
+    }
+  }));
+  // Candidates stay in newest-first order, so the first hit is the newest.
+  return ready.find(Boolean) ?? null;
+}
 
 /**
  * The newest successful deployment URL for a commit.
@@ -60,30 +102,24 @@ export async function deploymentUrlForSha(
   sha: string,
   opts: { production: boolean },
 ): Promise<DeploymentUrl | null> {
-  let deployments: Deployment[];
-  try {
-    deployments = await gh.request<Deployment[]>('GET', `/repos/${ownerRepo}/deployments?sha=${encodeURIComponent(sha)}&per_page=20`);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(deployments)) return null;
+  return newestSuccessful(gh, ownerRepo, `sha=${encodeURIComponent(sha)}&per_page=20`, opts.production);
+}
 
-  const candidates = deployments
-    .filter(d => PRODUCTION.test(d.environment || '') === opts.production)
-    .slice(0, MAX_DEPLOYMENTS);
-
-  const ready = await Promise.all(candidates.map(async deployment => {
-    try {
-      const statuses = await gh.request<DeploymentStatus[]>('GET', `/repos/${ownerRepo}/deployments/${deployment.id}/statuses?per_page=20`);
-      if (!Array.isArray(statuses)) return null;
-      const ok = statuses.find((s): s is DeploymentStatus & { environment_url: string } => s.state === 'success' && !!s.environment_url);
-      return ok ? { url: ok.environment_url, environment: deployment.environment } : null;
-    } catch {
-      return null;
-    }
-  }));
-  // Candidates stay in newest-first order, so the first hit is the newest.
-  return ready.find(Boolean) ?? null;
+/**
+ * What is deployed to production right now, whatever commit it was built from.
+ *
+ * `deploymentUrlForSha` pins Pre to the commit the branch forked from, which is
+ * the most honest baseline there is — but it only exists if production happened
+ * to be deployed at exactly that commit. Production is a moving branch, so on
+ * most repositories it was not, and pinning alone leaves the deployed
+ * comparison with no Pre at all.
+ *
+ * This asks the same question without the pin. It reports the commit it found,
+ * so the caller can name what Pre actually is rather than implying the base.
+ */
+export async function latestProductionDeployment(gh: GitHub, ownerRepo: string): Promise<DeploymentUrl | null> {
+  const found = await newestSuccessful(gh, ownerRepo, 'per_page=30', true);
+  return found ? { ...found, url: normalizeUrl(found.url) } : null;
 }
 
 /** Has a deployment provider reported success against this exact commit? */
