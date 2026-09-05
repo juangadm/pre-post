@@ -44,6 +44,7 @@ const MAX_CONCURRENT_PAGES = Number(process.env.PRE_POST_CONCURRENCY) || 6;
 const NAVIGATION_TIMEOUT = 30_000;
 
 let browser: Browser | null = null;
+let launching: Promise<Browser> | null = null;
 let browserLabel = '';
 
 let activePages = 0;
@@ -256,11 +257,21 @@ export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<
 
 /** The process-wide headless browser, launched (and installed) on first use. */
 export async function getBrowser(): Promise<Browser> {
-  if (!browser) {
-    browser = await launchBrowserOrInstall();
-    browser.on('disconnected', () => { browser = null; });
+  if (browser) return browser;
+  // Captures start concurrently, so the launch has to be shared from the first
+  // call rather than from the first one to finish — otherwise every caller
+  // sees a null `browser` and launches a Chromium of its own, and all but the
+  // last are left running with nothing referencing them.
+  if (!launching) {
+    launching = launchBrowserOrInstall()
+      .then(b => {
+        browser = b;
+        b.on('disconnected', () => { browser = null; launching = null; });
+        return b;
+      })
+      .catch(err => { launching = null; throw err; });
   }
-  return browser;
+  return launching;
 }
 
 export function browserDescription(): string {
@@ -586,6 +597,7 @@ function classifyNavigationError(err: Error): NavigationError['kind'] {
 export async function closeBrowser(): Promise<void> {
   const b = browser;
   browser = null;
+  launching = null;
   activePages = 0;
   pageQueue.length = 0;
   if (b) await b.close().catch(() => undefined);
