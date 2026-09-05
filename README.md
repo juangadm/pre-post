@@ -35,13 +35,13 @@ Capturing 8 screenshots (2 route(s) × 2 viewport(s)) ...
   same     / @ mobile (0.00%, 1990ms)
   same     / @ desktop (0.00%, 2211ms)
 Publishing 10 image(s) to acme/web@pre-post-assets ...
-Updated PR comment: https://github.com/acme/web/pull/42#issuecomment-1
+Updated PR description: https://github.com/acme/web/pull/42
 pre-post · PR #42 · 2 route(s) · 2 viewport(s) · 6.8s
   /         desktop  no change
   /         mobile   no change
   /pricing  desktop  0.64% changed
   /pricing  mobile   1.4% changed
-Comment: https://github.com/acme/web/pull/42#issuecomment-1
+Comment: https://github.com/acme/web/pull/42
 ```
 
 ## How it works
@@ -79,9 +79,11 @@ Comment: https://github.com/acme/web/pull/42#issuecomment-1
    ago, but note that it commits a deletion rather than rewriting history: the older commits
    still hold the blobs, so a link handed out earlier keeps working. Treat anything captured
    as permanent, and think twice before pointing pre-post at a preview holding real data.
-6. **Comment.** One sticky comment per PR, updated in place on every run. Changed routes show
-   a Pre/Post crop with the full page collapsed underneath; unchanged routes fold
-   into a single line.
+6. **Describe.** The images go in a delimited block at the top of the PR description,
+   replaced in place on every run and leaving your own text untouched. Changed routes show
+   a Pre/Post crop with the full page collapsed underneath; unchanged routes fold into a
+   single line. If the PR cannot be edited — a fork, a read-only token — it falls back to
+   one sticky comment.
 
 ## Install
 
