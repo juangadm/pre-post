@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets } from '../../src/github';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, checkWriteAccess, cannotPublishHint } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
 
 type Call = { method: string; path: string; body?: any };
@@ -168,5 +168,75 @@ describe('pruneAssets', () => {
   it('does nothing when the branch does not exist', async () => {
     const result = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
     expect(result).toEqual({ removed: [], kept: [] });
+  });
+});
+
+describe('checkWriteAccess', () => {
+  const blobs = /\/repos\/acme\/web\/git\/blobs$/;
+
+  it('writes the empty blob, which stores nothing a repository does not already have', async () => {
+    route(blobs, 'POST', () => ({ sha: 'e69de29' }), 201);
+    expect(await checkWriteAccess(gh, 'acme/web')).toEqual({ writable: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body).toEqual({ content: '', encoding: 'utf-8' });
+  });
+
+  // Measured on juangadm/pre-post: a workflow mapping secrets.GITHUB_TOKEN with
+  // the repository's default permissions reads /pulls at 200 and gets this.
+  it('reports a rejection when the write is refused', async () => {
+    route(blobs, 'POST', () => ({ message: 'Resource not accessible by integration' }), 403);
+    expect(await checkWriteAccess(gh, 'acme/web')).toEqual({ writable: false, reason: 'rejected' });
+  });
+
+  it('reports a rejection when the token is not accepted at all', async () => {
+    route(blobs, 'POST', () => ({ message: 'Bad credentials' }), 401);
+    expect(await checkWriteAccess(gh, 'acme/web')).toEqual({ writable: false, reason: 'rejected' });
+  });
+
+  it('reports a rejection when the repository is hidden rather than refused', async () => {
+    route(blobs, 'POST', () => ({ message: 'Not Found' }), 404);
+    expect(await checkWriteAccess(gh, 'acme/web')).toEqual({ writable: false, reason: 'rejected' });
+  });
+
+  // A broken API is not evidence about a token. Reading it as one would stop
+  // runs whose credentials are fine — the mirror image of the all-clear.
+  it('does not call a server error a rejection', async () => {
+    route(blobs, 'POST', () => ({ message: 'Server Error' }), 500);
+    const access = await checkWriteAccess(gh, 'acme/web');
+    expect(access).toMatchObject({ writable: false, reason: 'unknown' });
+  });
+
+  it('does not call an unreachable API a rejection', async () => {
+    vi.stubGlobal('fetch', async () => { throw new TypeError('fetch failed'); });
+    const access = await checkWriteAccess(gh, 'acme/web');
+    expect(access).toMatchObject({ writable: false, reason: 'unknown', detail: 'fetch failed' });
+  });
+});
+
+describe('cannotPublishHint', () => {
+  afterEach(() => { delete process.env.GITHUB_ACTIONS; });
+
+  it('names the workflow permission inside a runner, where gh auth login is not an option', () => {
+    process.env.GITHUB_ACTIONS = 'true';
+    const hint = cannotPublishHint('acme/web');
+    expect(hint).toContain('permissions: contents: write');
+    expect(hint).not.toContain('gh auth login');
+  });
+
+  it('names the token outside a runner, where the workflow file is not the problem', () => {
+    const hint = cannotPublishHint('acme/web');
+    expect(hint).toContain('gh auth login');
+    expect(hint).toContain('acme/web');
+    expect(hint).not.toContain('permissions:');
+  });
+
+  // AGENTS.md: a NeedsHumanError carries a single actionable sentence.
+  it('is one sentence either way', () => {
+    for (const inActions of [true, false]) {
+      if (inActions) process.env.GITHUB_ACTIONS = 'true'; else delete process.env.GITHUB_ACTIONS;
+      const hint = cannotPublishHint('acme/web');
+      expect(hint.match(/\.(\s|$)/g) ?? []).toHaveLength(1);
+      expect(hint.trimEnd().endsWith('.')).toBe(true);
+    }
   });
 });

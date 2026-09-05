@@ -64,6 +64,65 @@ export class GitHub {
   }
 }
 
+/** What one write attempt established about this token's access to a repository. */
+export type WriteAccess =
+  /** The token wrote an object. It may still be refused a ref by a ruleset. */
+  | { writable: true }
+  /** GitHub refused the write. Nothing this run publishes will land. */
+  | { writable: false; reason: 'rejected' }
+  /** Nobody answered, or answered something that is not about access. */
+  | { writable: false; reason: 'unknown'; detail: string };
+
+/**
+ * Can this token write to `ownerRepo`?
+ *
+ * `getToken()` checks that a token exists, which is a different question. A
+ * GitHub Actions job that maps `secrets.GITHUB_TOKEN` gets one that reads
+ * everything this tool reads and writes nothing: measured on this repository,
+ * `GET /repos/juangadm/pre-post` answers 200 with `permissions.push: false`
+ * and `POST .../git/blobs` answers 403. Those reads are the ones `pr` makes
+ * before it captures, so without this the run spends its screenshots first and
+ * discovers the refusal after.
+ *
+ * The probe is the first write `publishAssets` makes, on the one piece of
+ * content that cannot add anything: the empty blob already exists in every
+ * repository, so a successful call stores nothing new. A read cannot stand in
+ * for it — `permissions.push` describes the account's access to the repository,
+ * not the scopes the token carries, so it can report `true` for a credential
+ * the write still refuses. That is the confident all-clear this check exists to
+ * avoid, which is why it writes.
+ *
+ * What it proves is bounded: the token may write objects. Creating the assets
+ * *ref* is a separate permission a ruleset can refuse, so `writable: true` is
+ * "not this failure", never "the publish will work".
+ */
+export async function checkWriteAccess(gh: GitHub, ownerRepo: string): Promise<WriteAccess> {
+  try {
+    await gh.request('POST', `/repos/${ownerRepo}/git/blobs`, { content: '', encoding: 'utf-8' });
+    return { writable: true };
+  } catch (err) {
+    // 401/403 arrive as NeedsHumanError from `request`; a repository an
+    // installation cannot write is often hidden as 404 rather than refused.
+    if (err instanceof NeedsHumanError) return { writable: false, reason: 'rejected' };
+    if (err instanceof GitHubError) {
+      if (err.status === 404) return { writable: false, reason: 'rejected' };
+      return { writable: false, reason: 'unknown', detail: `GitHub answered ${err.status}` };
+    }
+    return { writable: false, reason: 'unknown', detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * The one thing to do about a token that cannot publish. Inside a runner
+ * `gh auth login` is not something anyone can do, and the workflow file is;
+ * outside one the reverse holds, so the sentence follows the environment.
+ */
+export function cannotPublishHint(ownerRepo: string): string {
+  return process.env.GITHUB_ACTIONS === 'true'
+    ? `This workflow's token cannot write to ${ownerRepo}, so the screenshots would have nowhere to go: add "permissions: contents: write" to the job and re-run.`
+    : `This token cannot write to ${ownerRepo}, so the screenshots would have nowhere to go: run gh auth login as someone with write access, or set GH_TOKEN to a token carrying repo scope.`;
+}
+
 export interface PullRequestRef {
   number: number;
   html_url: string;
