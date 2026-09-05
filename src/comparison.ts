@@ -52,6 +52,8 @@ export interface ResolveContext {
   /** Local dev server URL, if one is already running. */
   devServer: Promise<string | null>;
   probe: (url: string) => Promise<ProbeResult>;
+  /** The commit detection compared against, when it resolved one. */
+  baseSha?: string;
   /** Skip building the base commit locally. */
   allowLocalBaseline?: boolean;
   /** Injectable for tests; defaults to a real git worktree + dev server. */
@@ -152,7 +154,7 @@ async function localPair(ctx: ResolveContext): Promise<Comparison> {
 
   // git knows what this branch forked from, so a baseline does not depend on a
   // PR existing yet — this often runs before one is opened.
-  const baseSha = ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
+  const baseSha = ctx.pr?.base.sha ?? ctx.baseSha ?? mergeBase(ctx.repoRoot) ?? undefined;
   const baseline = ctx.allowLocalBaseline === false || !baseSha
     ? null
     : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log });

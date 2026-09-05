@@ -17,7 +17,7 @@ import { detectAppRouterRoutes, detectPagesRouterRoutes } from './routes/nextjs.
 import { detectGenericRoutes } from './routes/generic.js';
 import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
-import { changedFiles as gitChangedFiles, repoRoot as gitRepoRoot } from './git.js';
+import { BaseResolution, changedFiles as gitChangedFiles, repoRoot as gitRepoRoot, requireBase } from './git.js';
 import { devScript, hasDependency, readPackage } from './pkg.js';
 import { CONFIG_DEFAULTS, CONFIG_FILENAME } from './config.js';
 
@@ -248,8 +248,12 @@ export function resolveSample(route: string, samples: Record<string, string> = {
 // ============================================================
 
 export function getChangedFiles(diffTarget?: string, cwd = process.cwd()): string[] {
+  // requireBase throws NeedsHumanError when the base cannot be established;
+  // that has to travel, because the alternative is an empty list that reads
+  // as "nothing changed".
+  const target = diffTarget ?? requireBase(cwd).sha;
   try {
-    return gitChangedFiles(cwd, diffTarget);
+    return gitChangedFiles(cwd, target);
   } catch {
     return [];
   }
@@ -272,6 +276,8 @@ export interface RepoRouteDetection {
   routes: DetectedRoute[];
   /** Dynamic routes with no sample URL configured */
   skippedDynamic: string[];
+  /** What the working tree was compared with; null when files were supplied. */
+  base: BaseResolution | null;
   /** Milliseconds spent */
   durationMs: number;
 }
@@ -302,7 +308,14 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
   const maxRoutes = options.maxRoutes ?? config.maxRoutes ?? CONFIG_DEFAULTS.maxRoutes;
 
   const ignore = (config.ignore || []).map(p => p.replace(/^\.?\//, ''));
-  const allChanged = (options.changedFiles ?? gitChangedFiles(root, options.diffTarget))
+  // Establish the base before reading the diff. Getting this wrong is silent:
+  // diffing HEAD reports only uncommitted work, so a branch whose changes are
+  // committed — every branch in a shallow CI or sandbox checkout — comes back
+  // empty and the run reports no visual changes.
+  const base = options.changedFiles
+    ? null
+    : requireBase(root, { explicit: options.diffTarget, log: options.log });
+  const allChanged = (options.changedFiles ?? gitChangedFiles(root, base!.sha))
     // Our own config file is written mid-run; it never affects which routes changed.
     .filter(f => f !== CONFIG_FILENAME)
     .filter(f => !ignore.some(prefix => f === prefix || f.startsWith(prefix.replace(/\/?$/, '/'))));
@@ -426,6 +439,7 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     changedFiles: allChanged,
     routes: rankAndCap(resolved, maxRoutes, options.log),
     skippedDynamic: Array.from(skippedDynamic),
+    base,
     durationMs: Date.now() - started,
   };
 }
