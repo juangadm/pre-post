@@ -13,6 +13,7 @@ import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
 import { signInHint } from '../landing.js';
+import { differentSitesHint, looksLikeDifferentSites } from '../sameness.js';
 import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
@@ -192,6 +193,15 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   if (walled.length === outcomes.length && walled.length > 0) {
     const { side, vercel } = walled[0].blocked!;
     throw new NeedsHumanError(signInHint(side === 'before' ? comparison.before.url : comparison.after.url, vercel));
+  }
+
+  // The general case of the same failure: both sides answered, neither is a
+  // wall, and they are simply not the same site — a baseline pointed at the
+  // wrong host, or a production URL that has moved. The diff between two
+  // different sites is a number, and publishing it as "visual changes" for
+  // this branch is the confident-and-wrong answer this tool exists to avoid.
+  if (looksLikeDifferentSites(outcomes.filter(o => o.status !== 'error'))) {
+    throw new NeedsHumanError(differentSitesHint(comparison.before.url, comparison.before.detail, comparison.after.url));
   }
 
   // --- Publish -------------------------------------------------------------------

@@ -574,6 +574,10 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       timeout: 20_000,
     });
 
+    // After the screenshot, never before it: reading the page must not be able
+    // to influence the pixels the run is about to compare.
+    const text = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
+
     return {
       image,
       viewport: options.viewport,
@@ -581,6 +585,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       status,
       finalUrl,
       title,
+      text,
       vercel,
       selector: options.selector,
       durationMs: Date.now() - started,
