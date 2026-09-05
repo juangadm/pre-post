@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, freePort, onPath, resolvePackageManager, serveBaseCommit, servableDir } from '../../src/baseline';
 import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
@@ -39,6 +39,64 @@ describe('detectPackageManager', () => {
     write('pnpmapp/pnpm-lock.yaml', '');
     expect(detectPackageManager(path.join(dir, 'npmapp')).run('dev', ['--port', '1'])).toEqual(['run', 'dev', '--', '--port', '1']);
     expect(detectPackageManager(path.join(dir, 'pnpmapp')).run('dev', ['--port', '1'])).toEqual(['run', 'dev', '--port', '1']);
+  });
+
+  it('lets the packageManager field beat a stale lockfile', () => {
+    write('declared/package-lock.json', '');
+    write('declared/package.json', JSON.stringify({ packageManager: 'pnpm@10.33.0' }));
+    expect(detectPackageManager(path.join(dir, 'declared')).bin).toBe('pnpm');
+  });
+
+  it('ignores a packageManager field naming something unknown', () => {
+    write('odd/yarn.lock', '');
+    write('odd/package.json', JSON.stringify({ packageManager: 'cnpm@1.0.0' }));
+    expect(detectPackageManager(path.join(dir, 'odd')).bin).toBe('yarn');
+  });
+});
+
+describe('onPath', () => {
+  it('finds a binary that is there and not one that is not', () => {
+    const bin = path.join(dir, 'fakebin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'somepm'), '');
+    expect(onPath('somepm', { PATH: bin })).toBe(true);
+    expect(onPath('otherpm', { PATH: bin })).toBe(false);
+  });
+
+  it('is not fooled by a directory of the same name', () => {
+    const bin = path.join(dir, 'dirbin');
+    fs.mkdirSync(path.join(bin, 'pnpm'), { recursive: true });
+    expect(onPath('pnpm', { PATH: bin })).toBe(false);
+  });
+
+  it('says no when PATH is empty', () => {
+    expect(onPath('npm', { PATH: '' })).toBe(false);
+  });
+});
+
+describe('resolvePackageManager', () => {
+  const app = () => path.join(dir, 'resolve');
+  const setup = () => { write('resolve/pnpm-lock.yaml', ''); return app(); };
+
+  it('runs what the repo declares when it is installed', () => {
+    const choice = resolvePackageManager(setup(), undefined, () => true);
+    expect(choice.pm.bin).toBe('pnpm');
+    expect(choice.declared).toBe('pnpm');
+    expect(choice.available).toBe(true);
+  });
+
+  // The reported failure: a repo declaring pnpm, on a machine without it.
+  it('falls back to npm and remembers what was asked for', () => {
+    const choice = resolvePackageManager(setup(), undefined, bin => bin === 'npm');
+    expect(choice.pm.bin).toBe('npm');
+    expect(choice.declared).toBe('pnpm');
+    expect(choice.available).toBe(true);
+  });
+
+  it('reports that nothing can install when npm is missing too', () => {
+    const choice = resolvePackageManager(setup(), undefined, () => false);
+    expect(choice.available).toBe(false);
+    expect(choice.declared).toBe('pnpm');
   });
 });
 
