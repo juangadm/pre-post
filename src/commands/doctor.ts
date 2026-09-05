@@ -10,7 +10,7 @@ import { ensureBrowser, scanDevServers } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
 import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
-import { cannotPublishHint, checkWriteAccess, getToken, GitHub } from '../github.js';
+import { cannotPublishHint, checkWriteAccess, findToken, GitHub } from '../github.js';
 import { closeBrowser } from '../browser.js';
 
 export interface DoctorCheck {
@@ -74,10 +74,10 @@ export function repoIdentityCheck(root: string): DoctorCheck {
  * carry on, so that one is advisory.
  */
 async function githubCheck(cwd?: string): Promise<DoctorCheck> {
-  const token = getToken();
+  const found = findToken();
   // Required because `pr` calls requireToken() on any run that is not a dry
   // run, so without one the command stops before it captures anything.
-  if (!token) return { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true };
+  if (!found) return { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true };
   let ownerRepo: string;
   try {
     ownerRepo = resolveOwnerRepo(repoRoot(cwd));
@@ -85,11 +85,11 @@ async function githubCheck(cwd?: string): Promise<DoctorCheck> {
     // There is nothing to ask the API about. The `repo` check below carries
     // that as the required failure, so this one only records what went
     // unchecked rather than reporting the same problem twice.
-    return { name: 'github', ok: false, detail: 'token found, but no repository to check it against' };
+    return { name: 'github', ok: false, detail: `${found.source} found, but no repository to check it against` };
   }
-  const access = await checkWriteAccess(new GitHub(token), ownerRepo);
+  const access = await checkWriteAccess(new GitHub(found.token), ownerRepo);
   if (access.writable) return { name: 'github', ok: true, detail: `token can publish to ${ownerRepo}`, required: true };
-  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo), required: true };
+  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo, found.source), required: true };
   return { name: 'github', ok: false, detail: `could not reach GitHub to check the token (${access.detail})` };
 }
 

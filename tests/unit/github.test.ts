@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, checkWriteAccess, cannotPublishHint } from '../../src/github';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, checkWriteAccess, cannotPublishHint, findToken } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
 
 type Call = { method: string; path: string; body?: any };
@@ -213,34 +213,74 @@ describe('checkWriteAccess', () => {
   });
 });
 
+describe('findToken', () => {
+  const saved = { gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN };
+  afterEach(() => {
+    for (const [k, v] of [['GH_TOKEN', saved.gh], ['GITHUB_TOKEN', saved.github]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+
+  it('prefers GH_TOKEN and says so', () => {
+    process.env.GH_TOKEN = 'a';
+    process.env.GITHUB_TOKEN = 'b';
+    expect(findToken()).toEqual({ token: 'a', source: 'GH_TOKEN' });
+  });
+
+  it('falls back to GITHUB_TOKEN', () => {
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN = 'b';
+    expect(findToken()).toEqual({ token: 'b', source: 'GITHUB_TOKEN' });
+  });
+});
+
 describe('cannotPublishHint', () => {
   afterEach(() => { delete process.env.GITHUB_ACTIONS; });
 
-  // Both permissions, not just the one the check tested: a permissions block
-  // sets every scope it omits to none, so naming contents alone would leave a
-  // token that uploads the images and is then refused the PR description.
-  it('names the workflow permissions inside a runner, where gh auth login is not an option', () => {
+  it('names the workflow permissions when the run is on the job\'s own GITHUB_TOKEN', () => {
     process.env.GITHUB_ACTIONS = 'true';
-    const hint = cannotPublishHint('acme/web');
+    const hint = cannotPublishHint('acme/web', 'GITHUB_TOKEN');
     expect(hint).toContain('contents: write');
+    // Both, not just the one the check tested: a permissions block sets every
+    // scope it omits to none, so naming contents alone would leave a token that
+    // uploads the images and is then refused the PR description.
     expect(hint).toContain('pull-requests: write');
     expect(hint).not.toContain('gh auth login');
   });
 
-  it('names the token outside a runner, where the workflow file is not the problem', () => {
-    const hint = cannotPublishHint('acme/web');
+  // Rewriting the job's permissions changes the GITHUB_TOKEN this run never
+  // reaches: GH_TOKEN wins in findToken(), so it is the one to fix.
+  it('names GH_TOKEN, not the permissions block, when a workflow sets one', () => {
+    process.env.GITHUB_ACTIONS = 'true';
+    const hint = cannotPublishHint('acme/web', 'GH_TOKEN');
+    expect(hint).toContain('GH_TOKEN');
+    expect(hint).toContain('unset it');
+  });
+
+  it('names the gh CLI login outside a runner', () => {
+    const hint = cannotPublishHint('acme/web', 'gh');
     expect(hint).toContain('gh auth login');
     expect(hint).toContain('acme/web');
     expect(hint).not.toContain('permissions');
   });
 
+  // An env var shadows the gh CLI, so "run gh auth login" is advice that cannot
+  // work while it is set — the same mistake as the permissions block above.
+  it('does not send someone to gh auth login while an env var is shadowing it', () => {
+    const hint = cannotPublishHint('acme/web', 'GH_TOKEN');
+    expect(hint).toContain('GH_TOKEN');
+    expect(hint).toContain('unset it');
+  });
+
   // AGENTS.md: a NeedsHumanError carries a single actionable sentence.
-  it('is one sentence either way', () => {
+  it('is one sentence for every source, in and out of a runner', () => {
     for (const inActions of [true, false]) {
       if (inActions) process.env.GITHUB_ACTIONS = 'true'; else delete process.env.GITHUB_ACTIONS;
-      const hint = cannotPublishHint('acme/web');
-      expect(hint.match(/\.(\s|$)/g) ?? []).toHaveLength(1);
-      expect(hint.trimEnd().endsWith('.')).toBe(true);
+      for (const source of ['GH_TOKEN', 'GITHUB_TOKEN', 'gh'] as const) {
+        const hint = cannotPublishHint('acme/web', source);
+        expect(hint.match(/\.(\s|$)/g) ?? []).toHaveLength(1);
+        expect(hint.trimEnd().endsWith('.')).toBe(true);
+      }
     }
   });
 });

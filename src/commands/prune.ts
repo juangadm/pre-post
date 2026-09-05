@@ -9,6 +9,6 @@ import { GitHub, pruneAssets, PruneResult, requireToken } from '../github.js';
 export async function runPrune(opts: { cwd?: string; days?: number; dryRun?: boolean } = {}): Promise<PruneResult> {
   const root = repoRoot(opts.cwd);
   const settings = resolveSettings(loadConfig(root), { pruneDays: opts.days });
-  const gh = new GitHub(requireToken('prune screenshots'));
+  const gh = new GitHub(requireToken('prune screenshots').token);
   return pruneAssets(gh, resolveOwnerRepo(root), settings.assetsBranch, settings.pruneDays, opts.dryRun);
 }
