@@ -4,6 +4,7 @@
  */
 
 import { PrRunResult, RouteCaptureOutcome } from './types.js';
+import { describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
@@ -51,12 +52,25 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     for (const o of changedHere) {
       const u = o.urls ?? o.files!;
       lines.push(`### ${code(route)} — ${viewportLabel(o.viewport)}`, '');
+      // A move repaints everything below it, so the percentage says nothing a
+      // reviewer can use. Say how far it moved instead, and whether the branch
+      // changed anything else.
+      if (o.shift) {
+        lines.push(o.shift.otherChange
+          ? `Content ${describeShift(o.shift.px)}. The pair below is aligned on that move, so it shows what changed besides it.`
+          : `Content ${describeShift(o.shift.px)}. Nothing else changed.`, '');
+      }
+      const cropped = Boolean(u.cropBefore && u.cropAfter);
       const pre = u.cropBefore ?? u.before;
       const post = u.cropAfter ?? u.after;
       lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
-      lines.push('<details>', `<summary>Full page</summary>`, '');
-      lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
-      lines.push('</details>', '');
+      // Without a crop the pair above is already the full page; repeating it
+      // under a fold gives a reviewer two more identical images to scroll past.
+      if (cropped) {
+        lines.push('<details>', `<summary>Full page</summary>`, '');
+        lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
+        lines.push('</details>', '');
+      }
     }
   }
 

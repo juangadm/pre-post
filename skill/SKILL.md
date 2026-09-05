@@ -52,8 +52,8 @@ The visual changes go at the **top of the PR description**, in a delimited block
 re-runs replace in place — the author's own text is never touched. If the PR cannot be
 edited (a fork, a read-only token) it falls back to a single sticky comment.
 
-Each changed route shows **Pre beside Post**, per viewport, with the full pages folded into
-a `<details>`. That pairing is the comparison; there is no diff overlay and no percentage.
+Each changed route shows **Pre beside Post**, per viewport, full pages in a `<details>`. No
+overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written.
 
 ## Rules
 

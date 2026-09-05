@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { AuthOptions, RouteCaptureOutcome, ViewportSize } from './types.js';
+import { AuthOptions, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
@@ -66,6 +66,12 @@ export function isChanged(
   if (diff.changedPixels === 0) return false;
   return diff.changedPixels / (opts.scale * opts.scale) >= opts.minChangedArea
     || diff.changedRatio >= opts.threshold;
+}
+
+/** "shifted down 48px" — the direction spelled out, because the sign is not. */
+export function describeShift(px: number): string {
+  const rounded = Math.round(Math.abs(px));
+  return `shifted ${px < 0 ? 'up' : 'down'} ${rounded}px`;
 }
 
 function describeError(err: unknown, side: 'before' | 'after', url: string): string {
@@ -134,12 +140,26 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
 
   const changed = isChanged(diff, opts);
-  opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${(diff.changedRatio * 100).toFixed(2)}%, ${Date.now() - started}ms)`);
+  // A shift is measured in device pixels; everything a reader sees is in CSS
+  // pixels. Whether anything changed besides the move is judged by the same
+  // rule as any other capture, against the aligned numbers.
+  const shift: RouteShift | undefined = diff.shift
+    ? {
+        px: diff.shift.dy / opts.scale,
+        otherChange: isChanged(
+          { changedPixels: diff.shift.alignedChangedPixels, changedRatio: diff.shift.alignedChangedRatio },
+          opts,
+        ),
+      }
+    : undefined;
+  const shiftNote = shift ? `${describeShift(shift.px)}, ` : '';
+  opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${shiftNote}${(diff.changedRatio * 100).toFixed(2)}%, ${Date.now() - started}ms)`);
   return {
     ...base,
     status: changed ? 'changed' : 'unchanged',
     changedRatio: diff.changedRatio,
     sizeChanged: diff.sizeChanged,
+    shift,
     files: {
       before: outputs.before,
       after: outputs.after,

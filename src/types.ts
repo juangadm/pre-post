@@ -103,6 +103,24 @@ export interface DiffResult {
   highlight?: Buffer;
   /** Crops of before/after around the changed region, when the change is localized */
   crop?: { before: Buffer; after: Buffer; region: DiffRegion };
+  /** Vertical displacement explaining most of the difference, when one does */
+  shift?: ShiftSummary;
+}
+
+/**
+ * A layout shift: Post content moved down (or up) by a constant amount from a
+ * given row, and what remains different once the two sides are put back in
+ * register. Plain numbers, so it survives the worker-thread boundary.
+ */
+export interface ShiftSummary {
+  /** Device pixels Post content moved down by; negative means up. */
+  dy: number;
+  /** First row, in Pre coordinates, that moved. Rows above it stayed put. */
+  from: number;
+  /** Changed pixels once Post is aligned with Pre. */
+  alignedChangedPixels: number;
+  /** Aligned changed pixels as a fraction of the canvas. */
+  alignedChangedRatio: number;
 }
 
 // ============================================================
@@ -198,6 +216,15 @@ export interface RouteCaptureOutcome {
   durationMs?: number;
   /** Extra context, e.g. "new page (404 on production)" */
   note?: string;
+  /** Vertical displacement of Post against Pre, when one explains the change */
+  shift?: RouteShift;
+}
+
+export interface RouteShift {
+  /** CSS pixels the content moved down by; negative means up. */
+  px: number;
+  /** Whether anything changed beyond the move, judged by the same rule as any other capture. */
+  otherChange: boolean;
 }
 
 export interface PrRunResult {

@@ -17,12 +17,6 @@ comment, pixel diff with crops.
 
 ## Follow-on from the trustworthiness pass
 
-- [ ] Report layout shift as shift, not a repaint. A padding change near the top
-      of a page moves everything below it, so the diff reads 60-90% for a change
-      a designer calls "slightly roomier" — and CROP_MAX_RATIO drops the crop
-      above 50%, so the most dramatic result gives the least useful output.
-      Detect vertical displacement, report "content shifted down Npx", and diff
-      the aligned images.
 - [ ] A pre-post-testbed repo for the live-PR matrix (import-graph fan-out,
       layout file, new route, deleted route, maxRoutes cap, dynamic route). Not
       this repo: every live run writes to pre-post-assets permanently, and

@@ -8,7 +8,8 @@
 
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import { DiffRegion, DiffResult } from './types.js';
+import { DiffRegion, DiffResult, ShiftSummary } from './types.js';
+import { alignBefore, detectShift, insertedBand } from './shift.js';
 
 export interface DiffOptions {
   /** Padding around the change region for crops, in device pixels. Default 80 */
@@ -37,6 +38,25 @@ const PAD_COLOR: [number, number, number] = [255, 255, 255];
 const PIXEL_THRESHOLD = 0.1;
 /** No crop when the change covers more than this fraction of the canvas. */
 const CROP_MAX_RATIO = 0.5;
+/**
+ * A shift is only worth reporting when putting the two sides back in register
+ * accounts for most of the difference. This is the whole test: an offset that
+ * does not remove the pixels it claims to explain is not the story.
+ *
+ * Judged over the rows Pre and Post share. Content Post gained is excluded
+ * from both sides of the comparison, because an insertion is the reason for
+ * the move rather than evidence against it: a page pushed down by a banner
+ * would otherwise be refused for the size of the banner.
+ *
+ * Measured on the shift ladder, as a share of the changed pixels over those
+ * shared rows: every true shift leaves 0.23 or less, and the horizontal
+ * reflow — the one case no vertical offset explains — leaves 0.45. This sits
+ * in the empty band between, nearer the real changes so a genuine shift
+ * carrying a larger change still reads as one. Erring low is deliberate:
+ * rejecting a shift falls back to the old behaviour, while claiming one that
+ * isn't there tells a reviewer something untrue.
+ */
+const MAX_ALIGNED_SHARE = 0.3;
 
 function padTo(src: PNG, width: number, height: number, bg: [number, number, number]): PNG {
   if (src.width === width && src.height === height) return src;
@@ -83,6 +103,20 @@ export function downscale(src: PNG, factor: number): PNG {
 
 export function decodePng(buffer: Buffer): PNG {
   return PNG.sync.read(buffer);
+}
+
+/** Diff-coloured pixels within a row range, for weighing one band against another. */
+function countChangedRows(diff: PNG, y0: number, y1: number): number {
+  const { width, data } = diff;
+  let count = 0;
+  for (let y = Math.max(0, y0); y < Math.min(diff.height, y1); y++) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4;
+      if (data[i] === DIFF_COLOR[0] && data[i + 1] === DIFF_COLOR[1] && data[i + 2] === DIFF_COLOR[2]) count++;
+    }
+  }
+  return count;
 }
 
 /** Bounding box of pixels painted with the diff color. */
@@ -159,6 +193,47 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     diffMask: false,
   });
 
+  // A vertical shift repaints everything below where it starts, so the raw
+  // bounding box covers most of the page and the crop guards below refuse to
+  // zoom in. Comparing Post put back in register with Pre isolates the change
+  // the branch actually made, which is small enough to crop and to describe.
+  let shift: ShiftSummary | undefined;
+  let alignedBefore: PNG | undefined;
+  let alignedDiff: PNG | undefined;
+  if (changedPixels > 0) {
+    const candidate = detectShift(before, after);
+    if (candidate) {
+      const aligned = alignBefore(before, candidate, bg);
+      const diffOfAligned = new PNG({ width, height });
+      const alignedChangedPixels = pixelmatch(aligned.data, after.data, diffOfAligned.data, width, height, {
+        threshold: PIXEL_THRESHOLD,
+        includeAA: false,
+        alpha: 0.5,
+        diffColor: DIFF_COLOR,
+        aaColor: AA_COLOR,
+        diffMask: false,
+      });
+      // Weigh the offset only on rows both sides have. Whatever Post put in
+      // the gap is new content, and it still counts as a change -- it just
+      // does not get a vote on whether the move happened.
+      const gap = insertedBand(candidate);
+      const insertedChanged = gap ? countChangedRows(diffOfAligned, gap.y, gap.y + gap.height) : 0;
+      const rawInGap = gap ? countChangedRows(diff, gap.y, gap.y + gap.height) : 0;
+      const mappedChanged = alignedChangedPixels - insertedChanged;
+      const rawMapped = changedPixels - rawInGap;
+      if (mappedChanged <= rawMapped * MAX_ALIGNED_SHARE) {
+        shift = {
+          dy: candidate.dy,
+          from: candidate.from,
+          alignedChangedPixels,
+          alignedChangedRatio: alignedChangedPixels / (width * height),
+        };
+        alignedBefore = aligned;
+        alignedDiff = diffOfAligned;
+      }
+    }
+  }
+
   const region = changedPixels > 0 ? boundingBox(diff) : null;
   const result: DiffResult = {
     changedRatio: changedPixels / (width * height),
@@ -171,13 +246,19 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     highlight: region && options.highlight !== false
       ? encode(downscale(diff, options.highlightDownscale ?? 1))
       : undefined,
+    shift,
   };
 
-  if (region) {
-    const area = region.width * region.height;
+  // With a shift, crop what is left once the move is undone; without one, crop
+  // the change itself. A pure shift leaves nothing over and gets no crop: the
+  // sentence is the report, and the full pages are already published.
+  const cropFrom = alignedBefore ?? before;
+  const cropRegion = alignedDiff ? boundingBox(alignedDiff) : region;
+  if (cropRegion) {
+    const area = cropRegion.width * cropRegion.height;
     if (area / (width * height) <= CROP_MAX_RATIO) {
       const expanded = expandRegion(
-        region,
+        cropRegion,
         { width, height },
         options.padding ?? 80,
         options.minCrop ?? { width: 800, height: 400 },
@@ -185,7 +266,7 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
       // Only crop when it meaningfully zooms in.
       if (expanded.width * expanded.height < width * height * 0.8) {
         result.crop = {
-          before: crop(before, expanded),
+          before: crop(cropFrom, expanded),
           after: crop(after, expanded),
           region: expanded,
         };
