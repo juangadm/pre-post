@@ -1,8 +1,10 @@
 /**
  * Browser automation via Playwright (playwright-core + Chromium headless shell).
  *
- * One browser per process, a fresh context per capture, and a small page pool. Captures are deterministic: fixed clock, reduced motion,
- * animations finished, caret hidden, fonts and images settled, layout stable.
+ * One browser per process, a fresh context per capture, and a small page pool.
+ * Captures are deterministic: the page's own timeline is held still and
+ * advanced by a fixed budget, reduced motion, animations finished, caret
+ * hidden, fonts and images settled, layout stable.
  */
 
 import { chromium, Browser, BrowserContext, Page } from 'playwright-core';
@@ -18,6 +20,22 @@ const require = createRequire(import.meta.url);
 
 /** Every capture sees the same wall clock, so dates and "x minutes ago" never drift. */
 export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
+
+/**
+ * How much of the page's own timeline to run before capturing.
+ *
+ * The clock is frozen while the page loads, so this is the *only* time a
+ * timer-driven animation gets, and it is the same on both sides of a
+ * comparison however fast each host answered. Long enough for entrance
+ * animations to land, short enough to stay cheap.
+ */
+export const TIMELINE_BUDGET_MS = 600;
+
+/** One animation frame of that budget. */
+const FRAME_MS = 16;
+
+/** Real-time gap between layout-stability polls (page timers are frozen). */
+const STABILITY_POLL_MS = 30;
 
 /** Hosts that are always served from this machine. */
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
@@ -268,12 +286,15 @@ const INIT_SCRIPT = `
 `;
 
 /**
- * A context per capture, not one shared per viewport.
+ * A context per capture, not per viewport.
  *
- * Pages that share a context share more than the viewport: storage, caches and
- * anything else a previous capture left behind. The two sides of a comparison
- * have to start from the same state to be comparable, so each capture gets its
- * own.
+ * Playwright's clock belongs to the browser context and is replayed into every
+ * page opened in it, so pages that share a context do not share a starting
+ * point: the second page inherits the timeline the first one ran. An animated
+ * page then lands on a different frame depending on how many captures came
+ * before it. One context per capture makes every page start from the same
+ * paused instant — and keeps storage and caches from leaking between the two
+ * sides of a comparison.
  */
 async function createContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
   const b = await getBrowser();
@@ -289,7 +310,14 @@ async function createContext(viewport: ViewportSize, scale: number, auth?: AuthO
     extraHTTPHeaders: auth?.headers,
     bypassCSP: true,
   });
-  await ctx.clock.setFixedTime(FIXED_TIME);
+  // Fake the page's timers and hold them still. `setFixedTime` would only pin
+  // what the page *reads* from Date.now(); setTimeout, setInterval and
+  // requestAnimationFrame would keep firing, so a timer-driven animation would
+  // land on whatever frame the network happened to deliver. With the clock
+  // installed and paused, the page's timeline does not move until
+  // `advanceTimeline` moves it — by the same amount on both sides.
+  await ctx.clock.install({ time: FIXED_TIME });
+  await ctx.clock.pauseAt(FIXED_TIME);
   await ctx.addInitScript(INIT_SCRIPT);
   if (auth?.cookies?.length) {
     await ctx.addCookies(auth.cookies.map(c => ({
@@ -308,44 +336,72 @@ async function createContext(viewport: ViewportSize, scale: number, auth?: AuthO
 // ============================================================
 
 /**
- * In-page settle: fonts loaded, images decoded, and layout stable across
- * consecutive animation frames. Bounded by `timeout` ms.
+ * Wait for everything that arrives on the *real* clock: fonts, images, the
+ * network, and the layout work that hydration does. The page's own timers stay
+ * frozen throughout, so waiting longer here — on a slow host, a cold cache, a
+ * busy machine — never advances an animation. Bounded by `timeout` ms.
  */
 async function settlePage(page: Page, timeout: number, options: { network?: boolean } = {}): Promise<void> {
-  const settled = page.evaluate(async (timeoutMs: number) => {
-    const start = performance.now();
-    const remaining = () => Math.max(0, timeoutMs - (performance.now() - start));
-    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-    const frame = () => new Promise<void>(r => requestAnimationFrame(() => r()));
-    const withCap = <T,>(p: Promise<T>, ms: number) => Promise.race([p, sleep(ms)]);
+  const deadline = Date.now() + timeout;
+  const left = () => Math.max(0, deadline - Date.now());
 
-    if (document.fonts?.ready) await withCap(document.fonts.ready, Math.min(2500, remaining()));
-
+  // Fonts and images resolve off the loading pipeline, not off page timers.
+  await withDeadline(page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
     const pending = Array.from(document.images).filter(img => !img.complete);
-    if (pending.length) {
-      await withCap(
-        Promise.allSettled(pending.map(img => img.decode().catch(() => undefined))),
-        Math.min(3000, remaining()),
-      );
-    }
+    if (pending.length) await Promise.allSettled(pending.map(img => img.decode().catch(() => undefined)));
+  }), Math.min(3500, left()));
 
-    const signature = () => {
-      const de = document.documentElement;
-      return `${de.scrollHeight}:${de.scrollWidth}:${document.body?.childElementCount ?? 0}:${document.getElementsByTagName('*').length}`;
-    };
-    let last = signature();
-    let stable = 0;
-    while (stable < 2 && remaining() > 0) {
-      await frame();
-      await frame();
-      const now = signature();
-      if (now === last) stable++;
-      else { stable = 0; last = now; }
-    }
-  }, timeout);
+  if (options.network !== false) await waitForNetworkQuiet(page, 150, Math.min(left(), 2500));
 
-  const quiet = options.network === false ? Promise.resolve() : waitForNetworkQuiet(page, 150, Math.min(timeout, 2500));
-  await Promise.all([settled, quiet]);
+  await waitForStableLayout(page, left());
+}
+
+/** Resolve when `p` settles or `ms` elapses, whichever comes first. */
+async function withDeadline<T>(p: Promise<T>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    p.catch(() => undefined),
+    new Promise<void>(resolve => { timer = setTimeout(resolve, ms); }),
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
+/** Cheap description of the page's structure; changes while it is still building itself. */
+const LAYOUT_SIGNATURE = `(() => {
+  const de = document.documentElement;
+  return de.scrollHeight + ':' + de.scrollWidth + ':' + (document.body ? document.body.childElementCount : 0) + ':' + document.getElementsByTagName('*').length;
+})()`;
+
+/**
+ * Poll until the page stops restructuring itself. Polled from here rather than
+ * from a requestAnimationFrame loop in the page: page timers are frozen, so an
+ * in-page loop would never get a second frame.
+ */
+async function waitForStableLayout(page: Page, timeout: number): Promise<void> {
+  const deadline = Date.now() + timeout;
+  let last: string | null = null;
+  let stable = 0;
+  while (stable < 2 && Date.now() < deadline) {
+    const signature = await page.evaluate(LAYOUT_SIGNATURE).catch(() => last) as string | null;
+    if (signature !== null && signature === last) stable++;
+    else { stable = 0; last = signature; }
+    if (stable < 2) await new Promise(resolve => setTimeout(resolve, STABILITY_POLL_MS));
+  }
+}
+
+/**
+ * Run the page's frozen timeline forward by `ms`, one frame at a time, so
+ * timer- and rAF-driven animation advances the same amount on every capture.
+ *
+ * A timer callback that throws is the page's own bug, not a reason to fail the
+ * screenshot: Playwright surfaces it here, so each frame is stepped separately
+ * and an error only costs that frame.
+ */
+async function advanceTimeline(page: Page, ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += FRAME_MS) {
+    await page.clock.runFor(Math.min(FRAME_MS, ms - elapsed)).catch(() => undefined);
+  }
 }
 
 /**
@@ -403,20 +459,26 @@ function trackRequests(page: Page): void {
 /**
  * Scroll through the page once so lazy-loaded and reveal-on-scroll content is
  * rendered before a full-page capture, then return to the top.
+ *
+ * Driven from here, a step at a time: the scrolling itself is real, but the
+ * frames that let observers and rAF callbacks run come out of the frozen
+ * timeline, so two identical pages take the same path down and back.
  */
 async function primeLazyContent(page: Page, maxHeight: number): Promise<void> {
-  await page.evaluate(async (limitPx: number) => {
-    const frame = () => new Promise<void>(r => requestAnimationFrame(() => r()));
+  const positions = await page.evaluate((limitPx: number) => {
     const step = Math.max(200, window.innerHeight);
     const limit = Math.min(document.documentElement.scrollHeight, limitPx);
-    for (let y = step; y < limit + step; y += step) {
-      window.scrollTo(0, y);
-      await frame();
-      await frame();
-    }
-    window.scrollTo(0, 0);
-    await frame();
+    const ys: number[] = [];
+    for (let y = step; y < limit + step; y += step) ys.push(y);
+    return ys;
   }, maxHeight);
+
+  for (const y of positions) {
+    await page.evaluate((to: number) => window.scrollTo(0, to), y);
+    await advanceTimeline(page, FRAME_MS * 2);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await advanceTimeline(page, FRAME_MS);
 }
 
 // ============================================================
@@ -449,7 +511,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
 
     if (options.fullPage) {
       await primeLazyContent(page, maxHeight);
-      await settlePage(page, Math.min(settleTimeout, 2000), { network: false });
+      await settlePage(page, Math.min(settleTimeout, 2000));
     }
 
     if (options.selector) {
@@ -458,7 +520,18 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       await locator.first().scrollIntoViewIfNeeded();
     }
 
-    if (options.wait) await page.waitForTimeout(options.wait);
+    // The page is loaded and quiet; now give its own timeline a fixed run so
+    // whatever it animates lands on the same frame here as on the other side.
+    await advanceTimeline(page, TIMELINE_BUDGET_MS);
+    // Timers that just fired may have asked for more content; let it arrive.
+    await settlePage(page, Math.min(settleTimeout, 2000));
+
+    // `--wait` means "give this page longer": real time for anything still in
+    // flight, and the same again on the page's timeline for anything animating.
+    if (options.wait) {
+      await page.waitForTimeout(options.wait);
+      await advanceTimeline(page, options.wait);
+    }
 
     let clip: { x: number; y: number; width: number; height: number } | undefined;
     if (options.fullPage) {
