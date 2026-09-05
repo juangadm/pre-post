@@ -1,18 +1,15 @@
 # pre-post optimization plan
 
-Goal: pre-post gives a reviewer the visual answer before they read a line of the
-diff. Anyone shipping a front-end change — a PM, a marketer, a designer, an
-engineer — runs one command, on an open PR or while preparing one, and the
-before/after screenshots for every route the branch touches land at the top of the
-PR description, Pre beside Post. Nothing to scroll to, nothing pasted by hand, no
-screenshots in model context.
+Goal: see the change before you read the diff.
 
-Two properties carry the whole tool. It has to be **fast**: a run finishes while
-you are still looking at the PR — seconds, not minutes — because a tool you wait
-on is a tool you stop reaching for. And it has to **just work**: the right routes
-without configuration, identical pages reported as identical, and an honest
-account of anything it could not check. A reviewer who trusts the images stops
-opening the preview deployment; one who does not ignores the tool entirely.
+Whoever shipped it — PM, marketer, designer, engineer — runs one command, and the
+before and after for every route the branch touches sit at the top of the PR
+description, Pre beside Post. Nothing to paste, nothing to scroll to.
+
+It has to be fast and it has to be right. Fast means seconds, while you are still
+looking at the PR. Right means the routes it picked are the ones that changed,
+identical pages come back identical, and it says plainly what it could not check.
+A reviewer who trusts the pictures stops opening the preview deployment.
 
 ## 1. Where the time and tokens go today
 
