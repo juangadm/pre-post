@@ -560,10 +560,9 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       if (height > maxHeight) clip = { x: 0, y: 0, width: options.viewport.width, height: maxHeight };
     }
 
-    // Where the browser actually ended up, and what the page calls itself: a
-    // sign-in wall answers with 200 after a redirect, so the status says nothing.
+    // Where the browser actually ended up: a sign-in wall answers with 200
+    // after a redirect, so the status says nothing.
     const finalUrl = page.url();
-    const title = await page.title().catch(() => '');
 
     const image = await page.screenshot({
       type: 'png',
@@ -574,9 +573,14 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       timeout: 20_000,
     });
 
-    // After the screenshot, never before it: reading the page must not be able
-    // to influence the pixels the run is about to compare.
-    const text = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
+    // What the page calls itself, and what it says: the title recognises a
+    // sign-in wall that answered 200, the text tells a redesign of this site
+    // from a different site altogether. One round trip, and strictly after the
+    // screenshot — reading the page must not be able to influence the pixels
+    // the run is about to compare.
+    const { title, text } = await page
+      .evaluate(() => ({ title: document.title, text: document.body?.innerText ?? '' }))
+      .catch(() => ({ title: '', text: '' }));
 
     return {
       image,

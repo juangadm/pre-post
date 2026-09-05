@@ -80,17 +80,17 @@ export function onPath(bin: string, env: NodeJS.ProcessEnv = process.env): boole
     ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
     : [''];
   return dirs.some(dir => exts.some(ext => {
-    try { return fs.statSync(path.join(dir, bin + ext)).isFile(); } catch { return false; }
+    // throwIfNoEntry keeps the common case (a miss) from constructing an
+    // exception; the catch stays for the rarer EACCES/ELOOP.
+    try { return fs.statSync(path.join(dir, bin + ext), { throwIfNoEntry: false })?.isFile() ?? false; } catch { return false; }
   }));
 }
 
 export interface ManagerChoice {
-  /** The manager that will actually be run. */
-  pm: PackageManager;
-  /** What the repository declares. Differs from `pm.bin` when we fell back. */
-  declared: string;
-  /** False when neither the declared manager nor npm is installed here. */
-  available: boolean;
+  /** The manager to run, or null when neither it nor npm is installed here. */
+  pm: PackageManager | null;
+  /** What the repository declares. Differs from `pm` when we fell back. */
+  declared: PackageManager;
 }
 
 /**
@@ -113,9 +113,8 @@ export function resolvePackageManager(
   has: (bin: string) => boolean = onPath,
 ): ManagerChoice {
   const declared = detectPackageManager(dir, repoRoot);
-  if (has(declared.bin)) return { pm: declared, declared: declared.bin, available: true };
-  if (has(NPM.bin)) return { pm: NPM, declared: declared.bin, available: true };
-  return { pm: declared, declared: declared.bin, available: false };
+  if (has(declared.bin)) return { pm: declared, declared };
+  return { pm: has(NPM.bin) ? NPM : null, declared };
 }
 
 /**
@@ -207,6 +206,8 @@ export interface BaselineOptions {
   appPrefix?: string;
   /** Budget for install + boot. */
   timeoutMs?: number;
+  /** Injectable for tests; defaults to a real PATH scan. */
+  pathHas?: (bin: string) => boolean;
   log?: (msg: string) => void;
 }
 
@@ -293,20 +294,35 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   }
   const { dir: appDir, script } = app;
 
-  const { pm, declared, available } = resolvePackageManager(appDir, worktree);
+  const { pm, declared } = resolvePackageManager(appDir, worktree, opts.pathHas);
+  const rel = path.relative(worktree, appDir);
   // The worktree is a throwaway that cleanup deletes on the way out, so every
   // "run it by hand" below names the same directory in the caller's own
   // checkout instead — the one that will still be there to run it in.
-  const appIn = path.join(opts.repoRoot, path.relative(worktree, appDir));
-  if (!available) {
+  const appIn = path.join(opts.repoRoot, rel);
+  const where = rel || 'the repository';
+  if (!pm) {
     await cleanup();
-    return skip(`neither ${declared} nor npm is on PATH, so nothing can install ${path.relative(opts.repoRoot, appIn) || 'the repository'}.`);
+    return skip(`neither ${declared.bin} nor npm is on PATH, so nothing can install ${where}.`);
   }
-  if (pm.bin !== declared) {
-    log(`${declared} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared} lockfile).`);
+
+  const install = !fs.existsSync(path.join(appDir, 'node_modules'));
+  // Substituting npm for the declared manager is safe in a throwaway worktree
+  // and not in the caller's own checkout: npm cannot share a node_modules with
+  // pnpm, so installing over their tree leaves the working copy broken — the
+  // state the README tells people to `rm -rf node_modules` out of. Taking
+  // screenshots must not cost someone their install, so this stops instead.
+  // Only the install is dangerous; running a script against a tree that is
+  // already installed is not, which is why this asks about both.
+  if (pm !== declared && install && worktree === opts.repoRoot) {
+    await cleanup();
+    return skip(`${declared.bin} is not on PATH, and installing ${where} with npm instead would leave a node_modules your ${declared.bin} cannot use. Install ${declared.bin}, or run \`${declared.bin} install\` in ${appIn}.`);
+  }
+  if (pm !== declared) {
+    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
   }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
-  if (!fs.existsSync(path.join(appDir, 'node_modules'))) {
+  if (install) {
     try {
       execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
     } catch {

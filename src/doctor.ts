@@ -45,19 +45,20 @@ export async function launchHeadedBrowser() {
 
 /**
  * Ports worth asking, most likely first: the winner is the earliest that
- * answers, so order is the tie-break when several are listening.
+ * answers, so order is only ever a tie-break between two live servers.
  *
- * 5000 is last on purpose. On macOS it belongs to AirPlay Receiver, not to a
- * dev server, and a laptop with AirPlay on is the common case — so it is only
- * ever adopted when nothing else answered, and then only if it passes the test
- * below (AirPlay does not). 7000, its sibling, is left out entirely: no
- * framework defaults to it, so it has nothing to offer against the same risk.
+ * Order is not what keeps AirPlay out — `looksLikeDevServer` is, on every
+ * platform and at any position. 5000 sits last because on macOS it usually
+ * belongs to AirPlay Receiver rather than to a dev server, so it is the
+ * weakest guess in the list, not because being last protects anything. 7000,
+ * its sibling, is left out entirely: no framework defaults to it, so it has
+ * nothing to weigh against the noise.
  */
 const DEV_PORTS = [3000, 3001, 3002, 5173, 5174, 4173, 4321, 8080, 8000, 4200, 5000];
 
-/** An HTML document, whatever charset it declares. */
+/** An HTML document. `probeUrl` has already lowercased and dropped parameters. */
 function isHtml(contentType?: string): boolean {
-  return /^(text\/html|application\/xhtml\+xml)/.test(contentType ?? '');
+  return contentType === 'text/html' || contentType === 'application/xhtml+xml';
 }
 
 /**
@@ -110,18 +111,15 @@ export async function scanDevServers(ports: number[] = DEV_PORTS): Promise<DevSe
     port,
     ...(await probeUrl(`http://localhost:${port}/`, {}, { timeoutMs: 1500, redirect: 'manual' })),
   })));
-  const hit = results.find(looksLikeDevServer);
-  return {
-    url: hit ? `http://localhost:${hit.port}` : null,
-    ignored: results
-      .filter(r => r.status !== null && !looksLikeDevServer(r))
-      .map(r => ({ port: r.port, status: r.status as number })),
-  };
+  const scan: DevServerScan = { url: null, ignored: [] };
+  for (const result of results) {
+    if (looksLikeDevServer(result)) scan.url ??= `http://localhost:${result.port}`;
+    else if (result.status !== null) scan.ignored.push({ port: result.port, status: result.status });
+  }
+  return scan;
 }
 
-/**
- * Find a running local dev server. Returns its base URL or null.
- */
+/** Find a running local dev server. Returns its base URL or null. */
 export async function detectDevServer(ports: number[] = DEV_PORTS): Promise<string | null> {
   return (await scanDevServers(ports)).url;
 }

@@ -200,7 +200,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // wrong host, or a production URL that has moved. The diff between two
   // different sites is a number, and publishing it as "visual changes" for
   // this branch is the confident-and-wrong answer this tool exists to avoid.
-  if (looksLikeDifferentSites(outcomes.filter(o => o.status !== 'error'))) {
+  if (looksLikeDifferentSites(outcomes)) {
     throw new NeedsHumanError(differentSitesHint(comparison.before.url, comparison.before.detail, comparison.after.url));
   }
 

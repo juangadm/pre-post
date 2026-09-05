@@ -79,11 +79,6 @@ export function textOverlap(before: string, after: string): number | null {
   return shared / small.size;
 }
 
-/** What this needs from a capture outcome, and nothing more. */
-export interface JudgeableRoute {
-  textOverlap?: number | null;
-}
-
 /**
  * Do the captures, taken together, say these are two different sites?
  *
@@ -92,7 +87,7 @@ export interface JudgeableRoute {
  * every route on the site sharing none is not a change, it is the wrong site.
  * Requiring unanimity is what keeps this from firing on real work.
  */
-export function looksLikeDifferentSites(routes: JudgeableRoute[]): boolean {
+export function looksLikeDifferentSites(routes: Array<{ textOverlap?: number | null }>): boolean {
   const judged = routes
     .map(r => r.textOverlap)
     .filter((v): v is number => typeof v === 'number');
