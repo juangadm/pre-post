@@ -21,7 +21,7 @@ interface BrowserProps extends VariantProps<typeof browserVariants> {
 
 export function BrowserChrome({ url = "localhost:3000" }: { url?: string }) {
   return (
-    <div className="flex items-center gap-2 px-2 py-1 bg-neutral-50 border-b border-neutral-200">
+    <div className="flex items-center gap-2 px-2 py-1 bg-amber-300 border-b border-amber-500">
       <div className="flex items-center gap-1">
         <div className="w-2 h-2 rounded-full bg-[--geist-red-600]" />
         <div className="w-2 h-2 rounded-full bg-[--geist-amber-600]" />
