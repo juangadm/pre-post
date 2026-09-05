@@ -14,7 +14,6 @@
 
 import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit, latestProductionDeployment } from './deployments.js';
-import { publishedSiteUrl } from './homepage.js';
 import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
 import { isLocalUrl, normalizeUrl } from './url.js';
@@ -100,42 +99,44 @@ async function previewForHead(ctx: ResolveContext): Promise<Side | null> {
 }
 
 /**
- * The deployed baseline, best answer first.
+ * The deployed baseline, most honest answer first.
  *
- * Only the first step is pinned to the base commit, and that is the step that
- * usually finds nothing: production is a branch, so a repository has a
- * deployment at exactly the fork point only by coincidence. Requiring it was
- * what kept the deployed comparison from ever being chosen — a preview would be
- * found, no Pre would be, and the run fell back to needing a dev server.
+ * Pinning Pre to the base commit is the right question and it is tried first.
+ * The second step exists because production is a branch, not a commit: a
+ * repository that does not deploy every push to its default branch has no
+ * deployment at the fork point, and requiring one left the deployed comparison
+ * with no Pre — a preview would be found, no baseline would be, and the run
+ * fell back to needing a dev server nobody in the target audience has.
  *
- * So each later step widens the question while staying honest about what it
- * answered: the detail line always says which commit, or that it is the site's
- * published address rather than a build of the base.
+ * Widening stops at deployments the host actually recorded. Every step names
+ * the commit it answered with, so Pre is never mistaken for the base.
  */
 async function deployedBaseline(ctx: ResolveContext): Promise<Side | null> {
   if (ctx.before) return side(ctx.before, 'passed with --before');
   if (ctx.config.before) return side(ctx.config.before, 'from .pre-post.json');
   if (!ctx.gh) return null;
 
-  // 1. What this branch forked from, if that exact commit was deployed.
+  // What this branch forked from, if that exact commit was deployed. Usually it
+  // was — a host that deploys every push to the default branch has one — but a
+  // repository that deploys on a tag, promotes by hand, or whose base commit is
+  // older than its retained deployments will find nothing here.
   const baseSha = ctx.pr?.base.sha ?? ctx.baseSha;
   if (baseSha) {
     const pinned = await deploymentUrlForSha(ctx.gh, ctx.ownerRepo, baseSha, { production: true });
     if (pinned) return side(pinned.url, `${pinned.environment} deployment for ${baseSha.slice(0, 7)}`);
   }
 
-  // 2. What is on production now. The same site, possibly a few commits ahead,
-  //    so name the commit it was built from instead of implying the base.
+  // Otherwise what is on production now: the same site, possibly a few commits
+  // ahead, so name the commit it was built from instead of implying the base.
   const latest = await latestProductionDeployment(ctx.gh, ctx.ownerRepo);
   if (latest) {
     return side(latest.url, `${latest.environment} deployment${latest.sha ? ` for ${latest.sha.slice(0, 7)}` : ''}`);
   }
 
-  // 3. Hosts that record no GitHub Deployment at all leave the API with nothing
-  //    to say about either side. The address the project publishes is then the
-  //    only baseline available without asking the human for one.
-  const published = await publishedSiteUrl(ctx.gh, ctx.ownerRepo, ctx.repoRoot, ctx.appPrefix);
-  return published ? side(published.url, published.detail) : null;
+  // Anything past here would be a guess at the site's address, and a baseline
+  // that is quietly the wrong site reads as 100% changed on every route — a
+  // result that looks exactly like a real one. Better to say so and stop.
+  return null;
 }
 
 /** Both sides named by the caller: their call, mixed or not. */

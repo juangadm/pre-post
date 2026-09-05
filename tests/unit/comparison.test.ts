@@ -154,22 +154,6 @@ describe('resolveComparison', () => {
     expect(c.before.detail).toContain('prod999');
   });
 
-  it('uses the published site when the host records no deployments at all', async () => {
-    const c = await resolveComparison(ctx({
-      gh: gh({
-        '/deployments?sha=': [],
-        '/deployments?per_page=30': [],
-        [`/commits/${PR.head.sha}/status`]: vercelStatus('success'),
-        '/issues/7/comments': botComment('preview.vercel.app'),
-        '/repos/o/r': { homepage: 'https://example.org' },
-      }),
-    }));
-    expect(c.strategy).toBe('deployed');
-    expect(c.before.url).toBe('https://example.org');
-    expect(c.before.detail).toContain('repository homepage');
-    expect(c.after.url).toBe('https://preview.vercel.app');
-  });
-
   it('finds the preview for a commit before a PR is opened', async () => {
     const c = await resolveComparison(ctx({
       pr: null,
@@ -195,7 +179,6 @@ describe('resolveComparison', () => {
     };
     await expect(resolveComparison(ctx({ gh: client }))).rejects.toBeInstanceOf(NoPostError);
     expect(seen.some(p => p.includes('per_page=30'))).toBe(false);
-    expect(seen.some(p => p === '/repos/o/r')).toBe(false);
   });
 
   it('names the preview it found when there is nothing to compare it against', async () => {
@@ -205,7 +188,6 @@ describe('resolveComparison', () => {
         '/deployments?sha=base': [],
         '/deployments?per_page=30': [],
         '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
-        '/repos/o/r': { homepage: null },
       }),
     })).catch(e => e);
     expect(failure).toBeInstanceOf(NoDeployedBaselineError);

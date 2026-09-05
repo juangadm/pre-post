@@ -12,16 +12,19 @@ It works out both sides itself, cheapest option first:
 | 2 | `before` in `.pre-post.json` | the preview deployment for this commit |
 | 3 | the production deployment for the base commit | a local dev server |
 | 4 | whatever is on production now | |
-| 5 | the site's published address | |
-| 6 | the base commit, served locally | |
+| 5 | the base commit, served locally | |
 
-Rows 2 to 5 need no dev environment at all, which is the point: a preview deployment and a
+Rows 2 to 4 need no dev environment at all, which is the point: a preview deployment and a
 production URL are enough for anyone who can open the PR. Deployments come from the GitHub
 Deployments API, so Vercel, Cloudflare Pages, Netlify and Render all work with no extra
-token and nothing to configure. Hosts that record no GitHub Deployment (Vercel is the
-common one) are read from the deployment bot's own PR comment for the preview side, and
-from the website on the GitHub repository — or `homepage` in package.json — for the
-baseline. Whichever it picks, the run prints which commit each side came from.
+token and nothing to configure; a host that records only a commit status is read from the
+deployment bot's own PR comment instead. Row 4 covers repositories that do not deploy every
+push to their default branch, so nothing is deployed at the fork point — it prints which
+commit Pre actually came from rather than implying the base.
+
+pre-post never guesses a baseline. If no deployment can be found it says so and tells you
+the one flag that fixes it, because a baseline that is quietly the wrong site reads as 100%
+changed on every route and looks exactly like a real result.
 
 The last baseline needs no network at all: it checks the base commit into a throwaway
 worktree and boots its dev script. That keeps pre-post working inside a sandboxed agent
