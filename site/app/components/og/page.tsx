@@ -108,7 +108,7 @@ function ContentB() {
 function Browser({ variant, url }: { variant: "A" | "B"; url: string }) {
   return (
     <div
-      className="flex flex-col w-full rounded-lg overflow-hidden bg-white"
+      className="flex flex-col w-full rounded-lg overflow-hidden bg-slate-900"
       style={{ border: `1px solid ${colors.neutral200}`, boxShadow: "0 4px 16px rgba(0,0,0,0.1)" }}
     >
       <BrowserChrome url={url} />
@@ -193,11 +193,11 @@ export default function OgPreview() {
   return (
     <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-8">
       <div className="flex flex-col items-center gap-4">
-        <p className="text-sm text-neutral-500">OG Image Preview (1200 x 630)</p>
+        <p className="text-sm text-slate-300">OG Image Preview (1200 x 630)</p>
 
         {/* OG Image Container - exact 1200x630 */}
         <div
-          className="relative bg-white overflow-hidden flex"
+          className="relative bg-slate-900 overflow-hidden flex"
           style={{ width: 1200, height: 630 }}
         >
           {/* Left half - Text content */}

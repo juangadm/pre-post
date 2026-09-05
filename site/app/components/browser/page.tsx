@@ -2,9 +2,9 @@ import { Browser } from "@/components/browser"
 
 export default function BrowserPage() {
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-8">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8">
       <div className="flex flex-col items-center gap-8">
-        <h1 className="text-neutral-800 text-lg">Browser Window Component</h1>
+        <h1 className="text-slate-100 text-lg">Browser Window Component</h1>
 
         {/* Large version */}
         <div className="bg-neutral-100 p-12 rounded-lg">
@@ -16,13 +16,13 @@ export default function BrowserPage() {
         {/* Variant A and B side by side */}
         <div className="flex gap-8 items-start">
           <div className="flex flex-col items-center gap-2">
-            <span className="text-neutral-500 text-sm">Variant A</span>
+            <span className="text-slate-300 text-sm">Variant A</span>
             <div className="w-[180px]">
               <Browser variant="A" />
             </div>
           </div>
           <div className="flex flex-col items-center gap-2">
-            <span className="text-neutral-500 text-sm">Variant B</span>
+            <span className="text-slate-300 text-sm">Variant B</span>
             <div className="w-[180px]">
               <Browser variant="B" />
             </div>

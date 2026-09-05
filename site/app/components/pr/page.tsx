@@ -4,7 +4,7 @@ import { PullRequest } from "@/components/pull-request"
 
 export default function PullRequestPage() {
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8">
       <div className="flex flex-col items-center gap-12">
         <h1 className="text-neutral-800 text-lg">Pull Request Component</h1>
 

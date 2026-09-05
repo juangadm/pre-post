@@ -4,7 +4,7 @@ import { Logo } from "@/components/logo";
 
 export default function Page() {
   return (
-    <div className="min-h-screen bg-[#FBFBFB] text-neutral-500">
+    <div className="min-h-screen bg-slate-900 text-neutral-500">
       <main className="py-10 sm:py-16">
         <article>
         {/* Header - constrained width */}

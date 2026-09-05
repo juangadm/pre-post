@@ -25,7 +25,7 @@ export default function HeroPage() {
               className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                 phase === s
                   ? "bg-neutral-800 text-white"
-                  : "bg-white text-neutral-600 hover:bg-neutral-200"
+                  : "bg-slate-900 text-neutral-600 hover:bg-neutral-200"
               }`}
             >
               {s}
