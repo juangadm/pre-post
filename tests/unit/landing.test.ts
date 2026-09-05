@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { checkLanding, leftTheSite, looksLikeSignIn, siteOf, signInHint } from '../../src/landing';
+import { resolveAuth } from '../../src/sessions';
 
 describe('siteOf', () => {
   it('reduces a host to its registrable part', () => {
@@ -102,5 +103,28 @@ describe('signInHint', () => {
 
   it('names the login command otherwise', () => {
     expect(signInHint('http://localhost:3000', false)).toContain('pre-post login');
+  });
+});
+
+describe('the Vercel bypass headers', () => {
+  const saved = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    else process.env.VERCEL_AUTOMATION_BYPASS_SECRET = saved;
+  });
+
+  it('sends the bypass header and nothing else', () => {
+    // `x-vercel-set-bypass-cookie` asks the host to set a cookie through a
+    // redirect, which the cookie-less reachability probe can never satisfy: it
+    // looped until it threw, and every protected preview read as unreachable.
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET = 'secret-value';
+    const auth = resolveAuth({ urls: [] });
+    expect(auth?.headers).toEqual({ 'x-vercel-protection-bypass': 'secret-value' });
+  });
+
+  it('leaves an explicit header alone', () => {
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET = 'from-env';
+    const auth = resolveAuth({ headers: { 'x-vercel-protection-bypass': 'explicit' }, urls: [] });
+    expect(auth?.headers['x-vercel-protection-bypass']).toBe('explicit');
   });
 });

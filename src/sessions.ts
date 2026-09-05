@@ -84,9 +84,15 @@ export interface ResolveAuthInput {
 export function resolveAuth(input: ResolveAuthInput): AuthOptions | undefined {
   const headers: Record<string, string> = { ...(input.configHeaders || {}), ...(input.headers || {}) };
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  // The bypass header alone is enough, and it is all we send. Asking for the
+  // cookie as well (`x-vercel-set-bypass-cookie: true`) makes the host set it
+  // through a redirect, which a client that keeps no cookie jar can never
+  // satisfy: the reachability probe uses plain `fetch`, so it looped until it
+  // threw and every protected preview was reported as unreachable. Measured
+  // against a live protected deployment on 2026-09-05 — with the one header,
+  // 200 and no redirect; with both, 307 until curl gave up at 50.
   if (bypass && !headers['x-vercel-protection-bypass']) {
     headers['x-vercel-protection-bypass'] = bypass;
-    headers['x-vercel-set-bypass-cookie'] = 'true';
   }
   const cookies: NonNullable<AuthOptions['cookies']> = [
     ...cookiesForUrls(input.urls),
