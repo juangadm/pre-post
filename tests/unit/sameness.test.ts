@@ -132,6 +132,14 @@ describe('differentSitesHint', () => {
     expect(hint).toContain('--before');
   });
 
+  // The two-URL mode was handed both sides by hand, so there is no provenance
+  // to report — only the URLs.
+  it('reads correctly with no provenance for Pre', () => {
+    const hint = differentSitesHint('https://other.example', undefined, 'http://localhost:3000');
+    expect(hint).toContain('Pre (https://other.example)');
+    expect(hint).not.toContain('—');
+  });
+
   // AGENTS.md: a NeedsHumanError carries a single actionable sentence.
   it('is one sentence', () => {
     const hint = differentSitesHint('https://other.example', 'production deployment', 'http://localhost:3000');
