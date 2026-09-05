@@ -207,20 +207,136 @@ is the one in the report.
 
 ---
 
-## 4. Token discovery checks presence, not capability — to verify
+## 4. Token discovery checks presence, not capability — PARTLY FIXED
 
-`getToken()` accepts `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Sandbox
-environments often inject a `GITHUB_TOKEN` scoped to the current repo's Actions
-context, which may not permit creating the `pre-post-assets` branch. The failure
-would land mid-run, after capture, with a raw API error.
+**What was claimed, and what the evidence actually said.** The chunk suspected that sandbox
+and CI environments "often inject a `GITHUB_TOKEN` scoped to the current repo's Actions
+context", and that the failure "would land mid-run, after capture, with a raw API error".
+Two of those are false. The third is true, but only through a route the chunk did not
+describe.
 
-**Scope.** Preflight the token's actual capability in `doctor` and at the start of
-`pr` — one cheap authenticated call — and fail with one sentence before spending
-30 seconds on screenshots.
+**GitHub Actions injects nothing.** A probe workflow on this repository, in a step declaring
+no `env:` of its own:
 
-**Validate.** A read-only token exits 3 with an actionable sentence before capture.
+```
+GITHUB_TOKEN set: no
+GH_TOKEN set: no
+gh on PATH: /usr/bin/gh
+gh auth token: fails
+```
 
-**Size.** S.
+`gh` is installed on the runner and signed in to nothing. `getToken()` returns null there,
+`requireToken()` stops the run before anything is captured, and the existing message is the
+right one. A token reaches a step only when the workflow author writes
+`env: GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` — which is how anyone runs a token-using
+tool in CI, but it is opt-in, not injection.
+
+**The failure was never a raw API error.** `GitHub.request` has always mapped 401 and 403 to
+`NeedsHumanError`. Running the real `publishAssets` from inside a runner holding the default
+token, against the real API:
+
+```
+publishAssets threw after 88ms
+  name:    NeedsHumanError
+  message: GitHub rejected the token (403). Run: gh auth login   (or set GH_TOKEN with repo access), then re-run.
+```
+
+Typed, one sentence, exit 3 — and advice nobody can act on, since `gh auth login` is not
+something you do inside a GitHub Actions runner. What was wrong was *when* the sentence
+arrived and *what it said*, not that it was missing.
+
+**The capability gap is real.** `ci.yml` declares no `permissions:` block, and every job on
+this repository logs what it was granted:
+
+```
+##[group]GITHUB_TOKEN Permissions
+Contents: read
+Metadata: read
+Packages: read
+```
+
+Read-only — GitHub's default for repositories created since February 2023, and a setting an
+owner can flip either way, so this is one repository's answer and not a universal one.
+Measured from inside a job carrying that token:
+
+| call | result |
+|---|---|
+| `GET /repos/juangadm/pre-post` | 200, `permissions.push: false` (262ms) |
+| `GET /repos/juangadm/pre-post/pulls?state=open` | 200 |
+| `GET .../git/ref/heads/pre-post-assets` | 200 |
+| `GET /user` | 403 (an installation token has no user) |
+| `POST .../git/blobs` | **403** `Resource not accessible by integration` |
+
+Every read `pr` makes before it captures succeeds; the first write after it fails. One route
+at one viewport took 22.7s to capture in that same job, so the window the chunk was pointing
+at is real even though the way in is a workflow that maps the token rather than an
+environment that injects one.
+
+**The sandbox is a different failure, and `doctor` was lying about it.** A Claude Code web
+sandbox *does* inject both variables — set to a placeholder the egress proxy substitutes on
+some API paths and not others. There `pre-post pr` exits 3 in 0.75s at the PR lookup, before
+any capture: the read-before-capture ordering already covers it, and there was no 30 seconds
+to save. But `doctor` reported
+
+```
+github     ok  token found
+```
+
+in exactly that environment, where every call the run makes answers 401. Presence cannot earn
+an all-clear, and this was one — the failure class the rest of this file is about, in the
+command whose whole job is to answer "will this work?".
+
+**Done.** `checkWriteAccess` makes one authenticated write and reports three outcomes:
+writable, rejected, or could-not-tell. `pr` starts it alongside the PR lookup, so it costs no
+wall clock, and answers it before the local baseline (which can install and build a whole app)
+and long before the captures. `doctor` reports what the token can do instead of that one
+exists. `cannotPublishHint` follows the environment: inside a runner it names the workflow
+permission, outside one it names `gh auth login`, one sentence either way.
+
+**Why a write, and not a read.** `GET /repos/{owner}/{repo}` answers `permissions.push: false`
+for this exact token in 262ms with no side effect, which makes it look like the better check.
+It is not: `permissions` describes the *account's* access to the repository, not the scopes
+the credential carries, so a classic token without `repo` scope held by someone who can push
+reads `push: true` and is still refused the write. A check that hands out a confident
+all-clear to a credential that will fail is worse than no check, so the preflight asks the
+question it needs answered rather than the cheaper one that merely correlates with it. The
+write is the first one `publishAssets` makes, on the one piece of content that cannot add
+anything — the empty blob already exists in every repository, so success stores nothing new.
+
+**What it proves, and what it does not.** The token may write objects to the repository. It
+does not prove the run will publish: creating the `pre-post-assets` *ref* is a separate
+permission a ruleset can refuse, and editing the PR description needs `pull-requests: write`,
+which nothing here checks — a workflow granted only `contents: write` will capture, publish,
+and then fail on the description. So `writable: true` means "not this failure", never "this
+will work", and the code says so. An answer that is not about access — a 500, a dropped
+connection — is not read as a refusal: `doctor` says it could not reach GitHub, and `pr` says
+so and carries on to fail wherever it really fails.
+
+**Validated** against the real read-only token in a real Actions job (`GITHUB_ACTIONS=true`):
+
+```
+github     FAIL  This workflow's token cannot write to juangadm/pre-post, so the screenshots
+                 would have nowhere to go: add "permissions: contents: write" to the job and re-run.
+
+$ pre-post pr --routes /
+This workflow's token cannot write to juangadm/pre-post, so the screenshots would have
+nowhere to go: add "permissions: contents: write" to the job and re-run.
+exit=3 elapsed_ms=1416
+```
+
+1.4s instead of the 22.7s that job spent capturing one route. `--dry-run` with both variables
+unset still completes on exit 0. Nine unit tests in `tests/unit/github.test.ts` cover the
+three outcomes, the two hints, and that a 500 or an unreachable API is not called a rejection.
+
+**Not reproduced end to end.** No run here contrived a real visual diff in CI, so the full
+"capture, then 403" sequence was never one command. It is assembled from three measurements
+that were each real, in the same job, with the same token: the reads succeed, the capture
+costs 22.7s, and `publishAssets` is refused in 88ms. The ordering that puts the publish after
+the capture is read from `pr.ts`, not measured.
+
+**Still open.** `pull-requests: write` is unchecked, as above. And `doctor` still exits 0
+whatever it finds, so this check reads as advice rather than a verdict — chunk 7's exit-code
+contract is where that gets decided.
 
 ---
 
