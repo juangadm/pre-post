@@ -12,7 +12,7 @@ Status key: **confirmed** = reproduced in a real environment, evidence noted.
 
 ---
 
-## 1. Shallow clones report "nothing changed" — confirmed, highest priority
+## 1. Shallow clones report "nothing changed" — FIXED
 
 Web and sandbox environments check out a branch with `--depth 1 --single-branch`.
 There is then no `origin/main` ref at all, so:
@@ -45,6 +45,15 @@ resolved, raise `NeedsHumanError` (exit 3) with one sentence, never a clean exit
 per resolution step, and one integration test against a real `--depth 1` clone.
 
 **Size.** M. Touches `git.ts`, `routes.ts`, `comparison.ts`.
+
+**Done.** `resolveBase` in `git.ts` resolves explicit ref → local merge base → a
+widening fetch (depth 50, deepen 200, unshallow) → uncommitted-only on the base
+branch itself, and returns null rather than guessing. `changedFiles` now requires
+its target, so the silent `|| 'HEAD'` cannot come back. Detection carries the base
+and hands it to the baseline, so Pre and the route list agree. The clone above now
+reports `changedFiles: 4`, route `/`, `base: {sha: 26aa6cd, source: fetched}`;
+with the remote removed it exits 3 with one sentence. Seven tests in
+`tests/unit/base.test.ts` cover the clone shapes.
 
 ---
 

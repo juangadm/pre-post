@@ -46,7 +46,11 @@ Comment: https://github.com/acme/web/pull/42
 
 ## How it works
 
-1. **Routes.** Diffs the branch against the merge base with `main`, then follows the import
+1. **Routes.** Diffs the branch against the merge base with `main` — fetching that branch
+   first when the checkout does not have it, which is the normal shape in CI and in the
+   web/sandbox editors. When no shared history can be established it stops with one
+   sentence rather than reporting an empty diff, and `--base <ref>` names the commit
+   directly. Then it follows the import
    graph: a change to `components/ui/button.tsx` marks every page that imports it. Next.js
    App Router and Pages Router, Vite apps (React Router, file-based `src/pages`), and a
    generic fallback. Monorepos are handled by picking the app that owns the changed files.
