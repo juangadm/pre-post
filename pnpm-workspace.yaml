@@ -1,3 +1,17 @@
 packages:
   - "."
   - "site"
+
+# pnpm 10 refuses to run a dependency's install scripts until the repository
+# names it, and where `strict-dep-builds` is set that refusal is an error, not
+# a warning — so a clean clone fails `pnpm install` on exit 1 before anything
+# is built. Both entries are needed to install this repo at all:
+#
+#   sharp    next (site/) builds it for image optimization
+#   esbuild  vitest -> vite, at the root: the CLI's own test runner needs it,
+#            so this is not a cost the marketing site imposes on the CLI
+#
+# Nothing else in the tree runs an install script, so the list stays this short.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp

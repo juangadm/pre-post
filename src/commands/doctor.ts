@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { browserDescription } from '../browser.js';
 import { configPath, CONFIG_FILENAME, loadConfig } from '../config.js';
-import { detectDevServer, ensureBrowser } from '../doctor.js';
+import { ensureBrowser, scanDevServers } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
 import { repoRoot } from '../git.js';
 import { servableDir } from '../baseline.js';
@@ -30,8 +30,14 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     await closeBrowser();
   }
   checks.push(getToken() ? { name: 'github', ok: true, detail: 'token found' } : { name: 'github', ok: false, detail: GH_LOGIN_HINT });
-  const dev = await detectDevServer();
-  checks.push(dev ? { name: 'devserver', ok: true, detail: dev } : { name: 'devserver', ok: false, detail: 'none found on the usual ports' });
+  // Name the ports that answered but were passed over. "None found on the
+  // usual ports" reads as a lie to anyone who knows something is listening on
+  // one of them, and the usual something is a macOS system service on 5000.
+  const dev = await scanDevServers();
+  const ignored = dev.ignored.map(i => `${i.port} answered ${i.status}`).join(', ');
+  checks.push(dev.url
+    ? { name: 'devserver', ok: true, detail: dev.url }
+    : { name: 'devserver', ok: false, detail: `none found on the usual ports${ignored ? ` (not a dev server: ${ignored})` : ''}` });
   try {
     const root = repoRoot(cwd);
     const cfg = loadConfig(root);

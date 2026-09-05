@@ -64,6 +64,8 @@ export interface CaptureResult {
   finalUrl?: string;
   /** Document title, used to recognise a sign-in wall that answered with 200 */
   title?: string;
+  /** Visible text, used to tell "the same site, changed" from "a different site" */
+  text?: string;
   /** Response looked like it came from Vercel (deployment protection) */
   vercel?: boolean;
   /** Wall-clock milliseconds for navigation + settle + screenshot */
@@ -226,6 +228,17 @@ export interface RouteCaptureOutcome {
   shift?: RouteShift;
   /** A side answered with a sign-in wall, so nothing was really compared */
   blocked?: BlockedSide;
+  /**
+   * How much of the two sides' wording is shared, or null when neither page
+   * had enough text to judge. Near zero on every route means the two sides are
+   * different sites, which a pixel ratio cannot tell you — see `sameness.ts`.
+   */
+  textOverlap?: number | null;
+  /**
+   * The same measure over the two titles. A title is where a site names
+   * itself, so it corroborates a run that only has one route to judge.
+   */
+  titleOverlap?: number | null;
 }
 
 export interface BlockedSide {

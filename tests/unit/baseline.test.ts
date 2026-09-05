@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, freePort, serveBaseCommit, servableDir } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, freePort, onPath, resolvePackageManager, serveBaseCommit, serveWorkingTree, servableDir } from '../../src/baseline';
 import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
@@ -39,6 +39,64 @@ describe('detectPackageManager', () => {
     write('pnpmapp/pnpm-lock.yaml', '');
     expect(detectPackageManager(path.join(dir, 'npmapp')).run('dev', ['--port', '1'])).toEqual(['run', 'dev', '--', '--port', '1']);
     expect(detectPackageManager(path.join(dir, 'pnpmapp')).run('dev', ['--port', '1'])).toEqual(['run', 'dev', '--port', '1']);
+  });
+
+  it('lets the packageManager field beat a stale lockfile', () => {
+    write('declared/package-lock.json', '');
+    write('declared/package.json', JSON.stringify({ packageManager: 'pnpm@10.33.0' }));
+    expect(detectPackageManager(path.join(dir, 'declared')).bin).toBe('pnpm');
+  });
+
+  it('ignores a packageManager field naming something unknown', () => {
+    write('odd/yarn.lock', '');
+    write('odd/package.json', JSON.stringify({ packageManager: 'cnpm@1.0.0' }));
+    expect(detectPackageManager(path.join(dir, 'odd')).bin).toBe('yarn');
+  });
+});
+
+describe('onPath', () => {
+  it('finds a binary that is there and not one that is not', () => {
+    const bin = path.join(dir, 'fakebin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'somepm'), '');
+    expect(onPath('somepm', { PATH: bin })).toBe(true);
+    expect(onPath('otherpm', { PATH: bin })).toBe(false);
+  });
+
+  it('is not fooled by a directory of the same name', () => {
+    const bin = path.join(dir, 'dirbin');
+    fs.mkdirSync(path.join(bin, 'pnpm'), { recursive: true });
+    expect(onPath('pnpm', { PATH: bin })).toBe(false);
+  });
+
+  it('says no when PATH is empty', () => {
+    expect(onPath('npm', { PATH: '' })).toBe(false);
+  });
+});
+
+describe('resolvePackageManager', () => {
+  const app = () => path.join(dir, 'resolve');
+  const setup = () => { write('resolve/pnpm-lock.yaml', ''); return app(); };
+
+  it('runs what the repo declares when it is installed', () => {
+    const choice = resolvePackageManager(setup(), undefined, () => true);
+    expect(choice.pm?.bin).toBe('pnpm');
+    // Identity, not just the name: the caller tells "we fell back" by `pm !== declared`.
+    expect(choice.pm).toBe(choice.declared);
+  });
+
+  // The reported failure: a repo declaring pnpm, on a machine without it.
+  it('falls back to npm and remembers what was asked for', () => {
+    const choice = resolvePackageManager(setup(), undefined, bin => bin === 'npm');
+    expect(choice.pm?.bin).toBe('npm');
+    expect(choice.declared.bin).toBe('pnpm');
+    expect(choice.pm).not.toBe(choice.declared);
+  });
+
+  it('reports that nothing can install when npm is missing too', () => {
+    const choice = resolvePackageManager(setup(), undefined, () => false);
+    expect(choice.pm).toBe(null);
+    expect(choice.declared.bin).toBe('pnpm');
   });
 });
 
@@ -120,6 +178,24 @@ describe('serveBaseCommit skip reasons', () => {
     const result = await serveBaseCommit({ repoRoot: repo, sha: '0'.repeat(40), log: m => logs.push(m) });
     expect(result).toBeNull();
     expect(logs.join('\n')).toMatch(/worktree checkout failed/);
+  });
+
+  /**
+   * Serving the working tree installs into the caller's own checkout, not a
+   * throwaway. Substituting npm there would write a node_modules their pnpm
+   * cannot use — taking screenshots must not cost someone their install.
+   */
+  it('will not substitute npm into the caller\'s own checkout', async () => {
+    const own = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-own-')));
+    fs.writeFileSync(path.join(own, 'pnpm-lock.yaml'), '');
+    fs.writeFileSync(path.join(own, 'package.json'), JSON.stringify({ name: 'app', scripts: { dev: 'node -e 0' } }));
+    // No node_modules, and a machine with npm but no pnpm.
+    const logs: string[] = [];
+    const result = await serveWorkingTree({ repoRoot: own, log: m => logs.push(m), pathHas: bin => bin === 'npm' });
+    expect(result).toBeNull();
+    expect(logs.join('\n')).toMatch(/pnpm is not on PATH.*would leave a node_modules/);
+    expect(fs.existsSync(path.join(own, 'node_modules'))).toBe(false);
+    fs.rmSync(own, { recursive: true, force: true });
   });
 });
 

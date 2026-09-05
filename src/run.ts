@@ -8,6 +8,7 @@ import path from 'path';
 import { AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
 import { checkLanding } from './landing.js';
+import { textOverlap, titleOverlap } from './sameness.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
@@ -163,6 +164,10 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
 
   const changed = isChanged(diff, opts);
+  // Recorded on every outcome, judged only across the whole run: one route
+  // sharing no words is a rewrite, every route sharing none is the wrong site.
+  const overlap = textOverlap(before.text ?? '', after.text ?? '');
+  const titles = titleOverlap(before.title ?? '', after.title ?? '');
   // A shift is measured in device pixels; everything a reader sees is in CSS
   // pixels. Whether anything changed besides the move is judged by the same
   // rule as any other capture, against the aligned numbers.
@@ -182,6 +187,8 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
     status: changed ? 'changed' : 'unchanged',
     changedRatio: diff.changedRatio,
     sizeChanged: diff.sizeChanged,
+    textOverlap: overlap,
+    titleOverlap: titles,
     shift,
     files: {
       before: outputs.before,

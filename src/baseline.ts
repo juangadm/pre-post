@@ -17,7 +17,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
-import { devScript } from './pkg.js';
+import { devScript, readPackage } from './pkg.js';
 import { findAppRoots } from './routes.js';
 
 export interface LocalBaseline {
@@ -35,22 +35,86 @@ interface PackageManager {
 }
 
 const NPM: PackageManager = { bin: 'npm', install: ['install'], run: (s, a) => ['run', s, '--', ...a] };
+const PNPM: PackageManager = { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s, a) => ['run', s, ...a] };
+const YARN: PackageManager = { bin: 'yarn', install: ['install'], run: (s, a) => ['run', s, ...a] };
+const BUN: PackageManager = { bin: 'bun', install: ['install'], run: (s, a) => ['run', s, ...a] };
 
 const MANAGERS: Array<{ lockfile: string; pm: PackageManager }> = [
-  { lockfile: 'pnpm-lock.yaml', pm: { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s, a) => ['run', s, ...a] } },
-  { lockfile: 'yarn.lock', pm: { bin: 'yarn', install: ['install'], run: (s, a) => ['run', s, ...a] } },
-  { lockfile: 'bun.lockb', pm: { bin: 'bun', install: ['install'], run: (s, a) => ['run', s, ...a] } },
+  { lockfile: 'pnpm-lock.yaml', pm: PNPM },
+  { lockfile: 'yarn.lock', pm: YARN },
+  { lockfile: 'bun.lockb', pm: BUN },
   { lockfile: 'package-lock.json', pm: NPM },
 ];
 
-/** Which package manager this tree uses, from its lockfile. Defaults to npm. */
+const BY_NAME: Record<string, PackageManager> = { npm: NPM, pnpm: PNPM, yarn: YARN, bun: BUN };
+
+/**
+ * Which package manager this tree *declares*, from its `packageManager` field
+ * or its lockfile. Defaults to npm.
+ *
+ * The field wins over the lockfile because it is the deliberate statement: a
+ * repository mid-migration can carry two lockfiles, but it names one manager.
+ */
 export function detectPackageManager(dir: string, repoRoot?: string): PackageManager {
   for (const candidate of [dir, repoRoot].filter(Boolean) as string[]) {
+    const field = readPackage(candidate)?.packageManager;
+    const named = typeof field === 'string' ? BY_NAME[field.split('@')[0].trim()] : undefined;
+    if (named) return named;
     for (const { lockfile, pm } of MANAGERS) {
       if (fs.existsSync(path.join(candidate, lockfile))) return pm;
     }
   }
   return NPM;
+}
+
+/**
+ * Is `bin` runnable here?
+ *
+ * A PATH scan rather than a `--version` subprocess: this answers before every
+ * local baseline, and spawning a process to learn that a process cannot be
+ * spawned is the wrong shape.
+ */
+export function onPath(bin: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const dirs = (env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const exts = process.platform === 'win32'
+    ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  return dirs.some(dir => exts.some(ext => {
+    // throwIfNoEntry keeps the common case (a miss) from constructing an
+    // exception; the catch stays for the rarer EACCES/ELOOP.
+    try { return fs.statSync(path.join(dir, bin + ext), { throwIfNoEntry: false })?.isFile() ?? false; } catch { return false; }
+  }));
+}
+
+export interface ManagerChoice {
+  /** The manager to run, or null when neither it nor npm is installed here. */
+  pm: PackageManager | null;
+  /** What the repository declares. Differs from `pm` when we fell back. */
+  declared: PackageManager;
+}
+
+/**
+ * The manager to actually run: what the repository declares, if it is installed.
+ *
+ * Declaring pnpm does not put pnpm on PATH. On a real machine it was not there,
+ * and the local baseline — the fallback that exists for when nothing is
+ * deployed — died on `pnpm install` with no hint that the missing piece was
+ * pnpm itself. The same shell could still build the CLI, so the tool ran while
+ * its last resort could not.
+ *
+ * npm ships with Node, so it is the fallback with the best odds of being
+ * present. It will not honour a pnpm or yarn lockfile, so the baseline it
+ * installs can drift from the locked versions — worth saying out loud, and
+ * still far better than no baseline at all.
+ */
+export function resolvePackageManager(
+  dir: string,
+  repoRoot?: string,
+  has: (bin: string) => boolean = onPath,
+): ManagerChoice {
+  const declared = detectPackageManager(dir, repoRoot);
+  if (has(declared.bin)) return { pm: declared, declared };
+  return { pm: has(NPM.bin) ? NPM : null, declared };
 }
 
 /**
@@ -142,6 +206,8 @@ export interface BaselineOptions {
   appPrefix?: string;
   /** Budget for install + boot. */
   timeoutMs?: number;
+  /** Injectable for tests; defaults to a real PATH scan. */
+  pathHas?: (bin: string) => boolean;
   log?: (msg: string) => void;
 }
 
@@ -228,14 +294,40 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   }
   const { dir: appDir, script } = app;
 
-  const pm = detectPackageManager(appDir, worktree);
+  const { pm, declared } = resolvePackageManager(appDir, worktree, opts.pathHas);
+  const rel = path.relative(worktree, appDir);
+  // The worktree is a throwaway that cleanup deletes on the way out, so every
+  // "run it by hand" below names the same directory in the caller's own
+  // checkout instead — the one that will still be there to run it in.
+  const appIn = path.join(opts.repoRoot, rel);
+  const where = rel || 'the repository';
+  if (!pm) {
+    await cleanup();
+    return skip(`neither ${declared.bin} nor npm is on PATH, so nothing can install ${where}.`);
+  }
+
+  const install = !fs.existsSync(path.join(appDir, 'node_modules'));
+  // Substituting npm for the declared manager is safe in a throwaway worktree
+  // and not in the caller's own checkout: npm cannot share a node_modules with
+  // pnpm, so installing over their tree leaves the working copy broken — the
+  // state the README tells people to `rm -rf node_modules` out of. Taking
+  // screenshots must not cost someone their install, so this stops instead.
+  // Only the install is dangerous; running a script against a tree that is
+  // already installed is not, which is why this asks about both.
+  if (pm !== declared && install && worktree === opts.repoRoot) {
+    await cleanup();
+    return skip(`${declared.bin} is not on PATH, and installing ${where} with npm instead would leave a node_modules your ${declared.bin} cannot use. Install ${declared.bin}, or run \`${declared.bin} install\` in ${appIn}.`);
+  }
+  if (pm !== declared) {
+    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
+  }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
-  if (!fs.existsSync(path.join(appDir, 'node_modules'))) {
+  if (install) {
     try {
       execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
     } catch {
       await cleanup();
-      return skip(`${pm.bin} install failed; run it by hand in ${appDir} to see why.`);
+      return skip(`\`${pm.bin} ${pm.install.join(' ')}\` failed. Run it in ${appIn} to see why.`);
     }
   }
 
