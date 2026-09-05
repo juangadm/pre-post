@@ -207,3 +207,5 @@ export function ComposableFolder({
     </div>
   )
 }
+
+// Validation pass: comment-only, no visual effect.
