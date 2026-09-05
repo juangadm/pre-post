@@ -132,6 +132,27 @@ describe('differentSitesHint', () => {
     expect(hint).toContain('--before');
   });
 
+  // Advice has to fit the mode it is printed in. `--before` is how the pr path
+  // is corrected; the two-URL mode has no such flag, and naming it there would
+  // repeat the AirPlay mistake — a confident instruction that does not apply.
+  it('takes the remedy from the caller', () => {
+    const hint = differentSitesHint('https://a.example', undefined, 'https://b.example', 'pass two URLs from the same site');
+    expect(hint).toContain('pass two URLs from the same site');
+    expect(hint).not.toContain('--before');
+  });
+
+  it('falls back to the pr remedy when the caller names none', () => {
+    expect(differentSitesHint('https://a.example', undefined, 'https://b.example')).toContain('--before');
+  });
+
+  // The two-URL mode was handed both sides by hand, so there is no provenance
+  // to report — only the URLs.
+  it('reads correctly with no provenance for Pre', () => {
+    const hint = differentSitesHint('https://other.example', undefined, 'http://localhost:3000');
+    expect(hint).toContain('Pre (https://other.example)');
+    expect(hint).not.toContain('—');
+  });
+
   // AGENTS.md: a NeedsHumanError carries a single actionable sentence.
   it('is one sentence', () => {
     const hint = differentSitesHint('https://other.example', 'production deployment', 'http://localhost:3000');

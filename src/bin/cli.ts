@@ -7,7 +7,7 @@ import { runPr } from '../commands/pr.js';
 import { runCompare } from '../commands/compare.js';
 import { runLogin } from '../commands/login.js';
 import { runPrune } from '../commands/prune.js';
-import { runDoctor } from '../commands/doctor.js';
+import { doctorExitCode, runDoctor } from '../commands/doctor.js';
 import { runDetect } from '../commands/detect.js';
 import { NeedsHumanError } from '../errors.js';
 import { buildSummary } from '../report.js';
@@ -27,10 +27,31 @@ type Subcommand = typeof SUBCOMMANDS[number];
 const argv = process.argv.slice(2);
 const subcommand = SUBCOMMANDS.includes(argv[0] as Subcommand) ? (argv.shift() as Subcommand) : null;
 
-const { values, positionals } = parseArgs({
-  args: argv,
-  allowPositionals: true,
-  options: {
+/**
+ * parseArgs throws a TypeError for an unknown flag, and an uncaught one prints
+ * a Node-internal stack trace: eight lines of `node:internal/util/parse_args`
+ * for a typo. The CLI is mostly read by agents, so the first line has to be the
+ * thing to fix, not a frame from Node's parser.
+ *
+ * Only the parse is wrapped, and the message is Node's own — this reformats a
+ * failure, it does not decide what counts as one.
+ */
+function parse() {
+  try {
+    return parseArgs({
+      args: argv,
+      allowPositionals: true,
+      options: OPTIONS,
+    });
+  } catch (err) {
+    const message = (err as Error)?.message?.split('\n')[0] ?? 'could not parse the arguments';
+    console.error(`pre-post: ${message}`);
+    console.error('Run: pre-post --help');
+    process.exit(2);
+  }
+}
+
+const OPTIONS = {
     help: { type: 'boolean', short: 'h' },
     version: { type: 'boolean', short: 'v' },
     before: { type: 'string' },
@@ -60,8 +81,9 @@ const { values, positionals } = parseArgs({
     json: { type: 'boolean' },
     days: { type: 'string' },
     quiet: { type: 'boolean', short: 'q' },
-  },
-});
+} as const;
+
+const { values, positionals } = parse();
 
 function printHelp(): void {
   console.log(`pre-post ${VERSION} — before/after screenshots for pull requests
@@ -230,9 +252,17 @@ async function main(): Promise<void> {
     }
     case 'doctor': {
       const checks = await runDoctor();
-      for (const c of checks) console.log(`${c.name.padEnd(10)} ${c.ok ? 'ok' : 'FAIL'}  ${c.detail}`);
-      if (checks.some(c => !c.ok && c.name === 'browser')) process.exit(1);
-      return;
+      for (const c of checks) {
+        // Advisory failures are worth reading and are not failures of the
+        // command, so they must not look like the ones that are.
+        const status = c.ok ? 'ok' : c.required ? 'FAIL' : 'note';
+        console.log(`${c.name.padEnd(10)} ${status.padEnd(4)}  ${c.detail}`);
+      }
+      const code = doctorExitCode(checks);
+      console.log(code === 0
+        ? 'ready — pre-post pr can run'
+        : `not ready — fix: ${checks.filter(c => c.required && !c.ok).map(c => c.name).join(', ')}`);
+      process.exit(code);
     }
     case 'compare':
     default: {
