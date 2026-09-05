@@ -38,6 +38,7 @@ const { values, positionals } = parseArgs({
     routes: { type: 'string' },
     'max-routes': { type: 'string' },
     framework: { type: 'string' },
+    base: { type: 'string' },
     'no-local-baseline': { type: 'boolean' },
     viewports: { type: 'string' },
     mobile: { type: 'boolean', short: 'm' },
@@ -69,6 +70,7 @@ USAGE
   pre-post pr [options]                 Detect routes, capture, diff, publish, comment on the PR
   pre-post <before> <after> [options]   Compare two URLs (or two PNG files)
   pre-post detect                       Print the routes this branch affects (JSON)
+  pre-post ... --base <ref>             Compare against <ref> instead of the detected fork point
   pre-post login <url>                  Sign in once; the session is reused for captures
   pre-post prune [--days 90]            Delete screenshots for PRs closed longer ago
   pre-post doctor                       Check browser, GitHub auth, dev server
@@ -194,6 +196,7 @@ async function main(): Promise<void> {
         before,
         after,
         framework: values.framework as Framework | undefined,
+        base: values.base,
         cookies,
         dryRun: values['dry-run'],
         localBaseline: !values['no-local-baseline'],
@@ -206,7 +209,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'detect': {
-      const detection = runDetect({ maxRoutes: common.maxRoutes, framework: values.framework as Framework | undefined });
+      const detection = runDetect({ maxRoutes: common.maxRoutes, framework: values.framework as Framework | undefined, base: values.base });
       console.log(JSON.stringify(detection, null, values.json ? 2 : 0));
       return;
     }
