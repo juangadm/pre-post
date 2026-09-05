@@ -12,7 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
@@ -69,7 +69,14 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   let cleanupComparison: () => Promise<void> = async () => undefined;
 
   // --- GitHub access (checked before any time is spent) -----------------------
-  const gh = opts.dryRun ? null : new GitHub(requireToken());
+  // A dry run still has to *read* GitHub: the PR, and the deployments that
+  // decide what Pre and Post are. Only writing is off. Withholding the client
+  // entirely made --dry-run the one mode that could never use a deployment,
+  // so it always demanded a dev server — from the person least likely to have
+  // one. Reads use `gh`; publishing and commenting use `writeGh`.
+  const token = opts.dryRun ? getToken() : requireToken();
+  const gh = token ? new GitHub(token) : null;
+  const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = ensureBrowser();
@@ -172,7 +179,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- Publish -------------------------------------------------------------------
   const changed = outcomes.filter(o => o.status === 'changed' && o.files);
-  if (gh && changed.length) {
+  if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;
     const files: AssetFile[] = [];
@@ -183,7 +190,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       }
     }
     log(`Publishing ${files.length} image(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
-    const published = await publishAssets(gh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
+    const published = await publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
       for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
@@ -204,16 +211,16 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   };
   result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
 
-  if (gh && (opts.comment ?? true)) {
+  if (writeGh && (opts.comment ?? true)) {
     if (pr) {
       // The description is what a reviewer reads first, so put the images there
       // and fall back to a comment only when the PR cannot be edited.
-      const described = await upsertPrDescription(gh, ownerRepo, pr.number, result.markdown, 'pre-post');
+      const described = await upsertPrDescription(writeGh, ownerRepo, pr.number, result.markdown, 'pre-post');
       if (described.updated) {
         result.commentUrl = described.html_url;
         log(`Updated PR description: ${described.html_url}`);
       } else {
-        const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
+        const comment = await upsertStickyComment(writeGh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
         result.commentUrl = comment.html_url;
         log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
       }
