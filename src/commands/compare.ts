@@ -72,7 +72,13 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
     await ensureBrowser();
     let run;
     try {
-      run = await runTasks(tasks, { outputDir, ...settings, wait: opts.wait, auth, log: opts.log });
+      run = await runTasks(tasks, {
+        outputDir, ...settings, wait: opts.wait, auth, log: opts.log,
+        // Both sides arrived as positional arguments, so `--before` is not the
+        // fix here and naming it would send someone to a flag this mode has no
+        // use for.
+        sides: { before: { url: before }, after: { url: after }, fix: 'pass two URLs from the same site' },
+      });
     } finally {
       await closeBrowser();
     }

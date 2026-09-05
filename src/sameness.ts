@@ -148,15 +148,27 @@ function strongest(a: number | null | undefined, b: number | null | undefined): 
   return Math.max(a, b);
 }
 
+/** What to do about it, when the caller says nothing: the `pr` path, which chose Pre itself. */
+export const DEFAULT_DIFFERENT_SITES_FIX = "re-run with --before pointing at this site's own deployment";
+
 /**
  * The one sentence a human needs when the two sides are not the same site.
  *
- * `beforeDetail` is how Pre was chosen ("production deployment for 26aa6cd").
- * It is optional because a caller that was handed both URLs by hand — the
- * two-URL mode — has no provenance to report, only the URLs themselves.
+ * `beforeDetail` is how Pre was chosen ("production deployment for 26aa6cd"),
+ * absent when a caller was handed both URLs by hand and has no provenance to
+ * report. `fix` is the remedy, which is the caller's to name: telling someone
+ * to pass `--before` is right when the tool picked the baseline and wrong in
+ * the two-URL mode, where both sides came in as positional arguments and that
+ * flag is not how the command is invoked. Advice that does not apply to the
+ * mode you are in is the failure this project keeps finding — it is what sent
+ * someone to sign in to a macOS system service.
  */
-export function differentSitesHint(beforeUrl: string, beforeDetail: string | undefined, afterUrl: string): string {
+export function differentSitesHint(
+  beforeUrl: string,
+  beforeDetail: string | undefined,
+  afterUrl: string,
+  fix: string = DEFAULT_DIFFERENT_SITES_FIX,
+): string {
   const pre = beforeDetail ? `${beforeUrl} — ${beforeDetail}` : beforeUrl;
-  return `Pre (${pre}) and Post (${afterUrl}) share no wording on any route, ` +
-    `so they are not the same site: re-run with --before pointing at this site's own deployment.`;
+  return `Pre (${pre}) and Post (${afterUrl}) share no wording on any route, so they are not the same site: ${fix}.`;
 }

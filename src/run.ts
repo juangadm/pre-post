@@ -27,6 +27,13 @@ export interface CaptureTask {
 export interface RunSides {
   before: { url: string; detail?: string };
   after: { url: string; detail?: string };
+  /**
+   * How this caller's user would fix a wrong pairing. Only the command knows:
+   * `pr` chose the baseline and can offer `--before`, while the two-URL mode
+   * was handed both sides as positional arguments, where that flag means
+   * nothing.
+   */
+  fix?: string;
 }
 
 /**
@@ -256,7 +263,7 @@ export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): Ru
     return { kind: 'walled', hint: signInHint(side === 'before' ? sides.before.url : sides.after.url, vercel) };
   }
   if (looksLikeDifferentSites(outcomes)) {
-    return { kind: 'different-sites', hint: differentSitesHint(sides.before.url, sides.before.detail, sides.after.url) };
+    return { kind: 'different-sites', hint: differentSitesHint(sides.before.url, sides.before.detail, sides.after.url, sides.fix) };
   }
   return null;
 }
