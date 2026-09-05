@@ -305,12 +305,35 @@ anything — the empty blob already exists in every repository, so success store
 
 **What it proves, and what it does not.** The token may write objects to the repository. It
 does not prove the run will publish: creating the `pre-post-assets` *ref* is a separate
-permission a ruleset can refuse, and editing the PR description needs `pull-requests: write`,
-which nothing here checks — a workflow granted only `contents: write` will capture, publish,
-and then fail on the description. So `writable: true` means "not this failure", never "this
+permission a ruleset can refuse. So `writable: true` means "not this failure", never "this
 will work", and the code says so. An answer that is not about access — a 500, a dropped
 connection — is not read as a refusal: `doctor` says it could not reach GitHub, and `pr` says
 so and carries on to fail wherever it really fails.
+
+**The first version of the sentence walked people into the next failure.** It named
+`permissions: contents: write`, which is what the check tested. But a `permissions:` block
+sets every scope it omits to **none**, so following that advice produces a token that uploads
+the screenshots and is then refused the PR description — a second failure, 30 seconds of
+capture later, wearing the same useless `gh auth login` message. Measured across two jobs on
+this repository:
+
+| granted | `PATCH /repos/juangadm/pre-post/pulls/23` | `POST .../git/blobs` |
+|---|---|---|
+| `contents: write` | **403** `Resource not accessible by integration` | 201 |
+| `contents: write` + `pull-requests: write` | **200** | 201 |
+
+The sentence names both now. Only `contents` is what the preflight verifies at run time; the
+`pull-requests` half is advice measured here rather than checked there, and the code comment
+says which is which.
+
+**A probe that discriminated nothing, recorded because it nearly passed for evidence.** The
+first attempt asked the same question of a PR number that does not exist, on the theory that
+an installation token is checked for route permission before resource existence — 403 for
+"not allowed", 404 for "allowed, no such PR", and nothing mutated either way. Both permission
+sets answered **404**. Existence is checked first, so the probe separated the two cases not at
+all, and reading it as a pass would have confirmed whatever was already believed. The rerun
+asks a real, merged PR with an empty patch — every field is optional, so a success changes no
+content — and separates them cleanly. PR #23's body and `updated_at` were unchanged after it.
 
 **Validated** against the real read-only token in a real Actions job (`GITHUB_ACTIONS=true`):
 
@@ -334,8 +357,10 @@ that were each real, in the same job, with the same token: the reads succeed, th
 costs 22.7s, and `publishAssets` is refused in 88ms. The ordering that puts the publish after
 the capture is read from `pr.ts`, not measured.
 
-**Still open.** `pull-requests: write` is unchecked, as above. And `doctor` still exits 0
-whatever it finds, so this check reads as advice rather than a verdict — chunk 7's exit-code
+**Still open.** The preflight tests one permission and the run needs two, so a token granted
+`contents: write` alone still fails on the description after publishing; the hint keeps people
+out of that state rather than the check catching them in it. And `doctor` still exits 0
+whatever it finds, so this reads as advice rather than a verdict — chunk 7's exit-code
 contract is where that gets decided.
 
 ---
