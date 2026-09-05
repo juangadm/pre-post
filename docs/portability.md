@@ -767,3 +767,182 @@ Jobs are copied now.
 build"`, so every install compiles TypeScript — the thing Phase 1 of the optimization plan
 set out to remove ("ship prebuilt `dist/` so `npx` never compiles; drop the `prepare`
 hook"). It also means an install failure and a compile failure look alike.
+
+## First successful run (2026-09-05)
+
+The promise in AGENTS.md — an agent runs one command and gets before/after screenshots into
+a PR description — had not been demonstrated since 2026-09-02, and PRs #19–#25 had landed
+eight chunks of correctness work with no working run behind them. This is that run.
+
+**Verdict: the promise holds on the deployed path, once the machine is set up.** Every case
+in the matrix produced correct screenshots in a PR description, in 5–18s, from a single
+`pre-post pr`. It did not hold *cold*: the first invocation exited 3 for a credential, and
+four commands of environment setup came before it. Two real bugs surfaced, neither in the
+main path: `--base` is silently ignored when a PR is open, and `prune` cannot delete its
+last folder.
+
+### Which binary
+
+Built from source at `f3cb6db` ("Check that the token can publish before spending the
+screenshots (#25)") — every run below is `node dist/bin/cli.js`, never `npx` and never a bare
+`pre-post`. npm `latest` is still 1.0.0; the local build reports 1.1.0.
+
+```
+$ node dist/bin/cli.js doctor
+browser    ok    system chrome
+github     ok    token can publish to juangadm/pre-post
+devserver  note  none found on the usual ports (not a dev server: 5000 answered 403)
+repo       ok    juangadm/pre-post
+before     ok    https://prepost.juangabriel.org
+config     ok    .pre-post.json
+servable   ok    site (dev)
+ready — pre-post pr can run
+```
+
+The `github` line reads `token can publish to juangadm/pre-post`, which is #25's check, not
+1.0.0's `token found`. The result below applies to current code.
+
+### The matrix
+
+Three throwaway PRs, all closed unmerged, `main` never touched:
+[#26](https://github.com/juangadm/pre-post/pull/26) (stacked matrix),
+[#27](https://github.com/juangadm/pre-post/pull/27) (no-visual-change),
+[#28](https://github.com/juangadm/pre-post/pull/28) (new routes + kitchen sink).
+
+| # | Change | Routes detected | Right? | Result | Time |
+|---|---|---|---|---|---|
+| 1 | Component used by ONE route (`folder.tsx` corner radius) | `/components/folder` | yes | changed 0.03%, images in description | 7s |
+| 2 | Shared component (`browser.tsx`) | 6 routes, incl. 4 at **2 hops** | yes | all changed, 24 images | 11s |
+| 3 | Copy only (three labels reworded) | folder re-ranked to `high` | yes | changed 0.56%, **sameness backstop did not fire** | 11s |
+| 4a | Theme vars in `globals.css` | 6 routes | yes | **no additional change** — correct, see below | 11s |
+| 4b | Real restyle, every page | 7 detected, **capped at 6** | yes | up to **99.94%**, still published | 12s |
+| 5 | Comment-only change to a site component (#27) | `/components/folder` | yes | **0.00%, "No visual changes."**, nothing published | 5s |
+| 6 | New route not on production (#28) | `/components/typing` | yes | changed, labelled **"new page (404 on production)"** | 6s |
+| 6b | 12 more new routes at once | 13 routes | yes | all labelled 404-on-production, 48 images | 18s |
+
+Case 4a is worth keeping. A change to `--background`/`--foreground` in `globals.css`
+produced percentages *identical to the previous run, to two decimals, across six routes*.
+That looked like a stale capture, and was not: the deployed CSS really did contain
+`--background:250 40% 12%`, and every page wrapper is `min-h-screen bg-white`, which covers
+the body background completely. The change had no visual effect and the tool said so. The
+restyle was redone against the page backgrounds themselves (4b) to get a real redesign.
+
+### Are the screenshots really there, and the right way round?
+
+Yes, verified by eye, not by exit code. In #26 the Pre crop shows the folder icons with
+rounded corners (production) and the Post crop shows them square (the branch) — old page
+left, new page right. In the preview-vs-preview run the Post image is the exact restyle that
+was committed. The published URLs return `200 image/png` (382KB, 408KB).
+
+Both sides were deployments in every `pr` run: `Pre https://prepost.juangabriel.org — from
+.pre-post.json`, `Post https://prepost-<hash>.vercel.app — Preview deployment for <sha>`,
+printed above every run. It always said which side it picked and why.
+
+### Determinism, tested hard
+
+The timeline freeze (#21) is the fix most likely to fail quietly, so it was attacked
+directly with pages built to defeat it: a clock re-rendering `new Date().toISOString()` every
+50ms, twelve bars sized by `Math.random()`, CSS keyframes, an SMIL `animateTransform`, and a
+typing animation.
+
+```
+$ node dist/bin/cli.js <preview> <preview> --routes /kitchen/anim,/kitchen/clock,...
+  same     /kitchen/anim @ desktop (0.00%, 2453ms)
+  same     /kitchen/clock @ desktop (0.00%, 2491ms)
+  same     /kitchen/random @ desktop (0.00%, 2505ms)
+  same     /kitchen/svg @ desktop (0.00%, 4665ms)
+  same     /components/typing @ desktop (0.00%, 4936ms)
+  same     /kitchen/sticky @ desktop (0.00%, 5602ms)
+  same     /kitchen/gradient @ desktop (0.00%, 6365ms)
+  same     /kitchen/image @ desktop (0.00%, 6510ms)
+```
+
+Eight for eight at 0.00%, and not because the pages were blank: the random-bars capture
+contains twelve bars of differing heights, identical in both captures (so `Math.random` is
+seeded, not merely absent), and the clock capture carries 10,322 non-white pixels of
+timestamp, pixel-identical across two independent captures. The same holds *across different
+deployments*: in the 13-route preview-vs-preview run, `/components/typing` — the one page not
+restyled — came back `0.00%` at both viewports while the other twelve changed. Changed and
+unchanged, separated correctly inside one run.
+
+Ninety-six route×viewport comparisons were made in total, at `desktop`, `mobile`, `tablet`,
+`1440x900` and `375x667`. No false positive was observed anywhere.
+
+### Two bugs, recorded before any fix
+
+**`--base <ref>` is ignored whenever a PR is open.** `pre-post pr --base HEAD~1` on #26 served
+`base commit f3cb6db` — the fork point — not `HEAD~1` (`0b20d54`). Route detection honoured
+the flag; the baseline did not:
+
+```
+$ node dist/bin/cli.js detect --base HEAD~1
+{"framework":"generic",...,"base":{"sha":"0b20d54","source":"explicit"},...}
+
+$ node dist/bin/cli.js pr --base HEAD~1
+Comparing (local):
+  Pre   http://localhost:53414  — base commit f3cb6db, served locally
+  changed  / @ desktop (88.46%, 3596ms)
+```
+
+`src/comparison.ts:215` reads `ctx.pr?.base.sha ?? ctx.baseSha ?? mergeBase(...)`, so an open
+PR's base wins over the explicit flag (line 123 has the same shape). The consequence is the
+one the comment in `pr.ts` warns about — "the baseline must be built from the same commit, or
+Pre and the route list disagree about what changed" — and it published an 88.46% diff for a
+comment-only commit. `--help` says `--base <ref>  Compare against <ref> instead of the
+detected fork point`; on an open PR it does not.
+
+**`prune` cannot delete its last folder.** Nobody had run it. With #26/#27/#28 closed it
+failed outright:
+
+```
+$ node dist/bin/cli.js prune --days 0
+Error: GitHub POST /repos/juangadm/pre-post/git/trees → 404: Not Found   (exit 1)
+
+$ node dist/bin/cli.js prune --days 0 --dry-run
+Would remove: pr-15, pr-26, pr-28
+Kept: nothing
+```
+
+It intends to remove every folder, which would leave an empty tree, and GitHub's tree API
+404s on that. Reopening #28 so one folder survived proved it:
+
+```
+$ node dist/bin/cli.js prune --days 0
+Removed: pr-15, pr-26
+Kept: pr-28
+```
+
+Closing #28 again reproduced the 404 exactly. So prune works, except in the case that empties
+the branch. The error is also a raw `GitHubError`, not the single actionable sentence
+AGENTS.md asks for.
+
+Prune's documented caveat holds: after `pr-26` was removed, its image 404s at the branch tip,
+but the URL in the PR description — pinned to commit `3248dd0` — still returns 200. Tree
+entries go, git objects stay.
+
+### Counting the friction honestly
+
+`pre-post pr` really is one command, and on this machine it was 5–18s. But the first run was
+not one command:
+
+1. Local `main` was 38 commits behind; without `git pull` the whole session would have tested
+   stale code.
+2. `pnpm` was not on `PATH`. `corepack pnpm` fails on this machine with `Cannot find matching
+   keyid` (corepack's bundled signing keys), `COREPACK_INTEGRITY_KEYS=0` then fails with
+   `MODULE_NOT_FOUND`, and `npm i -g pnpm` fails on `/usr/local` permissions. pnpm 9.15.9 was
+   installed to a scratch prefix instead. Three dead ends before a build.
+3. The first `pre-post pr` exited 3: the preview sits behind Vercel Deployment Protection and
+   the run stopped before spending any screenshots. The message was correct and actionable —
+   it named the exact setting path, and setting `VERCEL_AUTOMATION_BYPASS_SECRET` fixed it on
+   the next run with no other change. Correct behaviour, but it is still a human step, and an
+   unattended agent stops here.
+
+That exit 3 is the honest limit of the one-command promise: on a machine where the secret is
+already exported, one command does the whole job; on a fresh one, it takes a human first. The
+same applies to the local path, which additionally warned `pnpm is not on PATH; installing
+the baseline with npm instead (it will not honour the pnpm lockfile)` and took 59.3s to stand
+up two dev servers, against 5–18s for the deployed path.
+
+Everything else in the matrix needed no intervention at all: no retries, no flakes, no
+wrong-side comparisons, and every advisory the tool printed (`--max-routes` to lift the cap,
+the bypass secret, the sign-in refusal) was correct and worked when followed.
