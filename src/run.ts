@@ -5,8 +5,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { AuthOptions, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
+import { AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
+import { checkLanding } from './landing.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
@@ -88,6 +89,12 @@ function describeError(err: unknown, side: 'before' | 'after', url: string): str
   return `${side}: ${msg.split('\n')[0].slice(0, 160)}`;
 }
 
+/** Did this side reach the site, or a wall standing in front of it? */
+function blockedSide(requested: string, result: CaptureResult, side: 'before' | 'after'): BlockedSide | null {
+  const landing = checkLanding(requested, result.finalUrl ?? requested, result.title ?? '');
+  return landing.blocked ? { side, finalUrl: landing.finalUrl, vercel: Boolean(result.vercel) } : null;
+}
+
 async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool): Promise<RouteCaptureOutcome> {
   const started = Date.now();
   const base: RouteCaptureOutcome = { route: task.route, resolvedRoute: task.resolvedRoute, viewport: task.viewport, status: 'error' };
@@ -113,6 +120,22 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
 
   const before = beforeRes.value;
   const after = afterRes.value;
+
+  // A sign-in wall answers with 200, so both captures "succeeded" — of a login
+  // page. Diffing those and calling the result a visual change is the failure
+  // this check exists to prevent, so nothing is compared when either side is
+  // walled.
+  const blocked = blockedSide(task.beforeUrl, before, 'before') ?? blockedSide(task.afterUrl, after, 'after');
+  if (blocked) {
+    const label = blocked.side === 'before' ? 'Pre' : 'Post';
+    return {
+      ...base,
+      blocked,
+      error: `${label} landed on a sign-in page (${blocked.finalUrl}), so the site was never captured`,
+      durationMs: Date.now() - started,
+    };
+  }
+
   if (before.status === 404 && after.status === 404) {
     return { ...base, error: `404 on both ${task.beforeUrl} and ${task.afterUrl} (wrong route or missing sample?)`, durationMs: Date.now() - started };
   }
