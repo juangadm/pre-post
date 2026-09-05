@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deploymentUrlForSha, previewUrlFromComments } from '../../src/deployments';
+import { deploymentUrlForSha, latestProductionDeployment, previewUrlFromComments } from '../../src/deployments';
 import { GitHub } from '../../src/github';
 
 /** A GitHub client whose responses are canned per path fragment. */
@@ -111,5 +111,37 @@ describe('previewUrlFromComments', () => {
 
   it('returns null when no bot has commented', async () => {
     expect(await previewUrlFromComments(ghWith([]), 'o/r', 16)).toBeNull();
+  });
+});
+
+describe('latestProductionDeployment', () => {
+  /** A page of `count` preview deployments, as GitHub returns them. */
+  const previews = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ id: 1000 + i, environment: 'Preview', created_at: '2026-01-01' }));
+
+  it('finds production buried behind a full page of previews', async () => {
+    const calls: string[] = [];
+    const gh = fakeGh({
+      'per_page=100&page=1': previews(100),
+      'per_page=100&page=2': [{ id: 7, environment: 'Production', sha: 'abc1234567', created_at: '2026-01-01' }],
+      '/deployments/7/statuses': ok('https://example.com'),
+    }, calls);
+    const found = await latestProductionDeployment(gh, 'o/r');
+    expect(found).toEqual({ url: 'https://example.com', environment: 'Production', sha: 'abc1234567' });
+    expect(calls.filter(c => c.includes('per_page=100'))).toHaveLength(2);
+  });
+
+  it('stops at a short page instead of asking for more', async () => {
+    const calls: string[] = [];
+    const gh = fakeGh({ 'per_page=100&page=1': previews(3) }, calls);
+    expect(await latestProductionDeployment(gh, 'o/r')).toBeNull();
+    expect(calls.filter(c => c.includes('per_page=100'))).toHaveLength(1);
+  });
+
+  it('gives up rather than scanning a whole history', async () => {
+    const calls: string[] = [];
+    const gh = fakeGh({ 'per_page=100': previews(100) }, calls);
+    expect(await latestProductionDeployment(gh, 'o/r')).toBeNull();
+    expect(calls.filter(c => c.includes('per_page=100'))).toHaveLength(3);
   });
 });

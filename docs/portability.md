@@ -57,21 +57,62 @@ with the remote removed it exits 3 with one sentence. Seven tests in
 
 ---
 
-## 2. The Post side assumes a local dev server — to verify
+## 2. The Post side assumes a local dev server — PARTLY FIXED
 
-`pre-post pr` serves the working tree locally for "Post" and the base commit for
-"Pre". A sandbox may not be able to run a dev server, and a PM or designer may not
-have a dev environment at all — yet they are in the goal's audience.
+**What was claimed, and what the evidence actually said.** The chunk suspected that "two
+deployed URLs" was a fallback after local serving failed. It was not: `resolveComparison`
+already tried `deployed` before `local`. The first session then diagnosed a second bug —
+that `deployedBaseline` could not find Pre on Vercel because Vercel records no GitHub
+Deployments — and reproduced it against a stub built on that assumption. **The assumption
+was wrong.** `GET /repos/juangadm/pre-post/deployments` returns Preview *and* Production
+deployments from `vercel[bot]`, including production at `26aa6cd` and `718402f` — the exact
+base commits of PRs #19 and #20. On this repository the pinned lookup finds a baseline.
 
-**Scope.** Make "two deployed URLs" (preview vs production) a first-class path rather
-than a fallback, and make `pre-post pr` choose it automatically when a preview
-deployment for the head SHA exists. Check what `deployments.ts` already resolves
-before writing anything.
+The lesson is the one this project already writes down: a reproduction against a stub proves
+the code does what the stub says, not that the stub matches the world. The endpoint was one
+public URL away and was not checked before the fix was designed.
 
-**Validate.** A run with no local dev server, no `--before`, and a preview deployment
-present produces a full comparison.
+**What survives, on its own evidence.** Four defects hold independently of that assumption:
 
-**Size.** M.
+- The base-SHA pin is the *only* baseline lookup. It works where a host deploys every push
+  to the default branch. A repository that deploys on a tag, promotes by hand, or whose base
+  commit is older than its retained deployments has nothing at the fork point, and the run
+  falls through to needing a dev server.
+- `previewForHead` required an open PR, though hosts build on push. A pushed branch with a
+  green preview could not be compared until a PR existed.
+- `--dry-run` withheld the GitHub client entirely, making it the one mode that could never
+  choose a deployment — so it always demanded a dev server, from the person least likely to
+  have one.
+- When a preview was found but no baseline, the run exited 3 saying *"No preview deployment
+  for this commit"* — the opposite of what happened.
+
+**Done.** `latestProductionDeployment` (new) answers "what is on production now" when the
+base commit has no deployment, and reports the commit it was built from so Pre is never
+mistaken for the base; `DeploymentUrl` carries that `sha`. `previewForHead` keys on the head
+commit and uses the PR only for the bot-comment fallback. `deployedPair` looks the preview
+up first and alone, so a run with no preview spends no baseline requests. `--dry-run` now
+reads GitHub and writes nothing (`gh` vs `writeGh`). `NoDeployedBaselineError` names the
+preview it found and the one flag that fixes it.
+
+**Cut, deliberately.** A first pass added a baseline guessed from the repository website or
+`homepage` in package.json, for hosts recording no deployments. Once the premise collapsed
+it had no case: a baseline that is quietly the wrong site reads as ~100% changed on every
+route and looks exactly like a real result. Widening now stops at deployments a host
+actually recorded. Add it back only if a real host is found that records none, and only
+behind a check that the two sides are the same site.
+
+**Still open.**
+
+- **Unverified in a live run.** The sandbox blocks `api.github.com`, `*.vercel.app` and the
+  production domain, so every run here used replayed payloads and local stand-in hosts. The
+  new paths are proven against shapes, not against Vercel. Whether a Vercel deployment
+  *status* carries `environment_url` — which decides whether the pinned lookup returns a URL
+  at all — is still unchecked: `GET /repos/{owner}/{repo}/deployments/{id}/statuses`.
+- **Nothing sanity-checks the baseline.** Every route at ~100% changed almost certainly
+  means the two sides are different sites, not that the branch rewrote everything. Say so
+  instead of publishing. Belongs with the noise-floor work below.
+- `doctor` says nothing about the deployed path, so it cannot tell a user whether the
+  zero-setup route is available to them.
 
 ---
 

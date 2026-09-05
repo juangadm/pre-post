@@ -12,7 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, findOpenPr, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { AssetFile, findOpenPr, getPr, getToken, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
@@ -69,13 +69,27 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   let cleanupComparison: () => Promise<void> = async () => undefined;
 
   // --- GitHub access (checked before any time is spent) -----------------------
-  const gh = opts.dryRun ? null : new GitHub(requireToken());
+  // A dry run still has to *read* GitHub: the PR, and the deployments that
+  // decide what Pre and Post are. Only writing is off. Withholding the client
+  // entirely made --dry-run the one mode that could never use a deployment,
+  // so it always demanded a dev server — from the person least likely to have
+  // one. Reads use `gh`; publishing and commenting use `writeGh`.
+  const token = opts.dryRun ? getToken() : requireToken();
+  const gh = token ? new GitHub(token) : null;
+  const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = ensureBrowser();
-  const prLookup = gh
+  const lookup = gh
     ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
     : Promise.resolve(null);
+  // A dry run used to touch GitHub not at all, and must still work when it
+  // cannot: it is what someone runs before anything is set up. A stale token or
+  // an unreachable API degrades it to "no PR", never ends the run. A real run
+  // needs the PR to publish against, so there the failure still surfaces.
+  const prLookup = opts.dryRun
+    ? lookup.catch(err => { log(`GitHub lookup failed (${err instanceof Error ? err.message : err}); continuing without it.`); return null; })
+    : lookup;
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
   const explicitAfter = opts.after ?? config.after;
@@ -85,6 +99,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // flight rather than after it.
   const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
+  const head = headSha(root);
   const pr = await prLookup;
 
   // --- What are we comparing? ---------------------------------------------------
@@ -94,6 +109,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     // Detection already established this; the baseline must be built from the
     // same commit, or Pre and the route list disagree about what changed.
     baseSha: detection.base?.sha,
+    // So a preview can be found for a branch that has been pushed but has no
+    // PR open yet — the host builds on push, not on PR.
+    headSha: head ?? undefined,
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log,
@@ -168,7 +186,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- Publish -------------------------------------------------------------------
   const changed = outcomes.filter(o => o.status === 'changed' && o.files);
-  if (gh && changed.length) {
+  if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;
     const files: AssetFile[] = [];
@@ -179,7 +197,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       }
     }
     log(`Publishing ${files.length} image(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
-    const published = await publishAssets(gh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
+    const published = await publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
       for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
@@ -198,18 +216,18 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     markdown: '',
     outputDir,
   };
-  result.markdown = buildComment(result, { version: opts.version, headSha: headSha(root), now });
+  result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
 
-  if (gh && (opts.comment ?? true)) {
+  if (writeGh && (opts.comment ?? true)) {
     if (pr) {
       // The description is what a reviewer reads first, so put the images there
       // and fall back to a comment only when the PR cannot be edited.
-      const described = await upsertPrDescription(gh, ownerRepo, pr.number, result.markdown, 'pre-post');
+      const described = await upsertPrDescription(writeGh, ownerRepo, pr.number, result.markdown, 'pre-post');
       if (described.updated) {
         result.commentUrl = described.html_url;
         log(`Updated PR description: ${described.html_url}`);
       } else {
-        const comment = await upsertStickyComment(gh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
+        const comment = await upsertStickyComment(writeGh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
         result.commentUrl = comment.html_url;
         log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
       }

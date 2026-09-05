@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveComparison, describeComparison, NoBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
+import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
 const PR = { number: 7, head: { sha: 'head1234567' }, base: { sha: 'base7654321' } };
@@ -136,6 +136,80 @@ describe('resolveComparison', () => {
       servePost: async () => ({ url: 'http://localhost:42222', stop: async () => { stopped = true; } }),
     }))).rejects.toBeInstanceOf(NoBaselineError);
     expect(stopped).toBe(true);
+  });
+
+  it('pairs a preview with what is on production when the base commit was never deployed', async () => {
+    const c = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=base': [],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+    }));
+    expect(c.strategy).toBe('deployed');
+    expect(c.before.url).toBe('https://prod.com');
+    // Says which commit Pre is, rather than implying it is the fork point.
+    expect(c.before.detail).toContain('prod999');
+  });
+
+  it('says the baseline is behind access control rather than telling you to pin it', async () => {
+    const failure = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=base': [{ id: 2, environment: 'Production' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/2/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+      probe: async url => ({ status: url.includes('prod') ? 401 : 200, vercel: true }),
+    })).catch(e => e);
+    expect(failure).toBeInstanceOf(NoDeployedBaselineError);
+    expect(failure.message).toContain('https://prod.com');
+    expect(failure.message).toContain('401');
+    // Pinning --before to the same protected URL would fail the same way.
+    expect(failure.message).not.toContain('--before');
+  });
+
+  it('finds the preview for a commit before a PR is opened', async () => {
+    const c = await resolveComparison(ctx({
+      pr: null,
+      headSha: 'loose1234567',
+      gh: gh({
+        '/deployments?sha=loose': [{ id: 1, environment: 'Preview' }],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'prod999888' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+    }));
+    expect(c.strategy).toBe('deployed');
+    expect(c.after.detail).toContain('loose12');
+  });
+
+  it('spends no baseline requests when there is no preview to pair with', async () => {
+    const seen: string[] = [];
+    const client = gh({ '/deployments?sha=': [] });
+    const inner = (client as unknown as { request: (m: string, p: string) => Promise<unknown> }).request;
+    (client as unknown as { request: (m: string, p: string) => Promise<unknown> }).request = (m, p) => {
+      seen.push(p);
+      return inner(m, p);
+    };
+    await expect(resolveComparison(ctx({ gh: client }))).rejects.toBeInstanceOf(NoPostError);
+    expect(seen.some(p => p.includes('/deployments?per_page='))).toBe(false);
+  });
+
+  it('names the preview it found when there is nothing to compare it against', async () => {
+    const failure = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=base': [],
+        '/deployments?per_page=100': [],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+      }),
+    })).catch(e => e);
+    expect(failure).toBeInstanceOf(NoDeployedBaselineError);
+    expect(failure.message).toContain('https://preview.app');
+    expect(failure.message).not.toContain('No preview deployment');
   });
 
   it('keeps a pinned --before even against a local Post, and says it is mixed', async () => {
