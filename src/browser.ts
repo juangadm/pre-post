@@ -497,10 +497,15 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
   const maxHeight = options.maxHeight ?? options.viewport.height * 3;
 
   await acquireSlot();
-  const ctx = await createContext(options.viewport, scale, options.auth);
-  const page = await ctx.newPage();
-  trackRequests(page);
+  // Creating the context and the page sits inside the try, so a failure there
+  // still releases the slot and closes what was opened. Leaking a slot would
+  // eventually stall every later capture waiting for one.
+  let ctx: BrowserContext | undefined;
+  let page: Page | undefined;
   try {
+    ctx = await createContext(options.viewport, scale, options.auth);
+    page = await ctx.newPage();
+    trackRequests(page);
     const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => {
       throw new NavigationError(classifyNavigationError(err), url, err);
     });
@@ -561,8 +566,8 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       durationMs: Date.now() - started,
     };
   } finally {
-    await page.close().catch(() => undefined);
-    await ctx.close().catch(() => undefined);
+    await page?.close().catch(() => undefined);
+    await ctx?.close().catch(() => undefined);
     releaseSlot();
   }
 }
