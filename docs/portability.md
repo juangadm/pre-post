@@ -335,21 +335,52 @@ all, and reading it as a pass would have confirmed whatever was already believed
 asks a real, merged PR with an empty patch — every field is optional, so a success changes no
 content — and separates them cleanly. PR #23's body and `updated_at` were unchanged after it.
 
-**Validated** against the real read-only token in a real Actions job (`GITHUB_ACTIONS=true`):
+**The sentence has to name the credential, not the environment.** `findToken()` prefers
+`GH_TOKEN` over `GITHUB_TOKEN`, so being inside a runner does not make the permissions block
+the fix: a workflow that sets `GH_TOKEN` to a PAT is refused by that PAT, and rewriting the
+job's permissions changes only the `GITHUB_TOKEN` the run never reaches. The mirror image was
+there too — on a laptop the hint said "run gh auth login" while an env var was shadowing the
+CLI, so the next run would select the same rejected token. Both were advice that cannot work,
+which is the one thing this sentence exists not to be. The source is carried alongside the
+token now, and the hint branches on it. (Caught in review by Codex; the second direction was
+not in the report.)
+
+**Validated** against the real read-only token in real Actions jobs (`GITHUB_ACTIONS=true`),
+one per credential, the same token supplied under each name:
 
 ```
-github     FAIL  This workflow's token cannot write to juangadm/pre-post, so the screenshots
-                 would have nowhere to go: add "permissions: contents: write" to the job and re-run.
+$ pre-post doctor                                   # GITHUB_TOKEN
+github     FAIL  This workflow's GITHUB_TOKEN cannot write to juangadm/pre-post, so the
+                 screenshots would have nowhere to go: give the job
+                 "permissions: { contents: write, pull-requests: write }" and re-run.
+not ready — fix: github
 
-$ pre-post pr --routes /
-This workflow's token cannot write to juangadm/pre-post, so the screenshots would have
-nowhere to go: add "permissions: contents: write" to the job and re-run.
-exit=3 elapsed_ms=1416
+$ pre-post pr --routes /                            # GITHUB_TOKEN
+This workflow's GITHUB_TOKEN cannot write to juangadm/pre-post, so the screenshots would
+have nowhere to go: give the job "permissions: { contents: write, pull-requests: write }"
+and re-run.
+exit=3 elapsed_ms=1667
+
+$ pre-post pr --routes /                            # the same token, set as GH_TOKEN
+The GH_TOKEN this workflow sets cannot write to juangadm/pre-post, so the screenshots would
+have nowhere to go: give that credential write access, or unset it so the job's own
+GITHUB_TOKEN is used with "permissions: { contents: write, pull-requests: write }".
+exit=3
 ```
 
-1.4s instead of the 22.7s that job spent capturing one route. `--dry-run` with both variables
-unset still completes on exit 0. Nine unit tests in `tests/unit/github.test.ts` cover the
-three outcomes, the two hints, and that a 500 or an unreachable API is not called a rejection.
+1.7s instead of the 22.7s that job spent capturing one route. `--dry-run` with both variables
+unset still completes on exit 0. Thirteen unit tests in `tests/unit/github.test.ts` cover the
+three outcomes, which source `findToken` selects, a hint per source in and out of a runner,
+and that a 500 or an unreachable API is not called a rejection.
+
+**The browser had to be closed on the way out.** `ensureBrowser()` is launched at the top of
+`runPr` so it overlaps route detection, but the only `closeBrowser()` sat in the capture
+block's `finally`. Every throw before that — this preflight, and the reachability failures
+already there — left a Chromium nothing references; the CLI's `process.exit` hid it, and a
+caller using `runPr()` as a library would not be so lucky. One teardown now serves all of
+them, and it awaits the launch first: `closeBrowser()` drops a pending launch and closes
+nothing, and the launch then resolves into an orphan. (Also caught in review; the
+reachability paths were not in the report.)
 
 **Not reproduced end to end.** No run here contrived a real visual diff in CI, so the full
 "capture, then 403" sequence was never one command. It is assembled from three measurements
