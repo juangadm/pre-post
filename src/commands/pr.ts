@@ -85,6 +85,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // flight rather than after it.
   const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
+  const head = headSha(root);
   const pr = await prLookup;
 
   // --- What are we comparing? ---------------------------------------------------
@@ -94,6 +95,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     // Detection already established this; the baseline must be built from the
     // same commit, or Pre and the route list disagree about what changed.
     baseSha: detection.base?.sha,
+    // So a preview can be found for a branch that has been pushed but has no
+    // PR open yet — the host builds on push, not on PR.
+    headSha: head ?? undefined,
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log,
@@ -198,7 +202,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     markdown: '',
     outputDir,
   };
-  result.markdown = buildComment(result, { version: opts.version, headSha: headSha(root), now });
+  result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
 
   if (gh && (opts.comment ?? true)) {
     if (pr) {
