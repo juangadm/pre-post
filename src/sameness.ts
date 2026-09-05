@@ -66,38 +66,90 @@ export const SAME_SITE_FLOOR = 0.1;
  * Containment rather than Jaccard because the two sides legitimately differ in
  * length — a branch that adds a section should not read as a different site for
  * having more words than the baseline.
- *
- * Returns null when either side is too text-poor to judge.
  */
-export function textOverlap(before: string, after: string): number | null {
-  const a = pageWords(before);
-  const b = pageWords(after);
-  if (a.size < MIN_WORDS || b.size < MIN_WORDS) return null;
+function containment(a: Set<string>, b: Set<string>): number {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   let shared = 0;
   for (const word of small) if (large.has(word)) shared++;
   return shared / small.size;
 }
 
+/** Overlap of two pages' body text, or null when either is too text-poor to judge. */
+export function textOverlap(before: string, after: string): number | null {
+  const a = pageWords(before);
+  const b = pageWords(after);
+  if (a.size < MIN_WORDS || b.size < MIN_WORDS) return null;
+  return containment(a, b);
+}
+
+/**
+ * Overlap of two pages' titles, or null when either says nothing distinctive.
+ *
+ * No `MIN_WORDS` here: a title is a handful of words by nature, and it is the
+ * one place a site almost always names itself. That makes it the corroborating
+ * signal for a run with only one route to go on — a branch that rewrites a
+ * page's copy keeps the site's name in the tab, a different site does not.
+ */
+export function titleOverlap(before: string, after: string): number | null {
+  const a = pageWords(before);
+  const b = pageWords(after);
+  if (!a.size || !b.size) return null;
+  return containment(a, b);
+}
+
+/** What this needs from each capture: which page it was, and how the two sides compared. */
+export interface RouteEvidence {
+  route?: string;
+  textOverlap?: number | null;
+  titleOverlap?: number | null;
+}
+
 /**
  * Do the captures, taken together, say these are two different sites?
  *
- * Every judgeable route has to disagree, and at least one has to be judgeable.
- * One route sharing no words is ordinary — a branch can rewrite a page — while
- * every route on the site sharing none is not a change, it is the wrong site.
- * Requiring unanimity is what keeps this from firing on real work.
+ * Every judgeable page has to disagree, and the evidence has to be about
+ * *pages*, not captures. One route shot at three viewports is one page's word
+ * list three times over; counting it as three agreeing witnesses is how a run
+ * that detected a single route — an explicit `--routes /`, or the `/` fallback
+ * when the diff names none — could reject the one thing this function's own
+ * rule permits: a branch that rewrote a page.
+ *
+ * So captures are folded per route, keeping each route's *strongest* showing of
+ * shared words, and a run with only one page to go on asks the title as well. A
+ * title is where a site names itself, so a rewritten page keeps it and a
+ * different site does not. Without a usable title there is no second witness
+ * and the run is published, which is the right way to be wrong here: publishing
+ * a diff someone can look at beats refusing to on one page's say-so.
  */
-export function looksLikeDifferentSites(routes: Array<{ textOverlap?: number | null }>): boolean {
-  const judged = routes
-    .map(r => r.textOverlap)
-    .filter((v): v is number => typeof v === 'number');
-  return judged.length > 0 && judged.every(v => v < SAME_SITE_FLOOR);
+export function looksLikeDifferentSites(routes: RouteEvidence[]): boolean {
+  const pages = new Map<string, { text: number | null; title: number | null }>();
+  for (const [i, r] of routes.entries()) {
+    const key = r.route ?? `#${i}`;
+    const seen = pages.get(key);
+    // The best showing across viewports: any viewport that found shared words
+    // clears the page, so a single narrow layout cannot condemn it alone.
+    pages.set(key, {
+      text: strongest(seen?.text, r.textOverlap),
+      title: strongest(seen?.title, r.titleOverlap),
+    });
+  }
+
+  const judged = [...pages.values()].filter(p => p.text !== null);
+  if (judged.length === 0 || !judged.every(p => (p.text as number) < SAME_SITE_FLOOR)) return false;
+  if (judged.length > 1) return true;
+  const { title } = judged[0];
+  return title !== null && title < SAME_SITE_FLOOR;
+}
+
+/** The higher of two overlaps, treating "could not judge" as no evidence. */
+function strongest(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (typeof a !== 'number') return typeof b === 'number' ? b : null;
+  if (typeof b !== 'number') return a;
+  return Math.max(a, b);
 }
 
 /** The one sentence a human needs when the two sides are not the same site. */
 export function differentSitesHint(beforeUrl: string, beforeDetail: string, afterUrl: string): string {
-  return `Pre and Post are not the same site: no route shows any of the same words on both sides. ` +
-    `Pre is ${beforeUrl} (${beforeDetail}) and Post is ${afterUrl}. ` +
-    `Nothing was published, because a diff between two different sites is not a review of this branch. ` +
-    `Re-run with --before pointing at this site's own deployment.`;
+  return `Pre (${beforeUrl} — ${beforeDetail}) and Post (${afterUrl}) share no wording on any route, ` +
+    `so they are not the same site: re-run with --before pointing at this site's own deployment.`;
 }

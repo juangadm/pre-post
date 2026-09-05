@@ -372,11 +372,23 @@ same site         0.200 (weakest fixture), 0.417 – 1.000, and 1.000 for real p
 ```
 
 **Done.** `sameness.ts` holds the floor (0.1, in the empty band above) and the rule: a page
-with fewer than ten distinct words is not judged at all, and *every* judgeable route has to
+with fewer than ten distinct words is not judged at all, and *every* judgeable page has to
 disagree before the run stops — one rewritten page is a branch doing its job, every page is
 the wrong site. Captures carry their visible text, read after the screenshot so it cannot
 influence the pixels being compared. `pr.ts` raises `NeedsHumanError` naming both sides
 instead of publishing.
+
+**The evidence has to be about pages, not captures.** Folding one route's viewports together
+is the difference between a working rule and one that contradicts itself. A route captured at
+desktop and mobile is one page's word list twice; counting it as two agreeing witnesses let a
+single-route run — an explicit `--routes /`, or the `/` fallback when the diff names no
+routes — reject exactly the case the rule above permits, a branch that rewrote a page.
+Captures are now folded per route, keeping each route's *strongest* showing of shared words,
+and a run with only one page to go on asks the **title** as a second witness: a title is where
+a site names itself, so a rewritten page keeps it and a different site does not. With no
+usable title there is no corroboration and the run publishes — the right way to be wrong here,
+since a diff someone can look at beats refusing on one page's say-so. (Caught in review; the
+first version's own doc comment claimed the property its code did not have.)
 
 Verified end to end against two real sites served locally: caught at 1.69% / 2.91% changed —
 numbers no ratio rule would flag — while a dark redesign of the same site at >50% changed

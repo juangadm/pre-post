@@ -82,6 +82,25 @@ describe('telling a different site from a changed one', () => {
     expect(Math.max(...outcomes.map(o => o.changedRatio ?? 0))).toBeGreaterThan(0.5);
   });
 
+  /**
+   * The single-route case: `--routes /`, or the `/` fallback when the diff
+   * names none. A branch that rewrites every word on that one page must still
+   * publish — the two viewports of it are one page's evidence, not two pages
+   * agreeing, and the title still names the site.
+   */
+  it.skipIf(!playwrightAvailable)('publishes a one-page copy rewrite instead of rejecting it', async () => {
+    const before = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));
+    const rewritten = await serve(wrap('pre-post', OTHER_BODY, '#fff', '#111'));
+    servers.push(before, rewritten);
+
+    const outcomes = await compare(before, rewritten);
+    // The body text genuinely shares nothing — the guard is the title, and the
+    // fact that one route cannot corroborate itself across viewports.
+    for (const o of outcomes) expect(o.textOverlap).toBeLessThan(0.1);
+    expect(outcomes.every(o => (o.titleOverlap ?? 0) > 0.1)).toBe(true);
+    expect(looksLikeDifferentSites(outcomes)).toBe(false);
+  });
+
   it.skipIf(!playwrightAvailable)('is quiet about the same site captured twice', async () => {
     const a = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));
     const b = await serve(wrap('pre-post', SITE_BODY, '#fff', '#111'));

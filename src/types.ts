@@ -234,6 +234,11 @@ export interface RouteCaptureOutcome {
    * different sites, which a pixel ratio cannot tell you — see `sameness.ts`.
    */
   textOverlap?: number | null;
+  /**
+   * The same measure over the two titles. A title is where a site names
+   * itself, so it corroborates a run that only has one route to judge.
+   */
+  titleOverlap?: number | null;
 }
 
 export interface BlockedSide {
