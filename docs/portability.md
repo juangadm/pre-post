@@ -116,10 +116,12 @@ behind a check that the two sides are the same site.
 
 ---
 
-## 3. Identical pages reported as changed — FIXED
+## 3. Capture time changed what was captured — FIXED
 
-A real run on 2026-09-05 (PR #20, branch `claude/post-preview-deployment-urls-198t98`)
-compared production against the branch's preview deployment:
+Opened to explain a real run on 2026-09-05 (PR #20, branch
+`claude/post-preview-deployment-urls-198t98`), which compared production against the
+branch's preview deployment. **It turned out not to be the cause of that run** — see the
+correction at the end of this chunk — but it is a real defect on its own evidence:
 
 ```
 changed  / @ mobile  (4.41%)
@@ -185,11 +187,21 @@ rung as changed and every no-op as zero, and `tests/browser/capture.test.ts` now
 the same animated page captured 1.2s apart is pixel-identical — with a second test that
 `--wait` still moves it, so the first cannot pass by the fixture going static.
 
-**Still open.** The sandbox blocks `prepost.juangabriel.org` and `*.vercel.app` (the egress
-proxy answers 403 to CONNECT), so this was proven against the site's own production build
-served from two local ports with injected latency — the same code, the same asymmetry, not
-the same wire. Worth one confirming run of the original command from a machine that can
-reach both hosts.
+**What this did not fix, and a correction.** The chunk was opened to explain the #20 run
+above, and attributed it to the animation. A live run from a machine that can reach both
+hosts disproved that: the Post side was capturing **the Vercel Deployment Protection login
+page**, not the site. The numbers give it away in hindsight — 4.53% / 1.99% reproduced to
+two decimal places across three runs and across two different preview deployments, and did
+not move when the timeline fix landed. Timing noise does not reproduce to two decimals.
+
+The determinism defect above is real, measured and fixed on its own evidence. It was not the
+cause of the run it was opened to explain. The sandbox blocks `prepost.juangabriel.org` and
+`*.vercel.app` (the egress proxy answers 403 to CONNECT), so the fix was proven against the
+site's own production build served from two local ports with injected latency — the same
+code, the same asymmetry, not the same wire. The one thing that reproduction could never
+show was what the far side actually served. The lesson from chunk 2 applies again, one level
+up: a faithful reproduction of a real phenomenon still is not evidence that the phenomenon
+is the one in the report.
 
 ---
 
@@ -270,6 +282,70 @@ fail by exit code.
 - Self-cleaning assets branch (cleanup rides along with each publish, instead of a
   `prune` nobody runs).
 - Honest coverage line: say what was checked *and* what was skipped.
+
+---
+
+## Findings from the first live run (2026-09-05)
+
+Confirmed on a real machine against the real hosts. Three failures, all of the
+confident-and-wrong class, none of them fixed — recorded here so the next session starts
+from evidence.
+
+**1. A protected deployment is captured as a login page and diffed. — confirmed**
+
+`browser.ts` raises `HttpStatusError` on 401/403, and `resolveAuth` sends
+`x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is set. Neither helps
+here: Vercel's Deployment Protection answers the *redirected* request with **HTTP 200** and
+a login page, so the guard never fires. The run then reports:
+
+```
+changed  / @ mobile (4.53%)
+changed  / @ desktop (1.99%)
+```
+
+— the site diffed against a login screen, published to a PR description as "Visual changes".
+This is the exact failure the optimization plan predicted ("a Vercel-protected URL silently
+captures the login page as 'before'") and it is still open.
+
+**Scope.** Detect the wall by what came back, not by the status: a redirect to a known
+sign-in host, or a page whose content says so, is not the site. Stop with `NeedsHumanError`
+(exit 3) naming `VERCEL_AUTOMATION_BYPASS_SECRET` in one sentence. A generic version of the
+"~100% changed means the two sides are different sites" check from chunk 2 belongs here too:
+a diff that large is a bug report about the run, not a result.
+
+**2. Any port that answers is treated as the dev server. — confirmed**
+
+`detectDevServer` (`doctor.ts:51`) accepts a port when `status !== null` — any status at all.
+`DEV_PORTS` includes 5000, which on macOS is **AirPlay Receiver**. With no dev server
+running, the probe adopts AirPlay, gets its 403, and prints:
+
+```
+localhost:5000 requires a login. Run: npx pre-post login http://localhost:5000
+```
+
+Advice to sign in to a macOS system service, in place of "no dev server is running". It bites
+precisely when nothing else is listening — the case the message exists to describe.
+
+**Scope.** Require a plausible app response (2xx/3xx with an HTML content-type), not merely a
+reachable socket. Drop 5000 and 7000 on darwin, or probe them last and never accept a 401/403
+from them. `NoDevServerError` should win over any inference drawn from a stranger's port.
+
+**3. Serving the base commit needs a package manager on PATH. — confirmed**
+
+```
+Could not serve base commit 864ce15: pnpm install failed; run it by hand in
+/var/folders/.../pre-post-base-58vjgT/site to see why.
+```
+
+`pnpm` was not on PATH in that shell (`zsh: command not found: pnpm`), and the local baseline
+path assumes it. The same shell could still build the CLI with
+`./node_modules/.bin/tsc -p tsconfig.pkg.json`, so the tool was runnable while its baseline
+was not. Related to the install finding below, and it removes the fallback exactly when the
+deployed path has already failed — as it did here, so the run ended with all three failures
+stacked.
+
+**Scope.** Choose the package manager from what the repo declares and what is actually on
+PATH, fall back to `npm`, and say which one failed and how to run it by hand.
 
 ---
 
