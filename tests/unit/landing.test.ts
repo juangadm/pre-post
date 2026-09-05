@@ -61,6 +61,18 @@ describe('checkLanding', () => {
     expect(l.blocked).toBe(false);
   });
 
+  it('flags the real Vercel deployment-protection wall', () => {
+    // Observed on a live protected preview, 2026-09-05: HTTP 200 after a
+    // redirect off-site, which is why the 401/403 guard never saw it.
+    const l = checkLanding(
+      'https://prepost-lqlivj5ce-juangabrieldelgado-6681s-projects.vercel.app/',
+      'https://vercel.com/login?next=%2Fsso-api%3Furl%3Dhttps%253A%252F%252Fprepost-lqlivj5ce-juangabrieldelgado-6681s-projects.vercel.app%252F%26nonce%3Da8d4dab1',
+      'Login – Vercel',
+    );
+    expect(l.blocked).toBe(true);
+    expect(l.offSite).toBe(true);
+  });
+
   it('flags a redirect to deployment protection', () => {
     const l = checkLanding(
       'https://app-abc.vercel.app/',
