@@ -8,15 +8,39 @@ import { browserDescription } from '../browser.js';
 import { configPath, CONFIG_FILENAME, loadConfig } from '../config.js';
 import { ensureBrowser, scanDevServers } from '../doctor.js';
 import { GH_LOGIN_HINT } from '../errors.js';
-import { repoRoot } from '../git.js';
+import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
-import { getToken } from '../github.js';
+import { cannotPublishHint, checkWriteAccess, getToken, GitHub } from '../github.js';
 import { closeBrowser } from '../browser.js';
 
 export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+}
+
+/**
+ * "Token found" was an all-clear that a token cannot earn by existing. In a
+ * Claude Code web sandbox both `GH_TOKEN` and `GITHUB_TOKEN` are set to a
+ * placeholder the egress proxy substitutes on some paths and not others, and
+ * this check said `ok  token found` while every call `pr` makes answered 401.
+ * So ask the API the question the run depends on, and report its answer.
+ */
+async function githubCheck(cwd?: string): Promise<DoctorCheck> {
+  const token = getToken();
+  if (!token) return { name: 'github', ok: false, detail: GH_LOGIN_HINT };
+  let ownerRepo: string;
+  try {
+    ownerRepo = resolveOwnerRepo(repoRoot(cwd));
+  } catch {
+    // Nothing to ask about. Naming what went unchecked keeps this from reading
+    // as the all-clear it replaced.
+    return { name: 'github', ok: false, detail: 'token found, but no GitHub remote to check it against' };
+  }
+  const access = await checkWriteAccess(new GitHub(token), ownerRepo);
+  if (access.writable) return { name: 'github', ok: true, detail: `token can publish to ${ownerRepo}` };
+  if (access.reason === 'rejected') return { name: 'github', ok: false, detail: cannotPublishHint(ownerRepo) };
+  return { name: 'github', ok: false, detail: `could not reach GitHub to check the token (${access.detail})` };
 }
 
 export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
@@ -29,7 +53,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   } finally {
     await closeBrowser();
   }
-  checks.push(getToken() ? { name: 'github', ok: true, detail: 'token found' } : { name: 'github', ok: false, detail: GH_LOGIN_HINT });
+  checks.push(await githubCheck(cwd));
   // Name the ports that answered but were passed over. "None found on the
   // usual ports" reads as a lie to anyone who knows something is listening on
   // one of them, and the usual something is a macOS system service on 5000.
