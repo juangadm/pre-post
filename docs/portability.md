@@ -777,9 +777,9 @@ eight chunks of correctness work with no working run behind them. This is that r
 **Verdict: the promise holds on the deployed path, once the machine is set up.** Every case
 in the matrix produced correct screenshots in a PR description, in 5–18s, from a single
 `pre-post pr`. It did not hold *cold*: the first invocation exited 3 for a credential, and
-four commands of environment setup came before it. Two real bugs surfaced, neither in the
-main path: `--base` is silently ignored when a PR is open, and `prune` cannot delete its
-last folder.
+four commands of environment setup came before it. Three defects surfaced: `--base` is silently
+ignored when a PR is open, `prune` cannot delete its last folder, and — the one that matters
+most, found only on review — a low-contrast change can be reported as no change at all.
 
 ### Which binary
 
@@ -817,8 +817,8 @@ Three throwaway PRs, all closed unmerged, `main` never touched:
 | 4a | Theme vars in `globals.css` | 6 routes | yes | **no additional change** — correct, see below | 11s |
 | 4b | Real restyle, every page | 7 detected, **capped at 6** | yes | up to **99.94%**, still published | 12s |
 | 5 | Comment-only change to a site component (#27) | `/components/folder` | yes | **0.00%, "No visual changes."**, nothing published | 5s |
-| 6 | New route not on production (#28) | `/components/typing` | yes | changed, labelled **"new page (404 on production)"** | 6s |
-| 6b | 12 more new routes at once | 13 routes | yes | all labelled 404-on-production, 48 images | 18s |
+| 6 | New route not on production (#28) | `/components/typing` | yes | published, labelled **"new page (404 on production)"** — but see the caveat below | 6s |
+| 6b | 12 more new routes at once | 13 routes | yes | all labelled 404-on-production, 48 images — same caveat | 18s |
 
 Case 4a is worth keeping. A change to `--background`/`--foreground` in `globals.css`
 produced percentages *identical to the previous run, to two decimals, across six routes*.
@@ -837,6 +837,68 @@ was committed. The published URLs return `200 image/png` (382KB, 408KB).
 Both sides were deployments in every `pr` run: `Pre https://prepost.juangabriel.org — from
 .pre-post.json`, `Post https://prepost-<hash>.vercel.app — Preview deployment for <sha>`,
 printed above every run. It always said which side it picked and why.
+
+### The caveat on #28: every Pre is the same 404 page
+
+Caught on review, not during the run, and worth stating plainly because the matrix above
+reads better than the artifact does.
+
+All 13 routes in #28 are new, so on the Pre side — production, `prepost.juangabriel.org` —
+none of them exist. Every Pre screenshot in that PR is Next.js's "404 | This page could not
+be found." All 13 are byte-identical:
+
+```
+$ md5 -q *-pre.png | sort | uniq -c
+  13 a21f185ace6b289f61317f2b2a08f2ad
+```
+
+The tool was not wrong and was not silent: it labelled every row `new page (404 on
+production)`, which is the correct description of a route with no baseline. But two things
+follow that the table above does not say.
+
+First, those 13 rows demonstrate capture, publish and description-rendering; they do **not**
+demonstrate a useful before/after, because there is no "before". The real before/after for
+these pages is the preview-vs-preview run, where an old preview stands in as the baseline.
+
+Second, **a percentage measured against a 404 page means nothing**, and should not be read
+as "how much this change altered the page". `/kitchen/gradient` at 10.81% is not a 10%
+redesign; it is a coloured box on white measured against text on white.
+
+The honest reading of case 6 is: pre-post handles a new route without breaking, and says so
+clearly. It cannot show you a before, because there isn't one.
+
+### A false negative: low-contrast changes read as no change
+
+Chasing the oddest number in that run — `/kitchen/image` at **0.05%** — turned up a real
+limitation, and one the matrix was not looking for. The page renders `placeholder.jpg`, a
+light-grey (#F0F0F0-ish) block covering about a sixth of the viewport, against the 404 page's
+white. Counting raw differing pixels puts the true difference at **17.2%**. The tool reported
+0.05%.
+
+The cause is `PIXEL_THRESHOLD = 0.1` in `src/diff.ts`, pixelmatch's per-pixel colour distance.
+It is a cliff, not a gradient:
+
+```
+pixelmatch threshold 0.1   -> 0.05% changed
+pixelmatch threshold 0.05  -> 17.15% changed
+pixelmatch threshold 0.02  -> 17.15% changed
+pixelmatch threshold 0.01  -> 17.15% changed
+```
+
+Grey-on-white sits just under the shipped threshold, so a large and plainly visible block
+scores as though it were not there. Every other route in the run tracked the true ratio
+closely (anim 1.05 vs 1.13, gradient 10.81 vs 12.71, clock 0.21 vs 0.35), so this is specific
+to low contrast, not a general miscount.
+
+This is the mirror image of the false positive chunk 3 was written to remove, and it is the
+more dangerous direction: a real change to a light-grey surface — a card background, a
+disabled state, a subtle hover fill, a zebra-striped table — can report at or near zero and
+publish "No visual changes." Nothing in the matrix would have caught it, because the matrix
+only watched for change reported where there was none.
+
+Not fixed here. Lowering the threshold trades this false negative for the anti-aliasing false
+positives the threshold exists to suppress, and that trade needs its own measurement across
+the fixture pages rather than a number picked to make one case pass.
 
 ### Determinism, tested hard
 
@@ -868,7 +930,7 @@ unchanged, separated correctly inside one run.
 Ninety-six route×viewport comparisons were made in total, at `desktop`, `mobile`, `tablet`,
 `1440x900` and `375x667`. No false positive was observed anywhere.
 
-### Two bugs, recorded before any fix
+### Two more bugs, recorded before any fix
 
 **`--base <ref>` is ignored whenever a PR is open.** `pre-post pr --base HEAD~1` on #26 served
 `base commit f3cb6db` — the fork point — not `HEAD~1` (`0b20d54`). Route detection honoured
