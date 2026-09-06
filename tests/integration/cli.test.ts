@@ -139,8 +139,8 @@ describe('CLI', () => {
         expect((byKey.get('/button-color|desktop') as any).status).toBe('changed');
         expect((byKey.get('/identical|desktop') as any).status).toBe('unchanged');
         expect((byKey.get('/missing|mobile') as any).status).toBe('error');
-        expect(fs.existsSync(path.join(dir, 'button-color-desktop-pre-crop.png'))).toBe(true);
-        const png = PNG.sync.read(fs.readFileSync(path.join(dir, 'button-color-mobile-post.png')));
+        expect(fs.existsSync(path.join(dir, 'button-color-desktop-before-crop.png'))).toBe(true);
+        const png = PNG.sync.read(fs.readFileSync(path.join(dir, 'button-color-mobile-after.png')));
         expect(png.width).toBe(750); // 375 CSS px at 2x
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });

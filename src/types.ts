@@ -212,6 +212,26 @@ export interface ArtifactSet {
 
 export const ARTIFACT_KINDS = ['before', 'after', 'diff', 'cropBefore', 'cropAfter'] as const;
 
+export type ArtifactKind = typeof ARTIFACT_KINDS[number];
+
+/**
+ * The filename segment for an artifact kind, e.g. `home-desktop-<segment>.png`.
+ *
+ * One mapping, because two of them is what went wrong: the capture wrote
+ * `-pre`/`-post` while the assets branch published `-before`/`-after`, so the
+ * file on disk and the image in the PR had different names for the same
+ * screenshot. Renaming the literals on one side would only have moved the
+ * seam — the crops would still have been `-before-crop` locally and
+ * `-cropBefore` published.
+ */
+export function artifactSuffix(kind: ArtifactKind): string {
+  switch (kind) {
+    case 'cropBefore': return 'before-crop';
+    case 'cropAfter': return 'after-crop';
+    default: return kind;
+  }
+}
+
 export interface RouteCaptureOutcome {
   route: string;
   /** Route actually requested (after sample substitution) */

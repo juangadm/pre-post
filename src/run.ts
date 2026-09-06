@@ -6,7 +6,7 @@
 import fs from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
-import { AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
+import { ArtifactKind, artifactSuffix, AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
 import { checkLanding, signInHint } from './landing.js';
 import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap } from './sameness.js';
@@ -180,8 +180,8 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   }
 
   const prefix = `${routeSlug(task.route)}-${task.viewport}`;
-  const file = (kind: string) => path.join(opts.outputDir, `${prefix}-${kind}.png`);
-  const outputs = { before: file('pre'), after: file('post'), diff: file('diff'), cropBefore: file('pre-crop'), cropAfter: file('post-crop') };
+  const file = (kind: ArtifactKind) => path.join(opts.outputDir, `${prefix}-${artifactSuffix(kind)}.png`);
+  const outputs = { before: file('before'), after: file('after'), diff: file('diff'), cropBefore: file('cropBefore'), cropAfter: file('cropAfter') };
 
   // A route that exists on only one side is not a comparison, and the moment to
   // notice is here — before the diff, not after it in a footnote.
