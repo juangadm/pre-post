@@ -1,6 +1,7 @@
 import { AutoPlayHero } from "@/components/hero";
 import { Code } from "@/components/code";
 import { Logo } from "@/components/logo";
+import { version } from "../../package.json";
 
 export default function Page() {
   return (
@@ -360,7 +361,7 @@ export default function Page() {
             </a>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-xs font-[family-name:var(--font-departure)]">v1.0.0</span>
+            <span className="text-xs font-[family-name:var(--font-departure)]">v{version}</span>
             <a
               href="https://www.npmjs.com/package/@juangadm/pre-post"
               target="_blank"
