@@ -767,3 +767,269 @@ Jobs are copied now.
 build"`, so every install compiles TypeScript — the thing Phase 1 of the optimization plan
 set out to remove ("ship prebuilt `dist/` so `npx` never compiles; drop the `prepare`
 hook"). It also means an install failure and a compile failure look alike.
+
+## First successful run (2026-09-05)
+
+The promise in AGENTS.md — an agent runs one command and gets before/after screenshots into
+a PR description — had not been demonstrated since 2026-09-02, and PRs #19–#25 had landed
+eight chunks of correctness work with no working run behind them. This is that run.
+
+**Verdict: the promise holds on the deployed path, once the machine is set up.** Every case
+in the matrix produced correct screenshots in a PR description, in 5–18s, from a single
+`pre-post pr`. It did not hold *cold*: the first invocation exited 3 for a credential, and
+four commands of environment setup came before it. Three defects surfaced: `--base` is silently
+ignored when a PR is open, `prune` cannot delete its last folder, and — the one that matters
+most, found only on review — a low-contrast change can be reported as no change at all.
+
+### Which binary
+
+Built from source at `f3cb6db` ("Check that the token can publish before spending the
+screenshots (#25)") — every run below is `node dist/bin/cli.js`, never `npx` and never a bare
+`pre-post`. npm `latest` is still 1.0.0; the local build reports 1.1.0.
+
+```
+$ node dist/bin/cli.js doctor
+browser    ok    system chrome
+github     ok    token can publish to juangadm/pre-post
+devserver  note  none found on the usual ports (not a dev server: 5000 answered 403)
+repo       ok    juangadm/pre-post
+before     ok    https://prepost.juangabriel.org
+config     ok    .pre-post.json
+servable   ok    site (dev)
+ready — pre-post pr can run
+```
+
+The `github` line reads `token can publish to juangadm/pre-post`, which is #25's check, not
+1.0.0's `token found`. The result below applies to current code.
+
+### The matrix
+
+Three throwaway PRs, all closed unmerged, `main` never touched:
+[#26](https://github.com/juangadm/pre-post/pull/26) (stacked matrix),
+[#27](https://github.com/juangadm/pre-post/pull/27) (no-visual-change),
+[#28](https://github.com/juangadm/pre-post/pull/28) (new routes + kitchen sink).
+
+| # | Change | Routes detected | Right? | Result | Time |
+|---|---|---|---|---|---|
+| 1 | Component used by ONE route (`folder.tsx` corner radius) | `/components/folder` | yes | changed 0.03%, images in description | 7s |
+| 2 | Shared component (`browser.tsx`) | 6 routes, incl. 4 at **2 hops** | yes | all changed, 24 images | 11s |
+| 3 | Copy only (three labels reworded) | folder re-ranked to `high` | yes | changed 0.56%, **sameness backstop did not fire** | 11s |
+| 4a | Theme vars in `globals.css` | 6 routes | yes | **no additional change** — correct, see below | 11s |
+| 4b | Real restyle, every page | 7 detected, **capped at 6** | yes | up to **99.94%**, still published | 12s |
+| 5 | Comment-only change to a site component (#27) | `/components/folder` | yes | **0.00%, "No visual changes."**, nothing published | 5s |
+| 6 | New route not on production (#28) | `/components/typing` | yes | published, labelled **"new page (404 on production)"** — but see the caveat below | 6s |
+| 6b | 12 more new routes at once | 13 routes | yes | all labelled 404-on-production, 48 images — same caveat | 18s |
+
+Case 4a is worth keeping. A change to `--background`/`--foreground` in `globals.css`
+produced percentages *identical to the previous run, to two decimals, across six routes*.
+That looked like a stale capture, and was not: the deployed CSS really did contain
+`--background:250 40% 12%`, and every page wrapper is `min-h-screen bg-white`, which covers
+the body background completely. The change had no visual effect and the tool said so. The
+restyle was redone against the page backgrounds themselves (4b) to get a real redesign.
+
+### Are the screenshots really there, and the right way round?
+
+Yes, verified by eye, not by exit code. In #26 the Pre crop shows the folder icons with
+rounded corners (production) and the Post crop shows them square (the branch) — old page
+left, new page right. In the preview-vs-preview run the Post image is the exact restyle that
+was committed. The published URLs return `200 image/png` (382KB, 408KB).
+
+Both sides were deployments in every `pr` run: `Pre https://prepost.juangabriel.org — from
+.pre-post.json`, `Post https://prepost-<hash>.vercel.app — Preview deployment for <sha>`,
+printed above every run. It always said which side it picked and why.
+
+### The caveat on #28: every Pre is the same 404 page
+
+Caught on review, not during the run, and worth stating plainly because the matrix above
+reads better than the artifact does.
+
+All 13 routes in #28 are new, so on the Pre side — production, `prepost.juangabriel.org` —
+none of them exist. Every Pre screenshot in that PR is Next.js's "404 | This page could not
+be found." All 13 are byte-identical:
+
+```
+$ md5 -q *-pre.png | sort | uniq -c
+  13 a21f185ace6b289f61317f2b2a08f2ad
+```
+
+The tool was not wrong and was not silent: it labelled every row `new page (404 on
+production)`, which is the correct description of a route with no baseline. But two things
+follow that the table above does not say.
+
+First, those 13 rows demonstrate capture, publish and description-rendering; they do **not**
+demonstrate a useful before/after, because there is no "before". The real before/after for
+these pages is the preview-vs-preview run, where an old preview stands in as the baseline.
+
+Second, **a percentage measured against a 404 page means nothing**, and should not be read
+as "how much this change altered the page". `/kitchen/gradient` at 10.81% is not a 10%
+redesign; it is a coloured box on white measured against text on white.
+
+The honest reading of case 6 is: pre-post handles a new route without breaking, and says so
+clearly. It cannot show you a before, because there isn't one.
+
+**Fixed.** A route present on only one side is now its own outcome, decided before the diff:
+no percentage is quoted, only the side that rendered is kept, and it renders as
+`### /route — Desktop · New page` with a single screenshot. Verified against the same preview
+that produced the 404s — four routes reporting `new page — no baseline`, four files written
+instead of sixteen — and against a route present on both sides, which still diffs normally
+(99.83% and 99.20%, with an unrelated control still at 0.00%). Soft 404s, which no status
+check can see, are caught separately at the run level: a baseline that returns pixel-identical
+bytes for several unrelated routes is serving a catch-all, and the run says so. That one warns
+rather than reclassifies, because two routes can legitimately render the same page and
+silently turning a real diff into "new page" would hide the change this tool exists to show.
+
+### A false negative: low-contrast changes read as no change
+
+Chasing the oddest number in that run — `/kitchen/image` at **0.05%** — turned up a real
+limitation, and one the matrix was not looking for. The page renders `placeholder.jpg`, a
+light-grey (#F0F0F0-ish) block covering about a sixth of the viewport, against the 404 page's
+white. Counting raw differing pixels puts the true difference at **17.2%**. The tool reported
+0.05%.
+
+The cause is `PIXEL_THRESHOLD = 0.1` in `src/diff.ts`, pixelmatch's per-pixel colour distance.
+It is a cliff, not a gradient:
+
+```
+pixelmatch threshold 0.1   -> 0.05% changed
+pixelmatch threshold 0.05  -> 17.15% changed
+pixelmatch threshold 0.02  -> 17.15% changed
+pixelmatch threshold 0.01  -> 17.15% changed
+```
+
+Grey-on-white sits just under the shipped threshold, so a large and plainly visible block
+scores as though it were not there. Every other route in the run tracked the true ratio
+closely (anim 1.05 vs 1.13, gradient 10.81 vs 12.71, clock 0.21 vs 0.35), so this is specific
+to low contrast, not a general miscount.
+
+This is the mirror image of the false positive chunk 3 was written to remove, and it is the
+more dangerous direction: a real change to a light-grey surface — a card background, a
+disabled state, a subtle hover fill, a zebra-striped table — can report at or near zero and
+publish "No visual changes." Nothing in the matrix would have caught it, because the matrix
+only watched for change reported where there was none.
+
+Not fixed here. Lowering the threshold trades this false negative for the anti-aliasing false
+positives the threshold exists to suppress, and that trade needs its own measurement across
+the fixture pages rather than a number picked to make one case pass.
+
+### Determinism, tested hard
+
+The timeline freeze (#21) is the fix most likely to fail quietly, so it was attacked
+directly with pages built to defeat it: a clock re-rendering `new Date().toISOString()` every
+50ms, twelve bars sized by `Math.random()`, CSS keyframes, an SMIL `animateTransform`, and a
+typing animation.
+
+```
+$ node dist/bin/cli.js <preview> <preview> --routes /kitchen/anim,/kitchen/clock,...
+  same     /kitchen/anim @ desktop (0.00%, 2453ms)
+  same     /kitchen/clock @ desktop (0.00%, 2491ms)
+  same     /kitchen/random @ desktop (0.00%, 2505ms)
+  same     /kitchen/svg @ desktop (0.00%, 4665ms)
+  same     /components/typing @ desktop (0.00%, 4936ms)
+  same     /kitchen/sticky @ desktop (0.00%, 5602ms)
+  same     /kitchen/gradient @ desktop (0.00%, 6365ms)
+  same     /kitchen/image @ desktop (0.00%, 6510ms)
+```
+
+Eight for eight at 0.00%, and not because the pages were blank: the random-bars capture
+contains twelve bars of differing heights, identical in both captures (so `Math.random` is
+seeded, not merely absent), and the clock capture carries 10,322 non-white pixels of
+timestamp, pixel-identical across two independent captures. The same holds *across different
+deployments*: in the 13-route preview-vs-preview run, `/components/typing` — the one page not
+restyled — came back `0.00%` at both viewports while the other twelve changed. Changed and
+unchanged, separated correctly inside one run.
+
+Ninety-six route×viewport comparisons were made in total, at `desktop`, `mobile`, `tablet`,
+`1440x900` and `375x667`. No false positive was observed anywhere.
+
+### Two more bugs, recorded before any fix
+
+**`--base <ref>` is ignored whenever a PR is open.** `pre-post pr --base HEAD~1` on #26 served
+`base commit f3cb6db` — the fork point — not `HEAD~1` (`0b20d54`). Route detection honoured
+the flag; the baseline did not:
+
+```
+$ node dist/bin/cli.js detect --base HEAD~1
+{"framework":"generic",...,"base":{"sha":"0b20d54","source":"explicit"},...}
+
+$ node dist/bin/cli.js pr --base HEAD~1
+Comparing (local):
+  Pre   http://localhost:53414  — base commit f3cb6db, served locally
+  changed  / @ desktop (88.46%, 3596ms)
+```
+
+`src/comparison.ts:215` reads `ctx.pr?.base.sha ?? ctx.baseSha ?? mergeBase(...)`, so an open
+PR's base wins over the explicit flag (line 123 has the same shape). The consequence is the
+one the comment in `pr.ts` warns about — "the baseline must be built from the same commit, or
+Pre and the route list disagree about what changed" — and it published an 88.46% diff for a
+comment-only commit. `--help` says `--base <ref>  Compare against <ref> instead of the
+detected fork point`; on an open PR it does not.
+
+**`prune` cannot delete its last folder.** Nobody had run it. With #26/#27/#28 closed it
+failed outright:
+
+```
+$ node dist/bin/cli.js prune --days 0
+Error: GitHub POST /repos/juangadm/pre-post/git/trees → 404: Not Found   (exit 1)
+
+$ node dist/bin/cli.js prune --days 0 --dry-run
+Would remove: pr-15, pr-26, pr-28
+Kept: nothing
+```
+
+It intends to remove every folder, which would leave an empty tree, and GitHub's tree API
+404s on that. Reopening #28 so one folder survived proved it:
+
+```
+$ node dist/bin/cli.js prune --days 0
+Removed: pr-15, pr-26
+Kept: pr-28
+```
+
+Closing #28 again reproduced the 404 exactly. So prune works, except in the case that empties
+the branch. The error is also a raw `GitHubError`, not the single actionable sentence
+AGENTS.md asks for.
+
+Prune's documented caveat holds: after `pr-26` was removed, its image 404s at the branch tip,
+but the URL in the PR description — pinned to commit `3248dd0` — still returns 200. Tree
+entries go, git objects stay.
+
+### Counting the friction honestly
+
+`pre-post pr` really is one command, and on this machine it was 5–18s. But the first run was
+not one command:
+
+1. Local `main` was 38 commits behind; without `git pull` the whole session would have tested
+   stale code.
+2. `pnpm` was not on `PATH`. `corepack pnpm` fails on this machine with `Cannot find matching
+   keyid` (corepack's bundled signing keys), `COREPACK_INTEGRITY_KEYS=0` then fails with
+   `MODULE_NOT_FOUND`, and `npm i -g pnpm` fails on `/usr/local` permissions. pnpm 9.15.9 was
+   installed to a scratch prefix instead. Three dead ends before a build.
+3. The first `pre-post pr` exited 3: the preview sits behind Vercel Deployment Protection and
+   the run stopped before spending any screenshots. The message was correct and actionable —
+   it named the exact setting path, and setting `VERCEL_AUTOMATION_BYPASS_SECRET` fixed it on
+   the next run with no other change. Correct behaviour, but it is still a human step, and an
+   unattended agent stops here.
+
+That exit 3 is the honest limit of the one-command promise: on a machine where the secret is
+already exported, one command does the whole job; on a fresh one, it takes a human first. The
+same applies to the local path, which additionally warned `pnpm is not on PATH; installing
+the baseline with npm instead (it will not honour the pnpm lockfile)` and took 59.3s to stand
+up two dev servers, against 5–18s for the deployed path.
+
+Everything else in the matrix needed no intervention at all: no retries, no flakes, no
+wrong-side comparisons, and every advisory the tool printed (`--max-routes` to lift the cap,
+the bypass secret, the sign-in refusal) was correct and worked when followed.
+
+### Still open, in the order worth taking
+
+1. **The false negative above.** It is the only known defect that fails silently and in the
+   reassuring direction — pre-post says "No visual changes" about a page that changed — so it
+   costs a reviewer the thing they came for without ever telling them. Worth doing as a
+   measurement across the fixture pairs rather than a new constant: sweep the threshold, keep
+   AGENTS.md's rule that identical pages stay at 0 pixels, and check whether the tolerance is
+   doing a job `includeAA` should be doing instead.
+2. **`--base` ignored when a PR is open** (`src/comparison.ts:215`). Small and contained: the
+   explicit flag should win over the PR's base, which is the documented behaviour.
+3. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
+   branch already agreed above — that idea publishes and deletes through the same tree call,
+   so it inherits this bug until it is fixed.
