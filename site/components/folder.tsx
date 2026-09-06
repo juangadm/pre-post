@@ -37,7 +37,7 @@ export function FolderDefs({ id }: { id: string }) {
 
       {/* Clip path for front folder shape */}
       <clipPath id={`${id}-frontClip`}>
-        <rect x="21" y="68" width="470" height="352" rx="32" />
+        <rect x="21" y="68" width="470" height="352" rx="4" />
       </clipPath>
     </>
   )
@@ -96,7 +96,7 @@ export function FolderFront({ id }: { id: string }) {
         y="68"
         width="470"
         height="352"
-        rx="32"
+        rx="4"
         fill={`url(#${id}-frontGradient)`}
       />
 
@@ -106,7 +106,7 @@ export function FolderFront({ id }: { id: string }) {
         y="68"
         width="470"
         height="352"
-        rx="32"
+        rx="4"
         fill="#ffffff"
         fillOpacity="0.10"
         filter={`url(#${id}-noise)`}
