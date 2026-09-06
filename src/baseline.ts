@@ -232,9 +232,19 @@ function tail(text: string, lines = 24): string {
   return kept.join('\n').trim();
 }
 
+/**
+ * Room for the noisiest install that still works.
+ *
+ * Node's default is 1 MiB per stream, and exceeding it kills the child with
+ * ENOBUFS — which this code would read as a failed install. A verbose set of
+ * postinstall scripts must not be the reason a baseline cannot be built, and
+ * the buffer is transient and freed as soon as the tail is taken.
+ */
+const MAX_INSTALL_OUTPUT = 64 * 1024 * 1024;
+
 const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => {
   try {
-    execFileSync(bin, argv, { cwd, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(bin, argv, { cwd, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_INSTALL_OUTPUT });
     // Only a failure has anything to explain, so the successful install's log
     // is dropped rather than split into lines nothing will read.
     return { argv, ok: true, output: '' };
