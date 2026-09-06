@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ArtifactSet, Framework, PrePostConfig, PrRunResult } from '../types.js';
+import { ArtifactKind, ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, PrePostConfig, PrRunResult } from '../types.js';
 import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
@@ -47,7 +47,7 @@ export interface PrCommandOptions extends Partial<Settings> {
  * to locate the changed region; Pre beside Post is the comparison a reviewer
  * reads, so shipping the overlay is upload time and storage for nothing.
  */
-const PUBLISHED_KINDS = ['before', 'after', 'cropBefore', 'cropAfter'] as const;
+const PUBLISHED_KINDS = ARTIFACT_KINDS.filter(kind => kind !== 'diff');
 
 function headersFor(config: PrePostConfig, opts: PrCommandOptions): Record<string, string> {
   return resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [] })?.headers ?? {};
@@ -240,7 +240,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const changed = outcomes.filter(o => (o.status === 'changed' || o.status === 'added' || o.status === 'removed') && o.files);
   if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
-    const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;
+    const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;
     const files: AssetFile[] = [];
     for (const o of changed) {
       for (const kind of PUBLISHED_KINDS) {
