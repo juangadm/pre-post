@@ -232,7 +232,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   if (run.verdict) throw new NeedsHumanError(run.verdict.hint);
 
   // --- Publish -------------------------------------------------------------------
-  const changed = outcomes.filter(o => o.status === 'changed' && o.files);
+  const changed = outcomes.filter(o => (o.status === 'changed' || o.status === 'added' || o.status === 'removed') && o.files);
   if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: keyof ArtifactSet) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${kind}.png`;

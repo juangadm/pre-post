@@ -38,13 +38,17 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
   const errors = result.outcomes.filter(o => o.status === 'error');
+  // A page that only one side has is still something a reviewer must see, so it
+  // counts as a change for "did anything happen" — but it is shown as one
+  // screenshot, never as a Pre/Post pair, because there is no pair.
+  const oneSided = result.outcomes.filter(o => (o.status === 'added' || o.status === 'removed') && (o.urls || o.files));
 
   // Both sides can now be a deployment, so name the actual hosts rather than
   // assuming Post is the reader's own checkout.
   const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
   lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>`, '');
-  if (changed.length === 0) lines.push('No visual changes.', '');
+  if (changed.length === 0 && oneSided.length === 0) lines.push('No visual changes.', '');
 
   for (const [route, outcomes] of routes) {
     const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
@@ -61,8 +65,8 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
           : `Content ${describeShift(o.shift.px)}. Nothing else changed.`, '');
       }
       const cropped = Boolean(u.cropBefore && u.cropAfter);
-      const pre = u.cropBefore ?? u.before;
-      const post = u.cropAfter ?? u.after;
+      const pre = u.cropBefore ?? u.before!;
+      const post = u.cropAfter ?? u.after!;
       lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
       // Without a crop the pair above is already the full page; repeating it
       // under a fold gives a reviewer two more identical images to scroll past.
@@ -72,6 +76,19 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
         lines.push('</details>', '');
       }
     }
+  }
+
+  for (const o of oneSided) {
+    const u = o.urls ?? o.files!;
+    const image = o.status === 'added' ? u.after : u.before;
+    if (!image) continue;
+    const what = o.status === 'added' ? 'New page' : 'Page removed';
+    const side = o.status === 'added' ? 'Post' : 'Pre';
+    lines.push(`### ${code(o.route)} — ${viewportLabel(o.viewport)} · ${what}`, '');
+    lines.push(o.status === 'added'
+      ? `This route has no baseline — ${hostOf(result.beforeBase)} returns 404 for it — so there is no "before" to show and no percentage to quote. ${side} only:`
+      : `This route is gone on this branch, so there is no "after". ${side} only:`, '');
+    lines.push(`![${side}](${image})`, '');
   }
 
   if (unchanged.length) {
@@ -112,7 +129,11 @@ export function buildSummary(result: PrRunResult): string {
   const rows = result.outcomes.map(o => [
     o.route,
     o.viewport,
-    o.status === 'error' ? 'error' : o.status === 'changed' ? 'changed' : 'no change',
+    o.status === 'error' ? 'error'
+      : o.status === 'changed' ? 'changed'
+      : o.status === 'added' ? 'new page'
+      : o.status === 'removed' ? 'removed'
+      : 'no change',
     o.status === 'error' ? (o.error ?? '') : (o.note || ''),
   ]);
   const widths = [0, 1, 2].map(i => Math.max(...rows.map(r => r[i].length), 0));
