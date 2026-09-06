@@ -278,6 +278,8 @@ export interface RouteShift {
   px: number;
   /** Whether anything changed beyond the move, judged by the same rule as any other capture. */
   otherChange: boolean;
+  /** Changed share once the move is undone; `changedRatio` is the raw figure. */
+  residualRatio: number;
 }
 
 export interface PrRunResult {

@@ -255,10 +255,17 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
           { changedPixels: diff.shift.alignedChangedPixels, changedRatio: diff.shift.alignedChangedRatio },
           opts,
         ),
+        residualRatio: diff.shift.alignedChangedRatio,
       }
     : undefined;
-  const shiftNote = shift ? `${describeShift(shift.px)}, ` : '';
-  opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${shiftNote}${(diff.changedRatio * 100).toFixed(2)}%, ${Date.now() - started}ms)`);
+  // With a move, the raw ratio is mostly the move: quoting it beside "shifted
+  // down 80px" invites reading 19.86% as the size of the change when the page
+  // only really changed by 1.41%. Say which number is on screen.
+  const pct = (r: number) => `${(r * 100).toFixed(2)}%`;
+  const measure = shift
+    ? `${describeShift(shift.px)}, ${pct(diff.shift!.alignedChangedRatio)} once aligned (${pct(diff.changedRatio)} raw)`
+    : pct(diff.changedRatio);
+  opts.log?.(`  ${changed ? 'changed ' : 'same    '} ${task.route} @ ${task.viewport} (${measure}, ${Date.now() - started}ms)`);
   return {
     ...base,
     status: changed ? 'changed' : 'unchanged',
