@@ -52,7 +52,13 @@ export interface ResolveContext {
   /** Local dev server URL, if one is already running. */
   devServer: Promise<string | null>;
   probe: (url: string) => Promise<ProbeResult>;
-  /** The commit detection compared against, when it resolved one. */
+  /**
+   * The commit detection compared against, when it resolved one.
+   *
+   * This wins over the PR's base: it is what `--base` sets, and it is the
+   * commit the route list was built from. The PR's base is the fallback for a
+   * caller that has a PR but no detection of its own.
+   */
   baseSha?: string;
   /** This checkout's HEAD, so a preview can be found before a PR is opened. */
   headSha?: string;
@@ -120,7 +126,7 @@ async function deployedBaseline(ctx: ResolveContext): Promise<Side | null> {
   // was — a host that deploys every push to the default branch has one — but a
   // repository that deploys on a tag, promotes by hand, or whose base commit is
   // older than its retained deployments will find nothing here.
-  const baseSha = ctx.pr?.base.sha ?? ctx.baseSha;
+  const baseSha = ctx.baseSha ?? ctx.pr?.base.sha;
   if (baseSha) {
     const pinned = await deploymentUrlForSha(ctx.gh, ctx.ownerRepo, baseSha, { production: true });
     if (pinned) return side(pinned.url, `${pinned.environment} deployment for ${baseSha.slice(0, 7)}`);
@@ -212,7 +218,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
 
   // git knows what this branch forked from, so a baseline does not depend on a
   // PR existing yet — this often runs before one is opened.
-  const baseSha = ctx.pr?.base.sha ?? ctx.baseSha ?? mergeBase(ctx.repoRoot) ?? undefined;
+  const baseSha = ctx.baseSha ?? ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
   const baseline = ctx.allowLocalBaseline === false || !baseSha
     ? null
     : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log });
