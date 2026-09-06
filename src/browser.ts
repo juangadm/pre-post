@@ -282,6 +282,32 @@ export function browserDescription(): string {
 // Contexts
 // ============================================================
 
+/**
+ * Framework dev overlays: Next's issue badge and route announcer, Vite's error
+ * overlay.
+ *
+ * On the local strategy both sides are dev servers, so the badge appears in
+ * Pre and Post alike and in every image published to the PR — an artefact of
+ * how the screenshots were taken that production never shows. It is
+ * position: fixed, so a layout shift moves the page under it and leaves it
+ * behind, which then counts as residual change the branch did not make.
+ *
+ * Hidden here rather than configured away at the dev server, because that
+ * reaches only the side pre-post starts: the Post side is often the caller's
+ * own working tree, or a server already running that this tool must not edit.
+ * A selector that matches nothing is inert, so no framework detection is
+ * needed — and detection would not be available anyway when both sides are
+ * bare URLs with no repository behind them.
+ */
+const DEV_OVERLAY_SELECTORS = [
+  'nextjs-portal',
+  '#__next-build-watcher',
+  '[data-nextjs-toast]',
+  'next-route-announcer',
+  'vite-error-overlay',
+  '#vite-error-overlay',
+];
+
 const INIT_SCRIPT = `
   (() => {
     // Deterministic pseudo-random for pages that seed layout from Math.random().
@@ -290,7 +316,9 @@ const INIT_SCRIPT = `
     // No smooth scrolling: scrollTo() must land immediately.
     const style = document.createElement('style');
     style.setAttribute('data-pre-post', '');
-    style.textContent = 'html, body, * { scroll-behavior: auto !important; } ::-webkit-scrollbar { display: none !important; }';
+    style.textContent = 'html, body, * { scroll-behavior: auto !important; }'
+      + ' ::-webkit-scrollbar { display: none !important; }'
+      + ' ${DEV_OVERLAY_SELECTORS.join(', ')} { display: none !important; }';
     const attach = () => { (document.head || document.documentElement).appendChild(style); };
     if (document.head) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
   })();
