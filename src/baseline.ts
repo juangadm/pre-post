@@ -17,6 +17,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
+import { NeedsHumanError } from './errors.js';
 import { devScript, readPackage } from './pkg.js';
 import { findAppRoots } from './routes.js';
 
@@ -32,9 +33,26 @@ interface PackageManager {
   install: string[];
   /** Build `run <script>` argv, appending extra args the way this manager wants. */
   run: (script: string, args: string[]) => string[];
+  /**
+   * A second install to try, and the failure that earns it — or undefined when
+   * this manager has no looser mode.
+   *
+   * Both halves together, because apart they drift: a predicate matching npm's
+   * `ERESOLVE` sitting at module scope would be applied to whichever managers
+   * happened to have a retry argv, which is right today only because npm is
+   * the only one that does.
+   *
+   * Only npm needs one. npm 7+ treats a peer range as a hard constraint and
+   * aborts the whole install over a single lagging package; pnpm, yarn and bun
+   * warn and carry on. A React 19 app with one dependency whose peer range
+   * still says <=18 is an ordinary, temporary state of a real repository — and
+   * it took the local baseline, the fallback that is supposed to always work,
+   * down with it.
+   */
+  retry?: { argv: string[]; when: (output: string) => boolean };
 }
 
-const NPM: PackageManager = { bin: 'npm', install: ['install'], run: (s, a) => ['run', s, '--', ...a] };
+const NPM: PackageManager = { bin: 'npm', install: ['install'], retry: { argv: ['install', '--legacy-peer-deps'], when: isPeerConflict }, run: (s, a) => ['run', s, '--', ...a] };
 const PNPM: PackageManager = { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s, a) => ['run', s, ...a] };
 const YARN: PackageManager = { bin: 'yarn', install: ['install'], run: (s, a) => ['run', s, ...a] };
 const BUN: PackageManager = { bin: 'bun', install: ['install'], run: (s, a) => ['run', s, ...a] };
@@ -184,6 +202,119 @@ export function freePort(): Promise<number> {
   });
 }
 
+/**
+ * How a package manager's install ended, and what it said.
+ *
+ * The output is kept because it is the only thing that can answer "why". The
+ * old path discarded it (`stdio: 'ignore'`) and told the reader to run the
+ * install themselves in their checkout — advice that could not reproduce the
+ * failure, because the install had run in a throwaway worktree that was
+ * already deleted by the time they read it.
+ */
+export interface InstallAttempt {
+  argv: string[];
+  ok: boolean;
+  /** The tail of the manager's own stdout+stderr. */
+  output: string;
+}
+
+export interface InstallResult {
+  ok: boolean;
+  /** In order. Length 2 when a first failure earned a retry. */
+  attempts: InstallAttempt[];
+}
+
+export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => InstallAttempt;
+
+/** Keep the end of the output: managers put the diagnosis last. */
+function tail(text: string, lines = 24): string {
+  const kept = text.replace(/\s+$/, '').split('\n').slice(-lines);
+  return kept.join('\n').trim();
+}
+
+const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => {
+  try {
+    execFileSync(bin, argv, { cwd, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    // Only a failure has anything to explain, so the successful install's log
+    // is dropped rather than split into lines nothing will read.
+    return { argv, ok: true, output: '' };
+  } catch (err) {
+    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
+    const output = [e.stdout, e.stderr].map(part => (part ? String(part) : '')).join('');
+    return { argv, ok: false, output: tail(output || e.message || '') };
+  }
+};
+
+/**
+ * Does this look like npm refusing to resolve a peer range?
+ *
+ * Matched on npm's own error code rather than on prose, so it does not depend
+ * on the wording of a given npm release. The second pattern is the same
+ * failure as reported by older npm, which does not always print the code.
+ */
+export function isPeerConflict(output: string): boolean {
+  return /ERESOLVE/i.test(output) || /could not resolve dependency/i.test(output);
+}
+
+/**
+ * Install this app's dependencies, retrying once past a peer-dependency wall.
+ *
+ * The retry is deliberately narrow: only on the specific failure that a looser
+ * resolver would not have had, and only for a manager that has a looser mode.
+ * A baseline installed with `--legacy-peer-deps` is not a perfect reproduction
+ * of the branch's own install — but the alternative is no baseline at all, and
+ * the comparison this tool exists to make is between two renders of the same
+ * app, not between two dependency trees.
+ */
+export function installDeps(
+  pm: PackageManager,
+  cwd: string,
+  timeoutMs: number,
+  run: InstallRunner = runInstall,
+): InstallResult {
+  const deadline = Date.now() + timeoutMs;
+  const first = run(pm.bin, pm.install, cwd, timeoutMs);
+  if (first.ok || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
+  // The remainder of the original budget, not a fresh one: a first attempt
+  // that burned the clock must not let the retry double the wall time.
+  const second = run(pm.bin, pm.retry.argv, cwd, deadline - Date.now());
+  return { ok: second.ok, attempts: [first, second] };
+}
+
+/**
+ * The install failed and nothing else can rescue this run.
+ *
+ * Its own error rather than a quiet null, for the reason docs/portability.md
+ * §1 gives about base resolution: a run that compared nothing must not exit
+ * clean. A null here fell through to "no baseline", and on a repository with a
+ * configured production URL it fell through to comparing against that instead
+ * — a different answer to a different question, published as if it were this
+ * one.
+ */
+function installFailureMessage(result: InstallResult, where: string, ranIn: string, throwaway: boolean): string {
+  const [first, retried] = result.attempts;
+  const last = retried ?? first;
+  const tried = result.attempts.map(a => `\`${a.argv.join(' ')}\``).join(', then ');
+  const lines = [`Could not install ${where}: ${tried} failed.`];
+  // Naming the worktree would be useless: cleanup has already deleted it. What
+  // the reader needs is that their own checkout is not what failed.
+  lines.push(throwaway
+    ? `That install ran in a throwaway worktree of the base commit, not in ${ranIn}, so the same command may well succeed in your checkout.`
+    : `It ran in ${ranIn}.`);
+  // The flag comes from the manager record rather than a second copy of it
+  // here, so a change to the retry cannot leave this sentence naming a flag
+  // that was never run.
+  if (retried) lines.push(`The retry with ${retried.argv[retried.argv.length - 1]} did not clear it either.`);
+  return `${lines.join('\n')}\n\n${last.output}`;
+}
+
+export class BaselineInstallError extends NeedsHumanError {
+  constructor(public readonly result: InstallResult, where: string, ranIn: string, throwaway: boolean) {
+    super(installFailureMessage(result, where, ranIn, throwaway));
+    this.name = 'BaselineInstallError';
+  }
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -323,11 +454,14 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
   if (install) {
-    try {
-      execFileSync(pm.bin, pm.install, { cwd: appDir, stdio: 'ignore', timeout: Math.max(1, deadline - Date.now()) });
-    } catch {
+    const result = installDeps(pm, appDir, deadline - Date.now());
+    if (!result.ok) {
       await cleanup();
-      return skip(`\`${pm.bin} ${pm.install.join(' ')}\` failed. Run it in ${appIn} to see why.`);
+      throw new BaselineInstallError(result, where, appIn, worktree !== opts.repoRoot);
+    }
+    const retried = result.attempts[1];
+    if (retried) {
+      log(`\`${pm.bin} ${pm.install.join(' ')}\` hit a peer-dependency conflict; installed the baseline with \`${retried.argv.join(' ')}\` instead.`);
     }
   }
 
