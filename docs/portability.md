@@ -1114,5 +1114,25 @@ The false negative above and the new-route bug are both fixed; what is left is s
    The same fixture on the old code reproduces the original failure exactly —
    `GitHubError: GitHub POST /repos/juangadm/pre-post/git/trees → 404: Not Found`. The write
    phase is now wrapped in `NeedsHumanError`; everything before it is a read, so a failure
-   there has left the branch untouched and the one thing to do is fix access and re-run.
-   Four tests in `tests/unit/github.test.ts`, two of which fail on the old code.
+   there has left the branch untouched and the run is always safe to repeat.
+
+   **Two things review caught that the evidence above did not.** Both are worth recording,
+   because both are cases the throwaway-branch runs could not reach:
+
+   - *The rebuild had to be fenced off from truncated listings.* GitHub truncates a large
+     recursive tree, and entries it omits are invisible to the survivor check — so a branch
+     whose returned entries were all stale would have been rebuilt as `README.md` alone,
+     deleting everything left out. The `base_tree` subtraction it replaced was safe there.
+     `truncated` was being read into the response type and never checked. It is now: a
+     partial listing always subtracts from `base_tree`, which cannot empty the tree, since
+     truncation means more entries exist than are being removed. Neither fixture could show
+     this — a two-blob tree never truncates.
+   - *One actionable sentence has to name the right action.* The first wrap told every
+     failed write to check `contents: write`. But `request` has already turned 401 and 403
+     into `NeedsHumanError` before this point, so what actually arrives is a refusal
+     disguised as a 404, a lost race (409/422), or GitHub being unwell (429/5xx) — and only
+     the first is about permissions. A sentence that names the wrong cause is worse than a
+     raw error, because it is followed. The three now read differently.
+
+   Nine tests in `tests/unit/github.test.ts`; five fail on the code they were written
+   against.
