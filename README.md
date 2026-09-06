@@ -104,52 +104,35 @@ Comment: https://github.com/acme/web/pull/42
 
 ## Install
 
-There is nothing to install permanently and no account to create. Pick whichever of the two
-describes you.
+Two ways. Neither installs anything permanently.
 
-### If you use Claude Code
-
-Install once:
+### Claude Code — easiest
 
 ```bash
 npx skills add juangadm/pre-post -y
 ```
 
-Then, after changing anything visual, say:
+Then say `/pre-post` after a UI change. Install once, never type a flag. No npm
+knowledge needed.
 
-```
-/pre-post
-```
-
-Claude runs the tool and reports back with a link to the PR. You never type a flag, and you
-do not need to know what npm is — this is the easier route, and it is the one to pick if
-you are not the person who normally runs build commands.
-
-### If you work in a terminal
-
-No install step at all:
+### Terminal
 
 ```bash
 npx -y @juangadm/pre-post@latest pr
 ```
 
-Run it on a branch that has an open PR. `npx` ships with Node and fetches the tool on the
-spot, so there is nothing to add to your `package.json` and nothing to keep updated.
+Run it on a branch with an open PR. No install step.
 
-### What you need either way
+### Both need
 
 | | |
 |---|---|
-| **Node 20 or newer** | [nodejs.org](https://nodejs.org). This is the one hard requirement — both routes above are Node programs. Check with `node --version`. |
-| **A GitHub token** | Run `gh auth login` once ([GitHub CLI](https://cli.github.com)), or set `GH_TOKEN`. It needs write access to the repo, because it publishes the images and edits the PR. |
-| **An open pull request** | The images go at the top of its description. No PR, no place to put them — pre-post will say so and print the markdown for you to paste. |
+| **Node 20+** | The one hard requirement. Check with `node --version`. |
+| **A GitHub token** | `gh auth login`, or set `GH_TOKEN`. Needs write access — it publishes images and edits the PR. |
+| **An open PR** | Where the images go. Without one, pre-post prints the markdown to paste. |
 
-The first run also downloads a Chromium headless shell (~80 MB) and reuses it afterwards.
-That, plus the screenshots themselves, is why a first run takes about a minute and later
-ones are quicker.
-
-Not sure whether you are set up? `npx -y @juangadm/pre-post@latest doctor` checks the
-browser, your GitHub auth and the dev server, and tells you the one thing to fix.
+First run also pulls a Chromium headless shell (~80 MB), then reuses it. Stuck? Run
+`npx -y @juangadm/pre-post@latest doctor`.
 
 ## Usage
 
