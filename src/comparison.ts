@@ -235,9 +235,14 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   // git knows what this branch forked from, so a baseline does not depend on a
   // PR existing yet — this often runs before one is opened.
   const baseSha = ctx.baseSha ?? ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
+  // Serving the base can now fail loudly rather than yielding — an install
+  // that died is not a "try the next option", it is the answer. The Post
+  // server is already up by then, so it has to come down before the throw
+  // escapes; nothing above this has a handle on it yet.
   const baseline = ctx.allowLocalBaseline === false || !baseSha
     ? null
-    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log });
+    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, log: ctx.log })
+        .catch(async err => { await stopPost(); throw err; });
   if (baseline) {
     const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`);
     return pair('local', before, after, async () => { await baseline.stop(); await stopPost(); });

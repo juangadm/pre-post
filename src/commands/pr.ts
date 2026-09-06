@@ -141,6 +141,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- What are we comparing? ---------------------------------------------------
   const headers = headersFor(config, opts);
+  // Resolution can throw (no baseline, an install that failed): the browser was
+  // launched before this and nothing else would close it, so its teardown has
+  // to cover the throw as well as the happy path.
   const comparison: Comparison = await resolveComparison({
     gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
     // Detection already established this; the baseline must be built from the
@@ -154,7 +157,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log,
-  });
+  }).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
