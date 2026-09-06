@@ -201,8 +201,10 @@ export interface PrePostConfig {
 
 /** Pre, post, and (when there was a change) diff and crop images, as local paths or URLs. */
 export interface ArtifactSet {
-  before: string;
-  after: string;
+  /** Absent when the route has no baseline (a page this branch adds). */
+  before?: string;
+  /** Absent when the branch removed the route. */
+  after?: string;
   diff?: string;
   cropBefore?: string;
   cropAfter?: string;
@@ -215,14 +217,16 @@ export interface RouteCaptureOutcome {
   /** Route actually requested (after sample substitution) */
   resolvedRoute: string;
   viewport: string;
-  status: 'changed' | 'unchanged' | 'error';
+  status: 'changed' | 'unchanged' | 'added' | 'removed' | 'error';
   changedRatio?: number;
   sizeChanged?: boolean;
   error?: string;
   files?: ArtifactSet;
   urls?: ArtifactSet;
   durationMs?: number;
-  /** Extra context, e.g. "new page (404 on production)" */
+  /** sha1 of the baseline capture, for spotting a host that serves one page for every route */
+  baselineHash?: string;
+  /** Extra context, e.g. "new page — no baseline (example.com returned 404)" */
   note?: string;
   /** Vertical displacement of Post against Pre, when one explains the change */
   shift?: RouteShift;
