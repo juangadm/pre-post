@@ -126,12 +126,20 @@ export default function Page() {
           <section id="install" className="scroll-mt-8 space-y-3">
             <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">Install</h2>
             <p className="text-sm">
-              Nothing to install. The first run downloads the CLI and the Chromium
-              headless shell. You need Node 20+ and a GitHub token — either{" "}
-              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">gh auth login</code>{" "}
-              or <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">GH_TOKEN</code>.
+              For a terminal. Nothing to install and nothing to add to your{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">package.json</code> — the first run downloads the CLI and the
+              Chromium headless shell, then reuses them. Run it on a branch with an
+              open pull request.
             </p>
             <Code>npx -y @juangadm/pre-post@latest pr</Code>
+            <p className="text-sm">
+              Node 20 or newer is the only hard requirement. The GitHub token comes from{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">gh auth login</code> or{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">GH_TOKEN</code>, and needs write access — it
+              publishes the images and edits the PR. If a run does not go through,{" "}
+              <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">doctor</code> checks all three and names
+              the one thing to fix.
+            </p>
           </section>
 
           <section id="skill" className="scroll-mt-8 space-y-3">
@@ -146,6 +154,12 @@ export default function Page() {
               after a UI change.
             </p>
             <Code>npx skills add juangadm/pre-post -y</Code>
+            <p className="text-sm">
+              The easier of the two, and the one to pick if you are not the person who
+              normally runs build commands: you install once, then never type a flag
+              again. You do not need to know what npm is — only to have Node 20+ on the
+              machine Claude Code is running on.
+            </p>
           </section>
 
           <section id="options" className="scroll-mt-8">
@@ -297,9 +311,12 @@ export default function Page() {
             </dd>
             <dt>How do I install pre-post?</dt>
             <dd>
-              Nothing to install. Run npx -y @juangadm/pre-post@latest pr. You need
-              Node 20+ and a GitHub token, from gh auth login or GH_TOKEN. To add it
-              as a Claude Code skill, run npx skills add juangadm/pre-post -y.
+              Two ways, and neither installs anything permanently. In Claude Code, run
+              npx skills add juangadm/pre-post -y once, then say /pre-post after a UI
+              change — this is the easier route and needs no npm knowledge. In a
+              terminal, run npx -y @juangadm/pre-post@latest pr with no install step at
+              all. Both need Node 20 or newer and a GitHub token, from gh auth login or
+              GH_TOKEN.
             </dd>
             <dt>How does pre-post work?</dt>
             <dd>
