@@ -146,8 +146,12 @@ export function buildSummary(result: PrRunResult): string {
   // Named for what actually happened. The images normally go in the PR
   // description and only fall back to a comment, so "Comment:" sent a reader
   // looking for a comment that a run with zero comments had never created.
+  //
+  // Only an explicit 'description' changes the label: `commentKind` is optional
+  // and `buildSummary` is exported, so a caller that predates it — or a result
+  // persisted before it existed — still means what it always meant.
   if (result.commentUrl) {
-    lines.push(`${result.commentKind === 'comment' ? 'Comment' : 'PR description'}: ${result.commentUrl}`);
+    lines.push(`${result.commentKind === 'description' ? 'PR description' : 'Comment'}: ${result.commentUrl}`);
   }
   return lines.join('\n');
 }
