@@ -283,30 +283,54 @@ export function browserDescription(): string {
 // ============================================================
 
 /**
- * Framework dev overlays: Next's issue badge and route announcer, Vite's error
- * overlay.
+ * Purely decorative dev-server chrome, safe to hide from page CSS.
  *
- * On the local strategy both sides are dev servers, so the badge appears in
- * Pre and Post alike and in every image published to the PR — an artefact of
- * how the screenshots were taken that production never shows. It is
- * position: fixed, so a layout shift moves the page under it and leaves it
- * behind, which then counts as residual change the branch did not make.
+ * An error overlay is deliberately NOT in this list. Vite reports a failed
+ * transform by pushing `vite-error-overlay` onto a document that still answers
+ * 200, so hiding it would publish the blank or stale page underneath — and
+ * report "no visual changes" when both sides are equally broken, which is the
+ * one answer that makes a reviewer stop looking.
  *
- * Hidden here rather than configured away at the dev server, because that
- * reaches only the side pre-post starts: the Post side is often the caller's
- * own working tree, or a server already running that this tool must not edit.
- * A selector that matches nothing is inert, so no framework detection is
- * needed — and detection would not be available anyway when both sides are
- * bare URLs with no repository behind them.
+ * Next's dev indicator is not here either, because page CSS cannot reach it:
+ * it lives inside `nextjs-portal`'s shadow root, alongside the error dialog.
+ * Hiding the host would take the dialog with it. See `hideDevIndicator`.
  */
 const DEV_OVERLAY_SELECTORS = [
-  'nextjs-portal',
   '#__next-build-watcher',
-  '[data-nextjs-toast]',
   'next-route-announcer',
-  'vite-error-overlay',
-  '#vite-error-overlay',
 ];
+
+/**
+ * Hide Next's dev-tools badge without hiding its error dialog.
+ *
+ * Both render into the same `nextjs-portal` shadow root — measured against
+ * Next 16.0.10, a healthy page has only `#devtools-indicator` there and a
+ * broken one adds `[data-nextjs-dialog-overlay]` beside it — so the host
+ * element cannot be used to tell them apart. Reaching into the shadow root is
+ * what lets the badge go while the dialog stays.
+ *
+ * The badge matters because on the local strategy both sides are dev servers,
+ * so it ships in every image published to the PR — something production never
+ * shows. It is position: fixed, so a layout shift moves the page under it and
+ * leaves it behind, counting as residual change the branch never made.
+ *
+ * Runs once, just before the screenshot, rather than from the init script: the
+ * portal is mounted after hydration, so there is nothing to find at document
+ * start.
+ */
+async function hideDevIndicator(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const hosts = Array.prototype.slice.call(document.querySelectorAll('nextjs-portal')) as Element[];
+    for (const host of hosts) {
+      const root = host.shadowRoot;
+      if (!root || root.querySelector('[data-pre-post-hidden]')) continue;
+      const style = document.createElement('style');
+      style.setAttribute('data-pre-post-hidden', '');
+      style.textContent = '#devtools-indicator, [data-nextjs-toast] { display: none !important; }';
+      root.appendChild(style);
+    }
+  }).catch(() => undefined);
+}
 
 const INIT_SCRIPT = `
   (() => {
@@ -591,6 +615,8 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
     // Where the browser actually ended up: a sign-in wall answers with 200
     // after a redirect, so the status says nothing.
     const finalUrl = page.url();
+
+    await hideDevIndicator(page);
 
     const image = await page.screenshot({
       type: 'png',
