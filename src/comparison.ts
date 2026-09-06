@@ -60,6 +60,11 @@ export interface ResolveContext {
    * caller that has a PR but no detection of its own.
    */
   baseSha?: string;
+  /**
+   * True when `baseSha` is a ref the caller named with `--base`, which makes it
+   * a constraint rather than a starting point: no strategy may widen past it.
+   */
+  baseExplicit?: boolean;
   /** This checkout's HEAD, so a preview can be found before a PR is opened. */
   headSha?: string;
   /** Skip building the base commit locally. */
@@ -130,6 +135,17 @@ async function deployedBaseline(ctx: ResolveContext): Promise<Side | null> {
   if (baseSha) {
     const pinned = await deploymentUrlForSha(ctx.gh, ctx.ownerRepo, baseSha, { production: true });
     if (pinned) return side(pinned.url, `${pinned.environment} deployment for ${baseSha.slice(0, 7)}`);
+  }
+
+  // Widening is for a fork point this tool worked out on its own. A base the
+  // caller named is a different thing: production is some other commit, so
+  // answering with it would compare against a commit they did not ask for while
+  // route detection still describes the ref they did -- the same Pre/route-list
+  // disagreement that made `--base` worth fixing in the first place. Yield
+  // instead, and let the local strategy build the named commit from source.
+  if (ctx.baseExplicit) {
+    ctx.log(`No deployment for the base you asked for (${baseSha?.slice(0, 7)}); building it locally rather than comparing against a different commit.`);
+    return null;
   }
 
   // Otherwise what is on production now: the same site, possibly a few commits

@@ -244,6 +244,49 @@ describe('resolveComparison', () => {
     expect(asked.some(p => p.includes('/deployments?sha=base7654321'))).toBe(false);
   });
 
+  // Widening to latest production answers with a commit the caller did not ask
+  // for, while the route list still describes the one they did -- so a named
+  // base yields to the local strategy, which can build it from source.
+  it('does not widen past a base the caller named when it was never deployed', async () => {
+    const served: string[] = [];
+    const notes: string[] = [];
+    const c = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=explicit': [],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'unrelated99' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+      baseSha: 'explicit1234',
+      baseExplicit: true,
+      devServer: Promise.resolve('http://localhost:3000'),
+      serveBaseline: async ({ sha }) => { served.push(sha); return { url: 'http://localhost:4000', stop: async () => undefined }; },
+      log: m => notes.push(m),
+    }));
+    expect(c.strategy).toBe('local');
+    expect(c.before.url).not.toBe('https://prod.com');
+    expect(served).toEqual(['explicit1234']);
+    expect(notes.join('\n')).toContain('explici');
+  });
+
+  // A fork point this tool worked out on its own is still a starting point, and
+  // widening is what keeps the deployed path usable; that must not regress.
+  it('still widens to production for a base it detected rather than was given', async () => {
+    const c = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments?sha=detected': [],
+        '/deployments?per_page=100': [{ id: 3, environment: 'Production', sha: 'unrelated99' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+        '/deployments/3/statuses': [{ state: 'success', environment_url: 'https://prod.com' }],
+      }),
+      baseSha: 'detected1234',
+    }));
+    expect(c.strategy).toBe('deployed');
+    expect(c.before.url).toBe('https://prod.com');
+  });
+
   // The PR's base is still the answer when detection resolved none of its own.
   it('falls back to the PR base when detection resolved no commit', async () => {
     const served: string[] = [];

@@ -146,6 +146,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     // Detection already established this; the baseline must be built from the
     // same commit, or Pre and the route list disagree about what changed.
     baseSha: detection.base?.sha,
+    // --base is a constraint on the baseline, not just on the route list.
+    baseExplicit: detection.base?.source === 'explicit',
     // So a preview can be found for a branch that has been pushed but has no
     // PR open yet — the host builds on push, not on PR.
     headSha: head ?? undefined,
