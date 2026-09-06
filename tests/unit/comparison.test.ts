@@ -212,6 +212,49 @@ describe('resolveComparison', () => {
     expect(failure.message).not.toContain('No preview deployment');
   });
 
+  // --base is honoured by route detection, which hands the commit it used to
+  // resolveComparison as `baseSha`. An open PR used to override it, so the run
+  // published images for a diff the route list never described.
+  it('builds the local baseline from the base detection used, not the PR base', async () => {
+    const served: string[] = [];
+    const c = await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      baseSha: 'explicit1234',
+      devServer: Promise.resolve('http://localhost:3000'),
+      serveBaseline: async ({ sha }) => { served.push(sha); return { url: 'http://localhost:4000', stop: async () => undefined }; },
+    }));
+    expect(served).toEqual(['explicit1234']);
+    expect(c.before.detail).toContain('explici');
+    expect(c.before.detail).not.toContain('base765');
+  });
+
+  it('pins the deployed baseline to the base detection used, not the PR base', async () => {
+    const asked: string[] = [];
+    const client = gh({
+      '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+      '/deployments?sha=explicit': [{ id: 2, environment: 'Production' }],
+      '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+      '/deployments/2/statuses': [{ state: 'success', environment_url: 'https://pinned.app' }],
+    });
+    const inner = (client as unknown as { request: (m: string, p: string) => Promise<unknown> }).request;
+    (client as unknown as { request: (m: string, p: string) => Promise<unknown> }).request = (m, p) => { asked.push(p); return inner(m, p); };
+    const c = await resolveComparison(ctx({ gh: client, baseSha: 'explicit1234' }));
+    expect(c.strategy).toBe('deployed');
+    expect(c.before.url).toBe('https://pinned.app');
+    expect(asked.some(p => p.includes('/deployments?sha=base7654321'))).toBe(false);
+  });
+
+  // The PR's base is still the answer when detection resolved none of its own.
+  it('falls back to the PR base when detection resolved no commit', async () => {
+    const served: string[] = [];
+    await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      devServer: Promise.resolve('http://localhost:3000'),
+      serveBaseline: async ({ sha }) => { served.push(sha); return { url: 'http://localhost:4000', stop: async () => undefined }; },
+    }));
+    expect(served).toEqual(['base7654321']);
+  });
+
   it('keeps a pinned --before even against a local Post, and says it is mixed', async () => {
     const c = await resolveComparison(ctx({
       gh: gh({ '/deployments?sha=': [] }),
