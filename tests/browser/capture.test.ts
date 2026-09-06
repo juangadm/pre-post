@@ -237,6 +237,11 @@ describe('change threshold calibration', () => {
   const dirs = fs.existsSync(TEST_PAGES) ? fs.readdirSync(TEST_PAGES) : [];
   const rungs = dirs.filter(d => d.startsWith('rung-')).sort();
   const noise = dirs.filter(d => d.startsWith('noise-')).sort();
+  // The ladder's other axis. Every rung varies painted area at full contrast;
+  // these vary contrast at a fixed, large area. Without them the pixel
+  // threshold is unmeasured, which is how a #ffffff -> #e6e6e6 card covering a
+  // sixth of the viewport once reported zero changed pixels.
+  const contrast = dirs.filter(d => d.startsWith('contrast-')).sort();
 
   async function measure(name: string): Promise<number> {
     const [before, after] = await Promise.all([
@@ -265,6 +270,18 @@ describe('change threshold calibration', () => {
         ),
         `${name} covers ${area.toFixed(0)} CSS px², threshold is ${AREA}`,
       ).toBe(true);
+    }
+  });
+
+  it.skipIf(!playwrightAvailable)('reports a low-contrast change as changed', async () => {
+    expect(contrast.length).toBeGreaterThan(0);
+    for (const name of contrast) {
+      // contrast-05 is a 5/255 delta — under the threshold by design, and named
+      // so the ladder records where the floor is rather than pretending to have
+      // none. Everything above it must register.
+      if (name === 'contrast-05') continue;
+      const area = await measure(name);
+      expect(area, `${name} should not vanish into the pixel threshold`).toBeGreaterThan(0);
     }
   });
 
