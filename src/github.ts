@@ -448,14 +448,22 @@ export async function pruneAssets(
   const doomed = new Set(deletions);
   const survivors = tree.tree.filter(e => e.type === 'blob' && !doomed.has(e.path));
 
+  // Rebuilding from scratch is only safe on a complete listing. A truncated one
+  // does not show every entry, so "nothing survives" would be a statement about
+  // the page that came back rather than about the branch, and the rebuild would
+  // silently drop whatever GitHub left out. Subtracting from `base_tree` is the
+  // safe answer there, and it cannot empty the tree either: truncation means
+  // there are more entries than the ones being removed.
+  const rebuild = survivors.length === 0 && !tree.truncated;
+
   try {
-    const newTree = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/trees`, survivors.length > 0
-      ? {
+    const newTree = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/trees`, rebuild
+      // No base_tree: the surviving tree is this file and nothing else.
+      ? { tree: [{ path: ASSETS_README_PATH, mode: '100644', type: 'blob', content: ASSETS_README }] }
+      : {
         base_tree: commit.tree.sha,
         tree: deletions.map(p => ({ path: p, mode: '100644', type: 'blob', sha: null })),
-      }
-      // No base_tree: the surviving tree is this file and nothing else.
-      : { tree: [{ path: ASSETS_README_PATH, mode: '100644', type: 'blob', content: ASSETS_README }] });
+      });
     const newCommit = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/commits`, {
       message: `Prune screenshots for ${removed.length} closed PR(s)`,
       tree: newTree.sha,
@@ -464,9 +472,19 @@ export async function pruneAssets(
     await gh.request('PATCH', `/repos/${ownerRepo}/git/refs/${encodeURIComponent(`heads/${branch}`)}`, { sha: newCommit.sha });
     return { removed, kept, sha: newCommit.sha };
   } catch (err) {
-    // Everything above this point was a read. A write that fails here has left
-    // the branch untouched, so the one thing to do is fix the access and re-run.
+    // Everything above this point was a read, so a write that fails here has
+    // left the branch untouched and the run is always safe to repeat. What
+    // changes is what the human should do about it, and naming the wrong cause
+    // is worse than naming none: `request` has already turned 401 and 403 into
+    // NeedsHumanError, so what reaches here is a refusal disguised as a 404, a
+    // race, or GitHub being unwell -- and only the first is about permissions.
     if (err instanceof GitHubError) {
+      if (err.status === 409 || err.status === 422) {
+        throw new NeedsHumanError(`Another run moved ${branch} while prune was working on it; nothing was changed, so run pre-post prune again.`);
+      }
+      if (err.status === 429 || err.status >= 500) {
+        throw new NeedsHumanError(`GitHub could not finish pruning ${branch} (it answered ${err.status}); nothing was changed, so run pre-post prune again in a few minutes.`);
+      }
       throw new NeedsHumanError(
         `Could not update the ${branch} branch to prune ${removed.length} folder(s) (GitHub answered ${err.status}); ` +
         `check that your token still has contents: write on ${ownerRepo}, then run pre-post prune again.`,

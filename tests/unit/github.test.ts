@@ -241,6 +241,66 @@ describe('pruneAssets', () => {
     expect(tree.body.tree.map((t: any) => t.path)).toEqual(['pr-1/x.png']);
   });
 
+  // A truncated listing hides entries, so "nothing survives" would describe the
+  // page rather than the branch; rebuilding on that would delete what was left
+  // out. Subtracting from base_tree cannot empty a tree that has more in it.
+  it('never rebuilds from a truncated listing, even when every entry it saw is stale', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: true,
+      tree: [{ path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' }],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({}));
+
+    await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
+    const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
+    expect(tree.body.base_tree).toBe('tree');
+    expect(tree.body.tree.map((t: any) => t.path)).toEqual(['pr-1/x.png']);
+    expect(tree.body.tree.some((t: any) => t.path === 'README.md')).toBe(false);
+  });
+
+  it('names a race rather than blaming the token for it', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [
+        { path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' },
+        { path: 'pr-2/y.png', type: 'blob', sha: 's', mode: '100644' },
+      ],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/pulls\/2$/, 'GET', () => ({ state: 'open', closed_at: null, merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({ message: 'Update is not a fast forward' }), 422);
+
+    const failure = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90).catch(e => e);
+    expect(failure).toBeInstanceOf(NeedsHumanError);
+    expect(failure.message).toContain('Another run moved');
+    expect(failure.message).not.toContain('contents: write');
+  });
+
+  it('calls a 5xx transient rather than an access problem', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [{ path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' }],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ message: 'Server Error' }), 500);
+
+    const failure = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90).catch(e => e);
+    expect(failure).toBeInstanceOf(NeedsHumanError);
+    expect(failure.message).toContain('500');
+    expect(failure.message).not.toContain('contents: write');
+  });
+
   it('asks the human to fix access when the write is refused', async () => {
     route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
     route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
