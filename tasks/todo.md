@@ -103,3 +103,25 @@ failure channel uniform and moving the fallback policy into `localPair` — a re
 (the dev-server boot timeout at the end of `serveLocally` still returns null and can fall
 through to `config.before`, the same hole this pass closed for installs), but fixing it
 changes behaviour and belongs in its own change, not a cleanup pass.
+
+## Codex review round (PR #36)
+
+Four findings, all accepted.
+
+- **P1, one actionable sentence.** The install error carried three sentences plus 24 log
+  lines, against the `AGENTS.md` rule that a `NeedsHumanError` is one sentence. Output
+  moved to `log()`; the error is the remedy only. `90a4b76`
+- **P1, error overlays.** Hiding `vite-error-overlay` would have published the blank page
+  under a failed transform on a still-200 document. The same hazard was in the Next path
+  and I had missed it: measured against 16.0.10, the badge and the build-error dialog share
+  one `nextjs-portal` shadow root, so hiding the host took the dialog with it. Now reaches
+  into the shadow root for `#devtools-indicator` alone, just before the screenshot.
+  Verified broken-build state keeps the dialog at `display: flex`. `11e15de`
+- **P2, ENOBUFS.** A regression I introduced — see `lessons.md`. `ba9d44a`
+- **P2, legacy label.** An absent `commentKind` now keeps the old `Comment:` output.
+  `a9a8fe7`
+
+Pushed back on one point in-thread: Codex suggested an error overlay should make the
+capture fail. For Next it need not — a broken build answers 500, which `runTask` already
+records. Vite is the dangerous case because it stays at 200, and there the fix is simply
+not to hide the evidence.
