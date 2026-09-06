@@ -169,6 +169,94 @@ describe('pruneAssets', () => {
     const result = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
     expect(result).toEqual({ removed: [], kept: [] });
   });
+
+  // Removing every folder used to ask the API to build an empty tree, which it
+  // refuses: measured on juangadm/pre-post, `base_tree` with every blob nulled
+  // answers 404 and `tree: []` answers 422. So the branch keeps one file.
+  it('leaves a README behind rather than asking for an empty tree', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [{ path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' }],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({}));
+
+    const result = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
+    expect(result.removed).toEqual(['pr-1']);
+    expect(result.kept).toEqual([]);
+
+    const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
+    // A fresh tree, not a subtraction from the old one, and never empty.
+    expect(tree.body.base_tree).toBeUndefined();
+    expect(tree.body.tree.map((t: any) => t.path)).toEqual(['README.md']);
+    expect(tree.body.tree[0].content).toContain('pre-post');
+  });
+
+  it('still subtracts from the existing tree when a folder survives', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [
+        { path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' },
+        { path: 'pr-2/y.png', type: 'blob', sha: 's', mode: '100644' },
+      ],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/pulls\/2$/, 'GET', () => ({ state: 'open', closed_at: null, merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({}));
+
+    await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
+    const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
+    expect(tree.body.base_tree).toBe('tree');
+    expect(tree.body.tree.map((t: any) => t.path)).toEqual(['pr-1/x.png']);
+  });
+
+  // An existing README is a survivor like any other, so the branch does not get
+  // rebuilt from scratch once it has been emptied one time.
+  it('treats a README left by an earlier prune as a survivor', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [
+        { path: 'README.md', type: 'blob', sha: 's', mode: '100644' },
+        { path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' },
+      ],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({}));
+
+    await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
+    const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
+    expect(tree.body.base_tree).toBe('tree');
+    expect(tree.body.tree.map((t: any) => t.path)).toEqual(['pr-1/x.png']);
+  });
+
+  it('asks the human to fix access when the write is refused', async () => {
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [{ path: 'pr-1/x.png', type: 'blob', sha: 's', mode: '100644' }],
+    }));
+    route(/\/pulls\/1$/, 'GET', () => ({ state: 'closed', closed_at: '2020-01-01T00:00:00Z', merged_at: null }));
+    route(/\/git\/trees$/, 'POST', () => ({ message: 'Not Found' }), 404);
+
+    const failure = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90).catch(e => e);
+    expect(failure).toBeInstanceOf(NeedsHumanError);
+    expect(failure.message).toContain('pre-post-assets');
+    expect(failure.message).toContain('contents: write');
+    expect(failure.message.split('. ').length).toBeLessThanOrEqual(2);
+  });
 });
 
 describe('checkWriteAccess', () => {
