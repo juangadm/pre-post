@@ -104,17 +104,52 @@ Comment: https://github.com/acme/web/pull/42
 
 ## Install
 
-Nothing to install. `npx -y @juangadm/pre-post@latest pr` downloads the CLI and, on first
-use, the Chromium headless shell (~80 MB). You need Node 20+ and a GitHub token: either
-`gh auth login` or `GH_TOKEN`.
+There is nothing to install permanently and no account to create. Pick whichever of the two
+describes you.
 
-As a Claude Code skill:
+### If you use Claude Code
+
+Install once:
 
 ```bash
 npx skills add juangadm/pre-post -y
 ```
 
-Then say `/pre-post` after making UI changes.
+Then, after changing anything visual, say:
+
+```
+/pre-post
+```
+
+Claude runs the tool and reports back with a link to the PR. You never type a flag, and you
+do not need to know what npm is — this is the easier route, and it is the one to pick if
+you are not the person who normally runs build commands.
+
+### If you work in a terminal
+
+No install step at all:
+
+```bash
+npx -y @juangadm/pre-post@latest pr
+```
+
+Run it on a branch that has an open PR. `npx` ships with Node and fetches the tool on the
+spot, so there is nothing to add to your `package.json` and nothing to keep updated.
+
+### What you need either way
+
+| | |
+|---|---|
+| **Node 20 or newer** | [nodejs.org](https://nodejs.org). This is the one hard requirement — both routes above are Node programs. Check with `node --version`. |
+| **A GitHub token** | Run `gh auth login` once ([GitHub CLI](https://cli.github.com)), or set `GH_TOKEN`. It needs write access to the repo, because it publishes the images and edits the PR. |
+| **An open pull request** | The images go at the top of its description. No PR, no place to put them — pre-post will say so and print the markdown for you to paste. |
+
+The first run also downloads a Chromium headless shell (~80 MB) and reuses it afterwards.
+That, plus the screenshots themselves, is why a first run takes about a minute and later
+ones are quicker.
+
+Not sure whether you are set up? `npx -y @juangadm/pre-post@latest doctor` checks the
+browser, your GitHub auth and the dev server, and tells you the one thing to fix.
 
 ## Usage
 
