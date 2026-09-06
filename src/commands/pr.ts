@@ -277,10 +277,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       const described = await upsertPrDescription(writeGh, ownerRepo, pr.number, result.markdown, 'pre-post');
       if (described.updated) {
         result.commentUrl = described.html_url;
+        result.commentKind = 'description';
         log(`Updated PR description: ${described.html_url}`);
       } else {
         const comment = await upsertStickyComment(writeGh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
         result.commentUrl = comment.html_url;
+        result.commentKind = 'comment';
         log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
       }
     } else {

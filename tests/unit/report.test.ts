@@ -84,7 +84,7 @@ describe('buildComment', () => {
 
 describe('buildSummary', () => {
   it('is a compact table with one line per capture', () => {
-    const summary = buildSummary({ ...base, commentUrl: 'https://github.com/acme/web/pull/42#issuecomment-1' });
+    const summary = buildSummary({ ...base, commentUrl: 'https://github.com/acme/web/pull/42#issuecomment-1', commentKind: 'comment' });
     const lines = summary.split('\n');
     expect(lines[0]).toBe('pre-post · PR #42 · 2 route(s) · 2 viewport(s) · 12.3s');
     expect(summary).toContain('changed');
@@ -92,6 +92,13 @@ describe('buildSummary', () => {
     expect(summary).toContain('error');
     expect(summary).toContain('needs sample URL: /blog/[slug]');
     expect(lines[lines.length - 1]).toBe('Comment: https://github.com/acme/web/pull/42#issuecomment-1');
+  });
+
+  // The usual path edits the description; calling that a comment sent a reader
+  // hunting for one on a PR that had none.
+  it('names the description when that is what was updated', () => {
+    const summary = buildSummary({ ...base, commentUrl: 'https://github.com/acme/web/pull/42', commentKind: 'description' });
+    expect(summary.split('\n').pop()).toBe('PR description: https://github.com/acme/web/pull/42');
   });
 });
 
