@@ -57,7 +57,7 @@ with the remote removed it exits 3 with one sentence. Seven tests in
 
 ---
 
-## 2. The Post side assumes a local dev server — PARTLY FIXED
+## 2. The Post side assumes a local dev server — FIXED for the deployed path
 
 **What was claimed, and what the evidence actually said.** The chunk suspected that "two
 deployed URLs" was a fallback after local serving failed. It was not: `resolveComparison`
@@ -117,6 +117,14 @@ as a *small* change. The backstop section has the numbers.)
   zero-setup route is available to them.
 
 ---
+
+**Status, 2026-09-05.** The deployed path is no longer theoretical: a full matrix ran with
+both sides as deployments and no dev server anywhere — `Pre https://prepost.juangabriel.org`,
+`Post https://prepost-<hash>.vercel.app`, printed on every run, 5–18s each. The local path is
+what remains partial. It still works, and it is still the slow, noisy half: 59.3s to stand up
+two dev servers, and on a machine without pnpm on PATH it warns `installing the baseline with
+npm instead (it will not honour the pnpm lockfile)` and builds against a different dependency
+tree than the one the branch is tested with.
 
 ## 3. Capture time changed what was captured — FIXED
 
@@ -207,7 +215,7 @@ is the one in the report.
 
 ---
 
-## 4. Token discovery checks presence, not capability — PARTLY FIXED
+## 4. Token discovery checks presence, not capability — FIXED
 
 **What was claimed, and what the evidence actually said.** The chunk suspected that sandbox
 and CI environments "often inject a `GITHUB_TOKEN` scoped to the current repo's Actions
@@ -401,6 +409,12 @@ is chunk 7's own `repo` check, so a token that cannot be checked for want of a r
 that and leaves the required failure to it rather than reporting one problem twice.
 
 ---
+
+**Status, 2026-09-05.** Closed by #25 and confirmed on a live run. `doctor` reports
+`github ok token can publish to juangadm/pre-post` — capability, not presence — and `pr` asks
+the same question before it spends a capture pass, which is the failure this section was
+written about. A token that reads but cannot write now stops the run at the start rather than
+after the screenshots.
 
 ## 5. Environment adapters — to verify
 
