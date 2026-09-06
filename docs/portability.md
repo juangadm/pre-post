@@ -1082,3 +1082,37 @@ The false negative above and the new-route bug are both fixed; what is left is s
 2. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
    branch already agreed above — that idea publishes and deletes through the same tree call,
    so it inherits this bug until it is fixed.
+
+   **Fixed, and the obvious fix was wrong.** Referencing git's canonical empty tree
+   (`4b825dc…`, already a constant in `git.ts`) looks like the clean answer and does not
+   work: the REST API cannot resolve that SHA on this repository even though every git
+   repository contains the object. Measured directly, all three doors are shut:
+
+   ```
+   POST /git/trees  base_tree + every blob nulled  -> 404 Not Found
+   POST /git/trees  {tree: []}                     -> 422 Invalid tree info
+   GET  /git/trees/4b825dc642cb…                   -> 404 Not Found
+   ```
+
+   So the branch cannot be empty, and the fix is to keep one file on it. When nothing
+   survives a prune, a fresh tree is posted holding a `README.md` that says what the branch
+   is. It is inert in both directions: prune only ever counts `pr-<n>/` paths, and publish
+   builds on `base_tree`, so neither notices it. Verified by running the real `pruneAssets`
+   against throwaway branches on this repository rather than against a stub — the whole
+   point of the correction recorded in chunk 2:
+
+   ```
+   A before: pr-99998/b.png, pr-99999/a.png     (every folder stale)
+   A prune : removed=[pr-99998, pr-99999] kept=[]
+   A after : README.md
+
+   B before: pr-34/c.png, pr-99999/a.png        (one folder survives)
+   B prune : removed=[pr-99999] kept=[pr-34]
+   B after : pr-34/c.png
+   ```
+
+   The same fixture on the old code reproduces the original failure exactly —
+   `GitHubError: GitHub POST /repos/juangadm/pre-post/git/trees → 404: Not Found`. The write
+   phase is now wrapped in `NeedsHumanError`; everything before it is a read, so a failure
+   there has left the branch untouched and the one thing to do is fix access and re-run.
+   Four tests in `tests/unit/github.test.ts`, two of which fail on the old code.
