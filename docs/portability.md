@@ -1069,8 +1069,16 @@ The false negative above and the new-route bug are both fixed; what is left is s
    is only safe if the two usually agree: for #31, #32 and #33 the API's `base.sha` and the
    true merge base are the same commit (`f3cb6db`, `886f678`, `886f678`), so the flip is a
    no-op on the ordinary path and only bites where the two disagree — which is the bug.
-   Three tests in `tests/unit/comparison.test.ts` cover it, and the two that pin the
-   behaviour fail on the old code.
+   **Review caught a second way in.** Pinning Pre to the base commit asks only for
+   *production* deployments, so a `--base` naming a feature-branch commit — deployed as a
+   Preview — matched nothing and fell through to the widening step, which answers with
+   latest production. The flag was honoured by the route list and quietly not by the
+   baseline: the same disagreement, reached down the deployed path instead of the local one,
+   and not something the local reproduction could show. Widening is still right for a fork
+   point this tool worked out on its own and is unchanged; a ref the caller *named* is a
+   constraint, so the deployed strategy now yields and the local one builds that commit from
+   source. Five tests in `tests/unit/comparison.test.ts`, three of which fail on the code
+   they were written against.
 2. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
    branch already agreed above — that idea publishes and deletes through the same tree call,
    so it inherits this bug until it is fixed.
