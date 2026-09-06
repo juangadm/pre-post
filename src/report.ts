@@ -143,6 +143,11 @@ export function buildSummary(result: PrRunResult): string {
   if (result.skippedDynamic.length) {
     lines.push(`  needs sample URL: ${result.skippedDynamic.join(', ')} (add to .pre-post.json "samples")`);
   }
-  if (result.commentUrl) lines.push(`Comment: ${result.commentUrl}`);
+  // Named for what actually happened. The images normally go in the PR
+  // description and only fall back to a comment, so "Comment:" sent a reader
+  // looking for a comment that a run with zero comments had never created.
+  if (result.commentUrl) {
+    lines.push(`${result.commentKind === 'comment' ? 'Comment' : 'PR description'}: ${result.commentUrl}`);
+  }
   return lines.join('\n');
 }

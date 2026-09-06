@@ -286,6 +286,8 @@ export interface PrRunResult {
   repo: string;
   prNumber?: number;
   commentUrl?: string;
+  /** Whether `commentUrl` points at the PR description or at a comment. */
+  commentKind?: 'description' | 'comment';
   beforeBase: string;
   afterBase: string;
   outcomes: RouteCaptureOutcome[];
