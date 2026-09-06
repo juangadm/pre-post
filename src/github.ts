@@ -360,6 +360,19 @@ export interface PruneResult {
   sha?: string;
 }
 
+const ASSETS_README_PATH = 'README.md';
+
+/** Kept so pruning the last folder does not ask the API for an empty tree. */
+const ASSETS_README = `# pre-post assets
+
+Screenshots published by [pre-post](https://github.com/juangadm/pre-post), one folder per
+pull request (\`pr-<number>/\`). Nothing here is edited by hand.
+
+\`pre-post prune\` removes folders for pull requests closed more than \`pruneDays\` ago. This
+file is what keeps the branch from becoming an empty tree, which the GitHub tree API
+refuses to create.
+`;
+
 /**
  * Remove `pr-<n>/` folders on the assets branch whose PR closed more than
  * `olderThanDays` ago. One commit; no history rewrite.
@@ -421,15 +434,44 @@ export async function pruneAssets(
 
   if (dryRun || deletions.length === 0) return { removed, kept };
 
-  const newTree = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/trees`, {
-    base_tree: commit.tree.sha,
-    tree: deletions.map(p => ({ path: p, mode: '100644', type: 'blob', sha: null })),
-  });
-  const newCommit = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/commits`, {
-    message: `Prune screenshots for ${removed.length} closed PR(s)`,
-    tree: newTree.sha,
-    parents: [headSha],
-  });
-  await gh.request('PATCH', `/repos/${ownerRepo}/git/refs/${encodeURIComponent(`heads/${branch}`)}`, { sha: newCommit.sha });
-  return { removed, kept, sha: newCommit.sha };
+  // Deleting every blob would leave an empty tree, and git's empty tree is not
+  // something the API will build: `tree: []` is refused as "Invalid tree info"
+  // (422), and the canonical empty-tree SHA is not resolvable through the REST
+  // API either (404) even though every repository contains that object. So the
+  // last folder could never be removed -- prune worked in every case except the
+  // one that finishes the job.
+  //
+  // The branch therefore keeps one file. `README.md` is chosen over an empty
+  // marker because the branch is otherwise undocumented, and it is inert on
+  // both sides: prune only ever counts `pr-<n>/` paths, and publish adds to
+  // whatever tree it finds.
+  const doomed = new Set(deletions);
+  const survivors = tree.tree.filter(e => e.type === 'blob' && !doomed.has(e.path));
+
+  try {
+    const newTree = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/trees`, survivors.length > 0
+      ? {
+        base_tree: commit.tree.sha,
+        tree: deletions.map(p => ({ path: p, mode: '100644', type: 'blob', sha: null })),
+      }
+      // No base_tree: the surviving tree is this file and nothing else.
+      : { tree: [{ path: ASSETS_README_PATH, mode: '100644', type: 'blob', content: ASSETS_README }] });
+    const newCommit = await gh.request<{ sha: string }>('POST', `/repos/${ownerRepo}/git/commits`, {
+      message: `Prune screenshots for ${removed.length} closed PR(s)`,
+      tree: newTree.sha,
+      parents: [headSha],
+    });
+    await gh.request('PATCH', `/repos/${ownerRepo}/git/refs/${encodeURIComponent(`heads/${branch}`)}`, { sha: newCommit.sha });
+    return { removed, kept, sha: newCommit.sha };
+  } catch (err) {
+    // Everything above this point was a read. A write that fails here has left
+    // the branch untouched, so the one thing to do is fix the access and re-run.
+    if (err instanceof GitHubError) {
+      throw new NeedsHumanError(
+        `Could not update the ${branch} branch to prune ${removed.length} folder(s) (GitHub answered ${err.status}); ` +
+        `check that your token still has contents: write on ${ownerRepo}, then run pre-post prune again.`,
+      );
+    }
+    throw err;
+  }
 }
