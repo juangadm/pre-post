@@ -921,9 +921,28 @@ disabled state, a subtle hover fill, a zebra-striped table — can report at or 
 publish "No visual changes." Nothing in the matrix would have caught it, because the matrix
 only watched for change reported where there was none.
 
-Not fixed here. Lowering the threshold trades this false negative for the anti-aliasing false
-positives the threshold exists to suppress, and that trade needs its own measurement across
-the fixture pages rather than a number picked to make one case pass.
+**Measured, and fixed.** The supposed trade — that lowering the threshold buys back the
+anti-aliasing false positives it exists to suppress — did not survive contact with the
+fixtures. It does not exist at any value worth using:
+
+```
+             0.1    0.05    0.03    0.02    0.01
+contrast-25    0  191754  191754  191754  191754
+contrast-15    0  191758  191758  191758  191758
+contrast-10    0       0  191758  191758  191758
+contrast-05    0       0       0       0  191762
+rung-6      1649    1649   67539   67539   67539
+noise-*        0       0       0       0       0
+```
+
+Every no-op holds at zero the whole way down, `noise-random` and `noise-timestamp` included,
+and so does the same page captured from two different deployments. The threshold is 0.02 now.
+
+The reason the suite never caught this is worth more than the fix: every rung of the
+calibration ladder varies painted *area* — a character, a word, an icon, a section — while
+the threshold governs *contrast*. No fixture moved along that axis, so the constant was never
+measured, and `rung-6-section` was quietly being counted as 1649 CSS px² instead of 67539
+while the ladder passed. A `contrast-*` axis now exists so it cannot go unmeasured again.
 
 ### Determinism, tested hard
 
@@ -1036,14 +1055,10 @@ the bypass secret, the sign-in refusal) was correct and worked when followed.
 
 ### Still open, in the order worth taking
 
-1. **The false negative above.** It is the only known defect that fails silently and in the
-   reassuring direction — pre-post says "No visual changes" about a page that changed — so it
-   costs a reviewer the thing they came for without ever telling them. Worth doing as a
-   measurement across the fixture pairs rather than a new constant: sweep the threshold, keep
-   AGENTS.md's rule that identical pages stay at 0 pixels, and check whether the tolerance is
-   doing a job `includeAA` should be doing instead.
-2. **`--base` ignored when a PR is open** (`src/comparison.ts:215`). Small and contained: the
+The false negative above and the new-route bug are both fixed; what is left is smaller.
+
+1. **`--base` ignored when a PR is open** (`src/comparison.ts:215`). Small and contained: the
    explicit flag should win over the PR's base, which is the documented behaviour.
-3. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
+2. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
    branch already agreed above — that idea publishes and deletes through the same tree call,
    so it inherits this bug until it is fixed.
