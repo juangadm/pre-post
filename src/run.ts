@@ -4,6 +4,7 @@
  */
 
 import fs from 'fs';
+import { createHash } from 'crypto';
 import path from 'path';
 import { AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
@@ -237,6 +238,9 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
 
   const changed = isChanged(diff, opts);
+  // Cheap fingerprint of the baseline, kept so the run can notice a host that
+  // answers every route with the same page. See softNotFoundWarning.
+  const baselineHash = createHash('sha1').update(Buffer.from(before.image)).digest('hex');
   // Recorded on every outcome, judged only across the whole run: one route
   // sharing no words is a rewrite, every route sharing none is the wrong site.
   const overlap = textOverlap(before.text ?? '', after.text ?? '');
@@ -258,6 +262,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   return {
     ...base,
     status: changed ? 'changed' : 'unchanged',
+    baselineHash,
     changedRatio: diff.changedRatio,
     sizeChanged: diff.sizeChanged,
     textOverlap: overlap,
@@ -312,6 +317,41 @@ function absentSide(before: CaptureResult, after: CaptureResult): 'before' | 'af
   return null;
 }
 
+/**
+ * Did the baseline answer unrelated routes with the same page?
+ *
+ * This is the soft 404 — a not-found view served with status 200, which no
+ * status check can see and which a keyword hunt for "404" would catch only in
+ * English, only when the page says it, and only when no real page happens to
+ * mention it. The durable signal is not the wording but the sameness: a host
+ * that returns pixel-identical bytes for several different routes is serving a
+ * catch-all, and every comparison against it is measuring the distance from
+ * that catch-all rather than from the page.
+ *
+ * It warns rather than reclassifies. Two routes can legitimately render the
+ * same page, and silently turning a real diff into "new page" on a heuristic
+ * would hide exactly the change this tool exists to show. The authoritative
+ * signal (a 404 status) acts; this one only tells the reader what it sees.
+ */
+export function softNotFoundWarning(outcomes: RouteCaptureOutcome[], beforeUrl: string): string | null {
+  const routesByHash = new Map<string, Set<string>>();
+  for (const o of outcomes) {
+    if (!o.baselineHash) continue;
+    const seen = routesByHash.get(o.baselineHash) ?? new Set<string>();
+    seen.add(o.route);
+    routesByHash.set(o.baselineHash, seen);
+  }
+  let worst: Set<string> | null = null;
+  for (const routes of routesByHash.values()) {
+    if (routes.size > 1 && (!worst || routes.size > worst.size)) worst = routes;
+  }
+  if (!worst) return null;
+  const shown = [...worst].sort().slice(0, 4).join(', ');
+  const more = worst.size > 4 ? `, and ${worst.size - 4} more` : '';
+  return `Note: ${hostOf(beforeUrl)} served an identical page for ${worst.size} routes (${shown}${more}). `
+    + 'If that is a catch-all or a not-found page, those comparisons are against it, not against the real baseline.';
+}
+
 export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): RunVerdict | null {
   // Every route walled means the run never saw the site. Publishing anything
   // from that, "no visual changes" included, would be a confident lie.
@@ -341,5 +381,7 @@ export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Pro
     before: { url: tasks[0]?.beforeUrl ?? '' },
     after: { url: tasks[0]?.afterUrl ?? '' },
   };
+  const softNotFound = softNotFoundWarning(outcomes, sides.before.url);
+  if (softNotFound) opts.log?.(softNotFound);
   return { outcomes, verdict: verdictFor(outcomes, sides) };
 }

@@ -224,6 +224,8 @@ export interface RouteCaptureOutcome {
   files?: ArtifactSet;
   urls?: ArtifactSet;
   durationMs?: number;
+  /** sha1 of the baseline capture, for spotting a host that serves one page for every route */
+  baselineHash?: string;
   /** Extra context, e.g. "new page — no baseline (example.com returned 404)" */
   note?: string;
   /** Vertical displacement of Post against Pre, when one explains the change */
