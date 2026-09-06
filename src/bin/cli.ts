@@ -70,6 +70,7 @@ const OPTIONS = {
     'viewport-only': { type: 'boolean' },
     scale: { type: 'string' },
     threshold: { type: 'string' },
+    'min-changed-area': { type: 'string' },
     'max-height': { type: 'string' },
     wait: { type: 'string' },
     header: { type: 'string', multiple: true },
@@ -107,7 +108,11 @@ OPTIONS
   -m, --mobile  -t, --tablet  --size WxH   Single-viewport shorthands
   -f, --full | --viewport-only          Full page (default for pr) or first screen only
   --scale <n>               Device scale factor (default 2)
-  --threshold <0..1>        Change ratio treated as "no change" (default 0.001)
+  --threshold <0..1>        Changed share of the canvas that counts (default 0.001)
+  --min-changed-area <px2>  Changed area in CSS px² that counts (default 100)
+                            A capture counts as changed when EITHER holds, so
+                            a 0.04% diff on a full page is still a change if it
+                            paints more than 100 CSS px².
   --max-height <px>         Full-page height cap in CSS px (default 2400)
   --wait <ms>               Extra wait after the page settles
   --header k=v              Extra request header (repeatable)
@@ -197,6 +202,7 @@ async function main(): Promise<void> {
     fullPage: values['viewport-only'] ? false : values.full ? true : undefined,
     scale: num(values.scale, '--scale'),
     threshold: num(values.threshold, '--threshold'),
+    minChangedArea: num(values['min-changed-area'], '--min-changed-area'),
     maxHeight: num(values['max-height'], '--max-height'),
     maxRoutes: num(values['max-routes'], '--max-routes'),
     wait: num(values.wait, '--wait'),
