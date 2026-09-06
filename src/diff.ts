@@ -34,8 +34,36 @@ const DIFF_COLOR: [number, number, number] = [255, 0, 0];
 const AA_COLOR: [number, number, number] = [255, 200, 0];
 /** Background used to pad images of different sizes. */
 const PAD_COLOR: [number, number, number] = [255, 255, 255];
-/** pixelmatch per-pixel color distance (0..1). */
-const PIXEL_THRESHOLD = 0.1;
+/**
+ * pixelmatch per-pixel colour distance (0..1).
+ *
+ * Calibrated, not chosen. At the old 0.1 a 600x320 card recoloured from #ffffff
+ * to #e6e6e6 — plainly visible, a sixth of the viewport — reported *zero*
+ * changed pixels, and `rung-6-section` measured 1649 CSS px² instead of 67539.
+ * The ladder never caught it because every rung varies painted *area* while the
+ * threshold governs *contrast*, so nothing in the suite moved along that axis.
+ * `contrast-*` is that missing axis.
+ *
+ * Measured across the fixtures, changed CSS px² by threshold:
+ *
+ *              0.1    0.05    0.03    0.02    0.01
+ *   contrast-25  0  191754  191754  191754  191754
+ *   contrast-15  0  191758  191758  191758  191758
+ *   contrast-10  0       0  191758  191758  191758
+ *   contrast-05  0       0       0       0  191762
+ *   rung-6    1649    1649   67539   67539   67539
+ *   noise-*      0       0       0       0       0
+ *
+ * Every no-op stays at zero the whole way down, and so does the strongest
+ * real-world check available: the same page captured from two different
+ * deployments, which reports 0 at every value above, desktop and mobile.
+ *
+ * 0.02 catches every delta a reader would call visible and keeps a margin above
+ * the floor for sites noisier than the ones measured. 0.01 was also clean here;
+ * the margin is deliberate, since the alternative to a marginal false positive
+ * is silently publishing "No visual changes" about a page that changed.
+ */
+const PIXEL_THRESHOLD = 0.02;
 /** No crop when the change covers more than this fraction of the canvas. */
 const CROP_MAX_RATIO = 0.5;
 /**
