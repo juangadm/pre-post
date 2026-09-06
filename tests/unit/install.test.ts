@@ -101,43 +101,34 @@ describe('the real manager table', () => {
 describe('BaselineInstallError', () => {
   const failed = { ok: false, attempts: [{ argv: ['install'], ok: false, output: ERESOLVE }] };
 
-  it('carries the manager’s own output instead of telling the reader to go find it', () => {
-    const err = new BaselineInstallError(failed, 'site', '/repo/site', true);
-    expect(err.message).toContain('npm error code ERESOLVE');
+  // AGENTS.md: an error a human must act on is one actionable sentence. The
+  // package manager's output is diagnostics and belongs in the log, or the
+  // instruction ends up buried inside a screen of npm noise.
+  it('is one sentence naming what to do, not a wall of install output', () => {
+    const message = new BaselineInstallError(failed, 'site', '/repo/site').message;
+    expect(message.split('\n')).toHaveLength(1);
+    expect(message).not.toContain('npm error');
   });
 
-  // The old message named the caller's checkout for an install that had run in
-  // a worktree already deleted by the time anyone read it.
-  it('says the install ran somewhere the reader cannot go back to', () => {
-    const err = new BaselineInstallError(failed, 'site', '/repo/site', true);
-    expect(err.message).toContain('throwaway worktree');
-    expect(err.message).toContain('not in /repo/site');
+  // Not the worktree: cleanup has deleted it by the time anyone reads this, so
+  // naming it would be an instruction the reader cannot follow.
+  it('points at a directory that still exists', () => {
+    expect(new BaselineInstallError(failed, 'site', '/repo/site').message).toContain('/repo/site');
   });
 
-  it('names the real directory when the install was not in a worktree', () => {
-    const err = new BaselineInstallError(failed, 'site', '/repo/site', false);
-    expect(err.message).toContain('It ran in /repo/site.');
-    expect(err.message).not.toContain('throwaway');
+  it('offers the way past a baseline that cannot be built', () => {
+    const message = new BaselineInstallError(failed, 'site', '/repo/site').message;
+    expect(message).toContain('--no-local-baseline');
+    expect(message).toContain('--before');
   });
 
-  it('names the retry using the argv that actually ran', () => {
-    const both = {
-      ok: false,
-      attempts: [
-        { argv: ['install'], ok: false, output: ERESOLVE },
-        { argv: ['install', '--legacy-peer-deps'], ok: false, output: ERESOLVE },
-      ],
-    };
-    expect(new BaselineInstallError(both, 'site', '/repo/site', true).message)
-      .toContain('The retry with --legacy-peer-deps did not clear it either.');
-  });
-
-  it('says nothing about a retry that never happened', () => {
-    expect(new BaselineInstallError(failed, 'site', '/repo/site', true).message).not.toContain('retry');
+  it('keeps the attempts for a caller that wants the detail', () => {
+    expect(new BaselineInstallError(failed, 'site', '/repo/site').result.attempts).toHaveLength(1);
   });
 
   it('is a NeedsHumanError, so the run cannot exit clean having compared nothing', () => {
-    expect(new BaselineInstallError(failed, 'site', '/repo/site', true).name).toBe('BaselineInstallError');
-    expect(new BaselineInstallError(failed, 'site', '/repo/site', true)).toBeInstanceOf(Error);
+    const err = new BaselineInstallError(failed, 'site', '/repo/site');
+    expect(err.name).toBe('BaselineInstallError');
+    expect(err).toBeInstanceOf(Error);
   });
 });

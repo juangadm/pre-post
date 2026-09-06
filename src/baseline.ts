@@ -301,26 +301,26 @@ export function installDeps(
  * — a different answer to a different question, published as if it were this
  * one.
  */
-function installFailureMessage(result: InstallResult, where: string, ranIn: string, throwaway: boolean): string {
-  const [first, retried] = result.attempts;
-  const last = retried ?? first;
-  const tried = result.attempts.map(a => `\`${a.argv.join(' ')}\``).join(', then ');
-  const lines = [`Could not install ${where}: ${tried} failed.`];
-  // Naming the worktree would be useless: cleanup has already deleted it. What
-  // the reader needs is that their own checkout is not what failed.
-  lines.push(throwaway
-    ? `That install ran in a throwaway worktree of the base commit, not in ${ranIn}, so the same command may well succeed in your checkout.`
-    : `It ran in ${ranIn}.`);
-  // The flag comes from the manager record rather than a second copy of it
-  // here, so a change to the retry cannot leave this sentence naming a flag
-  // that was never run.
-  if (retried) lines.push(`The retry with ${retried.argv[retried.argv.length - 1]} did not clear it either.`);
-  return `${lines.join('\n')}\n\n${last.output}`;
+/**
+ * What a reader has to do about a failed install, in one sentence.
+ *
+ * One sentence because that is what `NeedsHumanError` is for (AGENTS.md): the
+ * CLI prints the whole message for exit 3, so pasting a screen of package
+ * manager output here would bury the instruction inside it. The output is
+ * still the thing that answers "why", so it goes to the log instead — above
+ * this line, where it reads as diagnostics rather than as the remedy.
+ *
+ * The command names the caller's own directory, never the worktree: by the
+ * time anyone reads this, cleanup has deleted the worktree, so telling them to
+ * run it there would be an instruction they cannot follow.
+ */
+export function installFailureHint(where: string, ranIn: string): string {
+  return `Could not install ${where} for the baseline; run \`install\` in ${ranIn} to fix it, or re-run with --no-local-baseline and pass --before <production-url>.`;
 }
 
 export class BaselineInstallError extends NeedsHumanError {
-  constructor(public readonly result: InstallResult, where: string, ranIn: string, throwaway: boolean) {
-    super(installFailureMessage(result, where, ranIn, throwaway));
+  constructor(public readonly result: InstallResult, where: string, ranIn: string) {
+    super(installFailureHint(where, ranIn));
     this.name = 'BaselineInstallError';
   }
 }
@@ -466,8 +466,11 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   if (install) {
     const result = installDeps(pm, appDir, deadline - Date.now());
     if (!result.ok) {
+      const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');
+      log(`${tried} failed${worktree === opts.repoRoot ? '' : ' in a throwaway worktree of the base commit'}:`);
+      log(result.attempts[result.attempts.length - 1].output);
       await cleanup();
-      throw new BaselineInstallError(result, where, appIn, worktree !== opts.repoRoot);
+      throw new BaselineInstallError(result, where, appIn);
     }
     const retried = result.attempts[1];
     if (retried) {
