@@ -1059,6 +1059,18 @@ The false negative above and the new-route bug are both fixed; what is left is s
 
 1. **`--base` ignored when a PR is open** (`src/comparison.ts:215`). Small and contained: the
    explicit flag should win over the PR's base, which is the documented behaviour.
+
+   **Fixed.** Both baseline lookups now read `ctx.baseSha ?? ctx.pr?.base.sha`, the reverse
+   of what they read before. The fix is deliberately not a special case for `--base`: what
+   detection resolved is *always* the commit the route list was built from, so it is always
+   the commit the baseline must be built from — which is what the comment in `pr.ts` already
+   asserted. The PR's base survives as the fallback for a caller that resolved none of its
+   own. Checked against this repository's own PRs first, because a wider precedence change
+   is only safe if the two usually agree: for #31, #32 and #33 the API's `base.sha` and the
+   true merge base are the same commit (`f3cb6db`, `886f678`, `886f678`), so the flip is a
+   no-op on the ordinary path and only bites where the two disagree — which is the bug.
+   Three tests in `tests/unit/comparison.test.ts` cover it, and the two that pin the
+   behaviour fail on the old code.
 2. **`prune`'s empty tree.** Also small, and it clears the way for the self-cleaning assets
    branch already agreed above — that idea publishes and deletes through the same tree call,
    so it inherits this bug until it is fixed.
