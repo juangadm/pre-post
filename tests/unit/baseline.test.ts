@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, freePort, isOriginKey, onPath, pointEnvFilesAt, resolvePackageManager, rewriteEnvOrigins, serveBaseCommit, serveWorkingTree, servableDir, setupStep, turboDependencyBuild } from '../../src/baseline';
+import { BaselineSetupError, copyEnvFiles, detectPackageManager, freePort, isOriginKey, onPath, pointEnvFilesAt, resolvePackageManager, rewriteEnvOrigins, serveBaseCommit, serveWorkingTree, servableDir, setupStep, turboDependencyBuild } from '../../src/baseline';
 import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
@@ -351,6 +351,26 @@ describe('the setup step between install and dev', () => {
     fs.rmSync(path.join(tree, 'node_modules'), { recursive: true, force: true });
     expect(turboDependencyBuild(tree, app())).toBeNull();
     installTurbo();
+  });
+
+  /**
+   * The install's rule (docs/portability.md §1), for the same reason: a quiet
+   * null lets the run fall through to a configured production URL and publish
+   * a different comparison as if it were this one.
+   */
+  it('raises rather than yields when the configured command fails', async () => {
+    const own = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-setupfail-')));
+    try {
+      fs.writeFileSync(path.join(own, 'package.json'), JSON.stringify({ name: 'app', scripts: { dev: 'node -e 0' } }));
+      // Already installed, so nothing reaches the network and the setup step
+      // is the only thing that runs.
+      fs.mkdirSync(path.join(own, 'node_modules'));
+      const logs: string[] = [];
+      await expect(serveWorkingTree({ repoRoot: own, setup: 'exit 7', log: m => logs.push(m), pathHas: () => true }))
+        .rejects.toThrow(BaselineSetupError);
+    } finally {
+      fs.rmSync(own, { recursive: true, force: true });
+    }
   });
 
   it('lets a configured command win, run in the app directory, through a shell', () => {
