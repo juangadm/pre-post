@@ -193,6 +193,12 @@ export interface PrePostConfig {
   assetsBranch?: string;
   /** Skip paths (glob-ish prefixes) from route detection */
   ignore?: string[];
+  /**
+   * Command run in the app directory between the install and the dev server
+   * when the baseline is built from source — a workspace build, a codegen
+   * step. Inferred for a turborepo when omitted.
+   */
+  baselineSetup?: string;
 }
 
 // ============================================================
