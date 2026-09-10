@@ -73,6 +73,20 @@ describe('buildComment', () => {
     expect(none).toContain('No visual changes.');
   });
 
+  it('does not call a run where every capture failed a clean diff', () => {
+    const allFailed = buildComment({
+      ...base,
+      outcomes: base.outcomes.map(o => ({ ...o, status: 'error' as const, error: 'net::ERR_CONNECTION_REFUSED', urls: undefined })),
+    });
+    expect(allFailed).not.toContain('No visual changes.');
+    expect(allFailed).toContain('**Nothing was compared** — all 4 captures failed.');
+    expect(allFailed).toContain('**Could not capture:**');
+  });
+
+  it('still says nothing was compared when there were no captures at all', () => {
+    expect(buildComment({ ...base, outcomes: [] })).toContain('**Nothing was compared**');
+  });
+
   it('falls back to local files when nothing was published', () => {
     const local = buildComment({
       ...base,
