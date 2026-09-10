@@ -248,13 +248,19 @@ describe('copyEnvFiles', () => {
 
 describe('origin env vars', () => {
   it('recognises the names that mean "this app\'s own address"', () => {
-    for (const key of ['BETTER_AUTH_URL', 'NEXTAUTH_URL', 'AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'VITE_BASE_URL', 'PUBLIC_SITE_URL', 'APP_ORIGIN']) {
+    for (const key of ['BETTER_AUTH_URL', 'NEXTAUTH_URL', 'AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'PUBLIC_SITE_URL', 'APP_ORIGIN', 'VITE_APP_BASE_URL']) {
       expect(isOriginKey(key)).toBe(true);
     }
   });
 
   it('leaves alone the names that address something else', () => {
     for (const key of ['DATABASE_URL', 'REDIS_URL', 'NEXT_PUBLIC_API_URL', 'STRIPE_WEBHOOK_URL', 'AUTH_SECRET', 'URLS']) {
+      expect(isOriginKey(key)).toBe(false);
+    }
+  });
+
+  it('leaves alone the generic names, which are as often a backend or a path prefix', () => {
+    for (const key of ['BASE_URL', 'VITE_BASE_URL', 'PUBLIC_URL', 'SERVER_URL', 'HOST_URL', 'URL', 'NEXT_PUBLIC_URL']) {
       expect(isOriginKey(key)).toBe(false);
     }
   });
