@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, freePort, onPath, resolvePackageManager, serveBaseCommit, serveWorkingTree, servableDir, setupStep, turboDependencyBuild } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, freePort, isOriginKey, onPath, pointEnvFilesAt, resolvePackageManager, rewriteEnvOrigins, serveBaseCommit, serveWorkingTree, servableDir, setupStep, turboDependencyBuild } from '../../src/baseline';
 import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
@@ -240,6 +240,67 @@ describe('copyEnvFiles', () => {
       expect(copied.some(p => p.includes('..'))).toBe(false);
       expect(fs.existsSync(path.join(parent, '.env'))).toBe(false);
       expect(fs.existsSync(path.join(dest, '.env'))).toBe(true);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('origin env vars', () => {
+  it('recognises the names that mean "this app\'s own address"', () => {
+    for (const key of ['BETTER_AUTH_URL', 'NEXTAUTH_URL', 'AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'VITE_BASE_URL', 'PUBLIC_SITE_URL', 'APP_ORIGIN']) {
+      expect(isOriginKey(key)).toBe(true);
+    }
+  });
+
+  it('leaves alone the names that address something else', () => {
+    for (const key of ['DATABASE_URL', 'REDIS_URL', 'NEXT_PUBLIC_API_URL', 'STRIPE_WEBHOOK_URL', 'AUTH_SECRET', 'URLS']) {
+      expect(isOriginKey(key)).toBe(false);
+    }
+  });
+
+  it('substitutes the port and keeps everything else byte for byte', () => {
+    const src = [
+      '# baseline',
+      'BETTER_AUTH_URL=http://localhost:3000',
+      'NEXT_PUBLIC_APP_URL="http://localhost:3000"',
+      'export AUTH_URL = http://localhost:3000  # dev',
+      'DATABASE_URL=postgres://localhost:5432/app',
+      'AUTH_SECRET=shhh',
+      '',
+    ].join('\n');
+    const { text, keys } = rewriteEnvOrigins(src, 'http://localhost:51234');
+    expect(keys).toEqual(['BETTER_AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'AUTH_URL']);
+    expect(text).toContain('BETTER_AUTH_URL=http://localhost:51234');
+    expect(text).toContain('NEXT_PUBLIC_APP_URL="http://localhost:51234"');
+    expect(text).toContain('export AUTH_URL = http://localhost:51234');
+    expect(text).toContain('DATABASE_URL=postgres://localhost:5432/app');
+    expect(text).toContain('AUTH_SECRET=shhh');
+  });
+
+  it('rewrites the worktree copies in place, root and app dir, and names no values', () => {
+    const tree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-point-')));
+    try {
+      fs.writeFileSync(path.join(tree, '.env'), 'NEXTAUTH_URL=http://localhost:3000\nAUTH_SECRET=shhh\n');
+      fs.mkdirSync(path.join(tree, 'apps', 'web'), { recursive: true });
+      fs.writeFileSync(path.join(tree, 'apps', 'web', '.env.local'), 'NEXT_PUBLIC_APP_URL=http://localhost:3000\n');
+      const keys = pointEnvFilesAt(tree, 'http://localhost:4321', path.join('apps', 'web'));
+      expect(keys.sort()).toEqual(['NEXTAUTH_URL', 'NEXT_PUBLIC_APP_URL']);
+      expect(keys.join(' ')).not.toMatch(/shhh|localhost/);
+      expect(fs.readFileSync(path.join(tree, '.env'), 'utf-8')).toBe('NEXTAUTH_URL=http://localhost:4321\nAUTH_SECRET=shhh\n');
+      expect(fs.readFileSync(path.join(tree, 'apps', 'web', '.env.local'), 'utf-8')).toBe('NEXT_PUBLIC_APP_URL=http://localhost:4321\n');
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to write outside the worktree', () => {
+    const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-point-esc-')));
+    try {
+      fs.writeFileSync(path.join(parent, '.env'), 'AUTH_URL=http://localhost:3000\n');
+      fs.mkdirSync(path.join(parent, 'worktree'));
+      expect(pointEnvFilesAt(path.join(parent, 'worktree'), 'http://localhost:4321', path.join('..', '..'))).toEqual([]);
+      expect(fs.readFileSync(path.join(parent, '.env'), 'utf-8')).toContain(':3000');
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }
