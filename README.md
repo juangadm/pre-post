@@ -192,9 +192,22 @@ Optional `.pre-post.json` in the repo root:
   "maxRoutes": 6,
   "ignore": ["apps/docs"],
   "headers": {},
-  "assetsBranch": "pre-post-assets"
+  "assetsBranch": "pre-post-assets",
+  "baselineSetup": "pnpm run build:packages"
 }
 ```
+
+`baselineSetup` runs in the app directory between the install and the dev server when the
+baseline is built from source. Use it for whatever the app needs before it can boot — a
+workspace build, a codegen step. In a turborepo it is inferred: `turbo run build
+--filter=<app>^...`, which builds the packages the app imports and leaves the app to the
+dev server. Setting it turns the guess off.
+
+Env files copied into the baseline's worktree get their origin variables — `BETTER_AUTH_URL`,
+`NEXTAUTH_URL`, `AUTH_URL`, `NEXT_PUBLIC_APP_URL` and the like — rewritten to the port the
+baseline actually listens on. Without that an auth-gated app rejects its own callbacks and
+every capture is a loading skeleton. Variables addressing anything else (`DATABASE_URL`, an
+API on a second port) are left alone.
 
 Environment:
 
