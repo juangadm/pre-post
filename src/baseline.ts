@@ -636,6 +636,22 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     }
   }
 
+  // Before the setup step, not after it: that step is a build, and a build that
+  // reads NEXT_PUBLIC_APP_URL bakes whatever the file says into its output.
+  // Rewriting afterwards would leave the compiled copy holding the old port —
+  // the same mismatch, now somewhere no later rewrite can reach. The cost is
+  // that the port is claimed across the build rather than a moment before the
+  // spawn; if something else takes it meanwhile, the server fails to bind and
+  // this run says so, which is the failure worth having.
+  const port = await freePort();
+  const url = `http://localhost:${port}`;
+  // Only the throwaway worktree's copies may be edited; the caller's own env
+  // files are theirs.
+  if (worktree !== opts.repoRoot) {
+    const pointed = pointEnvFilesAt(worktree, url, opts.appPrefix);
+    if (pointed.length) log(`Pointed ${pointed.join(', ')} at ${url} so the baseline agrees with its own address.`);
+  }
+
   // The inferred build follows a fresh install and nothing else: a tree that
   // already had node_modules has its workspace packages built too, and running
   // a repo-wide build over someone's own checkout to take a screenshot is not
@@ -654,16 +670,6 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       return skip(`\`${setup.label}\` failed.`);
     }
   }
-
-  const port = await freePort();
-  const url = `http://localhost:${port}`;
-  // Only the throwaway worktree's copies may be edited; the caller's own env
-  // files are theirs.
-  if (worktree !== opts.repoRoot) {
-    const pointed = pointEnvFilesAt(worktree, url, opts.appPrefix);
-    if (pointed.length) log(`Pointed ${pointed.join(', ')} at ${url} so the baseline agrees with its own address.`);
-  }
-
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
     stdio: 'ignore',
