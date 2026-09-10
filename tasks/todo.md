@@ -125,3 +125,37 @@ Pushed back on one point in-thread: Codex suggested an error overlay should make
 capture fail. For Next it need not — a broken build answers 500, which `runTask` already
 records. Vite is the dangerous case because it stays at 200, and there the fix is simply
 not to hide the evidence.
+
+# Fix pass from the auth-gated monorepo field test
+
+Source: a real run against a turborepo whose app is auth-gated. Six routes, six
+"Could not capture", and a PR comment that opened by saying nothing had changed.
+
+- [x] Build the workspace's dependencies before the baseline's dev server.
+      The app imports sibling packages that ship compiled output, and a fresh
+      install in a throwaway worktree does not produce it, so the dev server
+      booted against packages with no `dist`. `baselineSetup` in
+      `.pre-post.json` is the general answer — any command, run in the app
+      directory between the install and the dev server. When it is absent and
+      the repo is a turborepo, `turbo run build --filter=<app>^...` is
+      inferred: dependencies of the app, not the app, which the dev server
+      owns. Inference only follows a fresh install — running a repo-wide build
+      over someone's own checkout to take a screenshot is not a trade this tool
+      gets to make. A failing step ends the baseline rather than serving an
+      error page as Pre.
+- [x] Point the copied env files at the baseline's real origin. The copies name
+      the developer's own port (3000) and the baseline answers on an ephemeral
+      one, so an auth library rejected its own callbacks: the page rendered,
+      the session never resolved, and every capture was a loading skeleton —
+      which reads as success, because a screenshot came back. `BETTER_AUTH_URL`,
+      `NEXTAUTH_URL`, `AUTH_URL`, `NEXT_PUBLIC_APP_URL` and their kin are
+      rewritten in the worktree; a name list rather than `*_URL`, so
+      `DATABASE_URL` and an API on a second port are left where they point.
+- [x] Stop claiming "No visual changes." when nothing was compared. The line
+      printed directly above six "Could not capture:" entries. Zero routes
+      compared is "**Nothing was compared**", which is a different fact.
+
+**Not touched.** The Post side served from the working tree has the same
+origin-mismatch problem, and the fix there cannot be a file rewrite — those env
+files belong to the reader. Its own change.
+
