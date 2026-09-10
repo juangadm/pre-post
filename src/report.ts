@@ -48,7 +48,18 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
   lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>`, '');
-  if (changed.length === 0 && oneSided.length === 0) lines.push('No visual changes.', '');
+  // "No visual changes" is a claim about what the two sides looked like, so it
+  // may only be made about routes that were actually compared. A run where
+  // every capture failed compared nothing, and printing it there — directly
+  // above a list of six "Could not capture" lines, which is how it shipped —
+  // reports a clean diff for a run that produced no diff at all.
+  if (changed.length + unchanged.length + oneSided.length === 0) {
+    lines.push(errors.length
+      ? `**Nothing was compared** — ${errors.length === 1 ? 'the only capture' : `all ${errors.length} captures`} failed. See below.`
+      : '**Nothing was compared** — no route produced a screenshot.', '');
+  } else if (changed.length === 0 && oneSided.length === 0) {
+    lines.push('No visual changes.', '');
+  }
 
   for (const [route, outcomes] of routes) {
     const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
