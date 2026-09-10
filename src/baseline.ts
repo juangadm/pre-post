@@ -198,19 +198,24 @@ export function copyEnvFiles(from: string, to: string, appPrefix?: string): stri
 const PUBLIC_PREFIXES = ['NEXT_PUBLIC_', 'NUXT_PUBLIC_', 'EXPO_PUBLIC_', 'REACT_APP_', 'GATSBY_', 'VITE_', 'PUBLIC_'];
 
 /**
- * Names that mean "the address this app is served at", rather than the address
- * of something the app talks to.
+ * Names that can only mean "the address this app is served at".
  *
- * Deliberately a list and not a pattern. `*_URL` would sweep up `DATABASE_URL`
- * and an API on a second port, and pointing either of those at the dev server
- * breaks the app more thoroughly than the wrong port ever did.
+ * Deliberately a list and not a pattern: `*_URL` would sweep up
+ * `DATABASE_URL` and an API on a second port, and pointing either of those at
+ * the dev server breaks the app more thoroughly than the wrong port ever did.
+ *
+ * And deliberately a short list. The generic names — `URL`, `BASE_URL`,
+ * `SERVER_URL`, `HOST_URL`, `PUBLIC_URL` — read as the app's own address about
+ * as often as they read as a backend on another port or, for `BASE_URL` under
+ * Vite and `PUBLIC_URL` under CRA, a path prefix that is not a URL at all.
+ * Rewriting one of those is the same class of mistake this fix is about: a
+ * page that renders and is quietly wrong. Every name here is qualified by what
+ * it addresses (`APP_`, `SITE_`, `AUTH_`), which is what makes it answerable.
  */
 const ORIGIN_KEYS = new Set([
-  'URL', 'ORIGIN', 'HOST_URL', 'ROOT_URL', 'DEPLOYMENT_URL',
   'APP_URL', 'APP_ORIGIN', 'APP_BASE_URL',
-  'BASE_URL', 'BASE_ORIGIN',
   'SITE_URL', 'SITE_ORIGIN',
-  'WEB_URL', 'WEBSITE_URL', 'FRONTEND_URL', 'SERVER_URL', 'CANONICAL_URL',
+  'WEBSITE_URL', 'CANONICAL_URL', 'DEPLOYMENT_URL',
   'AUTH_URL', 'AUTH_ORIGIN', 'AUTH_BASE_URL', 'NEXTAUTH_URL', 'NEXTAUTH_URL_INTERNAL', 'BETTER_AUTH_URL',
 ]);
 
@@ -658,6 +663,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     const pointed = pointEnvFilesAt(worktree, url, opts.appPrefix);
     if (pointed.length) log(`Pointed ${pointed.join(', ')} at ${url} so the baseline agrees with its own address.`);
   }
+
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
     stdio: 'ignore',
