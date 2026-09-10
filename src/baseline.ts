@@ -478,6 +478,24 @@ export function setupStep(treeRoot: string, appDir: string, configured?: string)
   return turboDependencyBuild(treeRoot, appDir);
 }
 
+/**
+ * The configured setup command failed, and nothing else can rescue this run.
+ *
+ * One sentence, and the output goes to the log above it, for the reason
+ * `installFailureHint` gives. The directory named is the caller's own, never
+ * the worktree: cleanup has deleted the worktree by the time anyone reads it.
+ */
+export function setupFailureHint(label: string, ranIn: string): string {
+  return `The \`baselineSetup\` command (\`${label}\`) failed while preparing the baseline; run it in ${ranIn} to fix it, or drop it from .pre-post.json.`;
+}
+
+export class BaselineSetupError extends NeedsHumanError {
+  constructor(label: string, ranIn: string) {
+    super(setupFailureHint(label, ranIn));
+    this.name = 'BaselineSetupError';
+  }
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -657,16 +675,24 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   // a repo-wide build over someone's own checkout to take a screenshot is not
   // a trade this tool gets to make. A configured command is different — the
   // repository asked for it, so it runs either way.
-  const setup = opts.setup?.trim() ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
+  const configured = Boolean(opts.setup?.trim());
+  const setup = configured ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
   if (setup) {
     log(`Preparing ${what} before its dev server (${setup.label}) ...`);
     const attempt = runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
     if (!attempt.ok) {
-      // Loud, and then out. A dev server started over a half-built workspace
+      // Loud either way. A dev server started over a half-built workspace
       // serves an error page, and an error page is a baseline that reports a
       // wall of changes this branch never made.
       log(attempt.output);
       await cleanup();
+      // A command the repository asked for is the install's case exactly
+      // (docs/portability.md §1): yielding here lets the run fall through to a
+      // configured production URL and publish a different comparison as if it
+      // were this one, or die further along on an error about dev servers that
+      // names nothing the reader can fix. Only the inferred build yields —
+      // nobody asked for it, so it is allowed to be one option among several.
+      if (configured) throw new BaselineSetupError(setup.label, appIn);
       return skip(`\`${setup.label}\` failed.`);
     }
   }
