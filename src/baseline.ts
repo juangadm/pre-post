@@ -242,18 +242,26 @@ function tail(text: string, lines = 24): string {
  */
 const MAX_INSTALL_OUTPUT = 64 * 1024 * 1024;
 
-const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => {
+/**
+ * Run one command to completion, keeping the tail of what it said.
+ *
+ * Shared by the install and the setup step that follows it: they fail the same
+ * way, and a reader needs the same thing from both — the end of the output.
+ */
+function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false): InstallAttempt {
   try {
-    execFileSync(bin, argv, { cwd, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_INSTALL_OUTPUT });
-    // Only a failure has anything to explain, so the successful install's log
-    // is dropped rather than split into lines nothing will read.
+    execFileSync(bin, argv, { cwd, shell, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_INSTALL_OUTPUT });
+    // Only a failure has anything to explain, so the successful run's log is
+    // dropped rather than split into lines nothing will read.
     return { argv, ok: true, output: '' };
   } catch (err) {
     const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
     const output = [e.stdout, e.stderr].map(part => (part ? String(part) : '')).join('');
     return { argv, ok: false, output: tail(output || e.message || '') };
   }
-};
+}
+
+const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => runCommand(bin, argv, cwd, timeoutMs);
 
 /**
  * Does this look like npm refusing to resolve a peer range?
@@ -325,6 +333,68 @@ export class BaselineInstallError extends NeedsHumanError {
   }
 }
 
+/** A command to run between the install and the dev server. */
+export interface SetupStep {
+  /** The command as a reader would type it, for the log. */
+  label: string;
+  bin: string;
+  argv: string[];
+  cwd: string;
+  /** Run through a shell, for a command a human wrote as one string. */
+  shell?: boolean;
+}
+
+const TURBO_CONFIGS = ['turbo.json', 'turbo.jsonc'];
+
+/** A binary the install just put in a `node_modules/.bin`, nearest first. */
+function localBin(name: string, ...dirs: string[]): string | null {
+  const file = process.platform === 'win32' ? `${name}.cmd` : name;
+  for (const dir of dirs) {
+    const bin = path.join(dir, 'node_modules', '.bin', file);
+    if (fs.existsSync(bin)) return bin;
+  }
+  return null;
+}
+
+/**
+ * Build the workspace packages the app imports, before the dev server starts.
+ *
+ * A monorepo app depends on sibling packages that ship compiled output, and a
+ * fresh install does not produce it — `turbo dev` normally would, but the dev
+ * script this file runs is the app's own. So the app boots against a package
+ * with no `dist`, and the baseline is an error page or a shell.
+ *
+ * `^...` is turbo's "dependencies of, excluding itself": the siblings get
+ * built, the app is left to the dev server.
+ */
+export function turboDependencyBuild(treeRoot: string, appDir: string): SetupStep | null {
+  // A single-package repo has no upstream workspace to build; its dev script
+  // is the whole thing.
+  if (path.resolve(appDir) === path.resolve(treeRoot)) return null;
+  if (!TURBO_CONFIGS.some(name => fs.existsSync(path.join(treeRoot, name)))) return null;
+  const name = readPackage(appDir)?.name;
+  if (typeof name !== 'string' || !name) return null;
+  const bin = localBin('turbo', appDir, treeRoot);
+  if (!bin) return null;
+  const argv = ['run', 'build', `--filter=${name}^...`];
+  return { label: `turbo ${argv.join(' ')}`, bin, argv, cwd: treeRoot };
+}
+
+/**
+ * What to run between install and dev: `baselineSetup` if the repository
+ * configured one, else turbo's dependency build when this is a turborepo.
+ *
+ * The configured command wins outright. It is the general answer — one line in
+ * `.pre-post.json` for a repository whose baseline needs a codegen step, a
+ * prisma generate, a build this tool has never heard of — and a repository
+ * that names one has already told us the guess is not wanted.
+ */
+export function setupStep(treeRoot: string, appDir: string, configured?: string): SetupStep | null {
+  const command = configured?.trim();
+  if (command) return { label: command, bin: command, argv: [], cwd: appDir, shell: true };
+  return turboDependencyBuild(treeRoot, appDir);
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -345,6 +415,11 @@ export interface BaselineOptions {
   sha?: string;
   /** Directory holding the app's package.json, relative to the repo root. */
   appPrefix?: string;
+  /**
+   * Command to run between the install and the dev server, from
+   * `.pre-post.json`. Omit to let a turborepo's dependency build be inferred.
+   */
+  setup?: string;
   /** Budget for install + boot. */
   timeoutMs?: number;
   /** Injectable for tests; defaults to a real PATH scan. */
@@ -475,6 +550,25 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     const retried = result.attempts[1];
     if (retried) {
       log(`\`${pm.bin} ${pm.install.join(' ')}\` hit a peer-dependency conflict; installed the baseline with \`${retried.argv.join(' ')}\` instead.`);
+    }
+  }
+
+  // The inferred build follows a fresh install and nothing else: a tree that
+  // already had node_modules has its workspace packages built too, and running
+  // a repo-wide build over someone's own checkout to take a screenshot is not
+  // a trade this tool gets to make. A configured command is different — the
+  // repository asked for it, so it runs either way.
+  const setup = opts.setup?.trim() ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
+  if (setup) {
+    log(`Preparing ${what} before its dev server (${setup.label}) ...`);
+    const attempt = runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
+    if (!attempt.ok) {
+      // Loud, and then out. A dev server started over a half-built workspace
+      // serves an error page, and an error page is a baseline that reports a
+      // wall of changes this branch never made.
+      log(attempt.output);
+      await cleanup();
+      return skip(`\`${setup.label}\` failed.`);
     }
   }
 

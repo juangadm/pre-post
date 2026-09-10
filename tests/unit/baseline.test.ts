@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { copyEnvFiles, detectPackageManager, freePort, onPath, resolvePackageManager, serveBaseCommit, serveWorkingTree, servableDir } from '../../src/baseline';
+import { copyEnvFiles, detectPackageManager, freePort, onPath, resolvePackageManager, serveBaseCommit, serveWorkingTree, servableDir, setupStep, turboDependencyBuild } from '../../src/baseline';
 import { devScript } from '../../src/pkg';
 import { execSync } from 'child_process';
 
@@ -243,5 +243,52 @@ describe('copyEnvFiles', () => {
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the setup step between install and dev', () => {
+  let tree: string;
+  const app = () => path.join(tree, 'apps', 'web');
+  beforeAll(() => {
+    tree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-setup-')));
+    fs.mkdirSync(path.join(tree, 'apps', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(tree, 'apps', 'web', 'package.json'), JSON.stringify({ name: 'web' }));
+  });
+  afterAll(() => fs.rmSync(tree, { recursive: true, force: true }));
+
+  const installTurbo = () => {
+    const bin = path.join(tree, 'node_modules', '.bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'turbo.cmd' : 'turbo'), '');
+  };
+
+  it('is nothing without a turbo.json', () => {
+    expect(turboDependencyBuild(tree, app())).toBeNull();
+  });
+
+  it('builds the app\'s dependencies and not the app itself', () => {
+    fs.writeFileSync(path.join(tree, 'turbo.json'), '{}');
+    installTurbo();
+    const step = turboDependencyBuild(tree, app())!;
+    expect(step.argv).toEqual(['run', 'build', '--filter=web^...']);
+    // turbo is a repo-wide tool, so it runs from the root, not the app.
+    expect(step.cwd).toBe(tree);
+    expect(step.bin).toContain(path.join('node_modules', '.bin'));
+  });
+
+  it('is nothing for a single-package repo, whose dev script is the whole build', () => {
+    expect(turboDependencyBuild(tree, tree)).toBeNull();
+  });
+
+  it('is nothing when turbo is configured but not installed', () => {
+    fs.rmSync(path.join(tree, 'node_modules'), { recursive: true, force: true });
+    expect(turboDependencyBuild(tree, app())).toBeNull();
+    installTurbo();
+  });
+
+  it('lets a configured command win, run in the app directory, through a shell', () => {
+    const step = setupStep(tree, app(), '  pnpm run build:deps  ')!;
+    expect(step).toMatchObject({ bin: 'pnpm run build:deps', argv: [], cwd: app(), shell: true });
+    expect(setupStep(tree, app())!.label).toMatch(/^turbo /);
   });
 });
