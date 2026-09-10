@@ -203,11 +203,17 @@ workspace build, a codegen step. In a turborepo it is inferred: `turbo run build
 --filter=<app>^...`, which builds the packages the app imports and leaves the app to the
 dev server. Setting it turns the guess off.
 
-Env files copied into the baseline's worktree get their origin variables — `BETTER_AUTH_URL`,
-`NEXTAUTH_URL`, `AUTH_URL`, `NEXT_PUBLIC_APP_URL` and the like — rewritten to the port the
-baseline actually listens on. Without that an auth-gated app rejects its own callbacks and
-every capture is a loading skeleton. Variables addressing anything else (`DATABASE_URL`, an
-API on a second port) are left alone.
+A command that fails stops the run with one instruction, rather than quietly comparing
+against something else.
+
+Env files copied into the baseline's worktree get their origin variables rewritten to the
+port the baseline actually listens on, before the setup step runs so a build cannot bake in
+the old one. Without this an auth-gated app rejects its own callbacks and every capture is a
+loading skeleton. The names rewritten are the ones that can only mean the app's own address
+— `BETTER_AUTH_URL`, `NEXTAUTH_URL`, `AUTH_URL`, `APP_URL`, `SITE_URL`, `CANONICAL_URL` and
+their `_ORIGIN`/`_BASE_URL` forms, with a `NEXT_PUBLIC_` / `VITE_` / `PUBLIC_` prefix
+optional. Generic names are left alone: `BASE_URL`, `SERVER_URL` and `PUBLIC_URL` are as
+often a backend on another port or a path prefix, and `DATABASE_URL` is never an origin.
 
 Environment:
 
