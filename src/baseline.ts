@@ -190,6 +190,84 @@ export function copyEnvFiles(from: string, to: string, appPrefix?: string): stri
   return copied;
 }
 
+/**
+ * Prefixes a framework uses to mark a variable as safe to send to the browser.
+ * Stripped before the name is matched, so `NEXT_PUBLIC_APP_URL` and `APP_URL`
+ * are the same question.
+ */
+const PUBLIC_PREFIXES = ['NEXT_PUBLIC_', 'NUXT_PUBLIC_', 'EXPO_PUBLIC_', 'REACT_APP_', 'GATSBY_', 'VITE_', 'PUBLIC_'];
+
+/**
+ * Names that mean "the address this app is served at", rather than the address
+ * of something the app talks to.
+ *
+ * Deliberately a list and not a pattern. `*_URL` would sweep up `DATABASE_URL`
+ * and an API on a second port, and pointing either of those at the dev server
+ * breaks the app more thoroughly than the wrong port ever did.
+ */
+const ORIGIN_KEYS = new Set([
+  'URL', 'ORIGIN', 'HOST_URL', 'ROOT_URL', 'DEPLOYMENT_URL',
+  'APP_URL', 'APP_ORIGIN', 'APP_BASE_URL',
+  'BASE_URL', 'BASE_ORIGIN',
+  'SITE_URL', 'SITE_ORIGIN',
+  'WEB_URL', 'WEBSITE_URL', 'FRONTEND_URL', 'SERVER_URL', 'CANONICAL_URL',
+  'AUTH_URL', 'AUTH_ORIGIN', 'AUTH_BASE_URL', 'NEXTAUTH_URL', 'NEXTAUTH_URL_INTERNAL', 'BETTER_AUTH_URL',
+]);
+
+/** Does this variable name the app's own origin? */
+export function isOriginKey(key: string): boolean {
+  const prefix = PUBLIC_PREFIXES.find(p => key.startsWith(p) && key.length > p.length);
+  return ORIGIN_KEYS.has(key) || (prefix ? ORIGIN_KEYS.has(key.slice(prefix.length)) : false);
+}
+
+/** One env file's text with every origin variable pointed at `origin`. */
+export function rewriteEnvOrigins(text: string, origin: string): { text: string; keys: string[] } {
+  const keys: string[] = [];
+  const lines = text.split('\n').map(line => {
+    const m = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/.exec(line);
+    if (!m || !isOriginKey(m[2])) return line;
+    keys.push(m[2]);
+    // Keep the quoting the author used; drop whatever followed, because a
+    // trailing comment about the old address is now wrong.
+    const quote = /^["']/.test(m[4]) ? m[4][0] : '';
+    return `${m[1]}${m[2]}${m[3]}${quote}${origin}${quote}`;
+  });
+  return { text: lines.join('\n'), keys };
+}
+
+/**
+ * Point the worktree's copied env files at the baseline's real origin.
+ *
+ * The copies name the port the developer's own dev server uses, and the
+ * baseline is on an ephemeral one. An app whose auth library is told it lives
+ * at :3000 while it is answering on :51234 rejects its own callbacks: the page
+ * renders, the session never resolves, and every capture is a loading
+ * skeleton. That reads as success — a screenshot came back — which is the
+ * failure mode this whole file exists to avoid.
+ *
+ * Same constraint as the copy: only ever writes inside `dir`, and returns
+ * names, never values.
+ */
+export function pointEnvFilesAt(dir: string, origin: string, appPrefix?: string): string[] {
+  const rewritten = new Set<string>();
+  const root = path.resolve(dir);
+  for (const sub of appPrefix ? ['', appPrefix] : ['']) {
+    for (const name of ENV_FILES) {
+      const file = path.resolve(root, sub, name);
+      if (file !== root && !file.startsWith(root + path.sep)) continue;
+      try {
+        if (!fs.existsSync(file)) continue;
+        const before = fs.readFileSync(file, 'utf-8');
+        const { text, keys } = rewriteEnvOrigins(before, origin);
+        if (!keys.length || text === before) continue;
+        fs.writeFileSync(file, text);
+        for (const key of keys) rewritten.add(key);
+      } catch { /* best effort: the same as a missing env file */ }
+    }
+  }
+  return [...rewritten];
+}
+
 /** An OS-assigned free port. */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -574,6 +652,12 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
 
   const port = await freePort();
   const url = `http://localhost:${port}`;
+  // Only the throwaway worktree's copies may be edited; the caller's own env
+  // files are theirs.
+  if (worktree !== opts.repoRoot) {
+    const pointed = pointEnvFilesAt(worktree, url, opts.appPrefix);
+    if (pointed.length) log(`Pointed ${pointed.join(', ')} at ${url} so the baseline agrees with its own address.`);
+  }
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
     stdio: 'ignore',
