@@ -400,9 +400,10 @@ describe('checkWriteAccess', () => {
 });
 
 describe('findToken', () => {
-  const saved = { gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN };
+  const saved = { prePost: process.env.PRE_POST_GH_TOKEN, gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN };
+  beforeEach(() => { delete process.env.PRE_POST_GH_TOKEN; });
   afterEach(() => {
-    for (const [k, v] of [['GH_TOKEN', saved.gh], ['GITHUB_TOKEN', saved.github]] as const) {
+    for (const [k, v] of [['PRE_POST_GH_TOKEN', saved.prePost], ['GH_TOKEN', saved.gh], ['GITHUB_TOKEN', saved.github]] as const) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   });
@@ -411,6 +412,15 @@ describe('findToken', () => {
     process.env.GH_TOKEN = 'a';
     process.env.GITHUB_TOKEN = 'b';
     expect(findToken()).toEqual({ token: 'a', source: 'GH_TOKEN' });
+  });
+
+  // Hosted agent environments set GH_TOKEN to a credential of their own, so a
+  // user's token has to be able to win over it without unsetting anything.
+  it('prefers PRE_POST_GH_TOKEN over both', () => {
+    process.env.PRE_POST_GH_TOKEN = 'p';
+    process.env.GH_TOKEN = 'a';
+    process.env.GITHUB_TOKEN = 'b';
+    expect(findToken()).toEqual({ token: 'p', source: 'PRE_POST_GH_TOKEN' });
   });
 
   it('falls back to GITHUB_TOKEN', () => {

@@ -5,7 +5,8 @@
  *   - upserting a sticky PR comment
  *   - pruning old assets
  *
- * Authentication: GH_TOKEN / GITHUB_TOKEN, else the gh CLI's stored token.
+ * Authentication: PRE_POST_GH_TOKEN / GH_TOKEN / GITHUB_TOKEN, else the gh
+ * CLI's stored token.
  */
 
 import { execFileSync } from 'child_process';
@@ -15,7 +16,7 @@ export { GitHubError } from './errors.js';
 export const API_BASE = process.env.GITHUB_API_URL || 'https://api.github.com';
 
 /** Where a token came from. Which one it is decides how a rejection is fixed. */
-export type TokenSource = 'GH_TOKEN' | 'GITHUB_TOKEN' | 'gh';
+export type TokenSource = 'PRE_POST_GH_TOKEN' | 'GH_TOKEN' | 'GITHUB_TOKEN' | 'gh';
 
 export interface FoundToken {
   token: string;
@@ -29,8 +30,14 @@ export interface FoundToken {
  * CLI, so advice aimed at the wrong one is advice that cannot work. Someone
  * whose `GH_TOKEN` is refused gains nothing from `gh auth login`, because the
  * variable still wins on the next run.
+ *
+ * PRE_POST_GH_TOKEN comes first because hosted agent environments set
+ * GH_TOKEN and GITHUB_TOKEN themselves, to a credential of their own that
+ * GitHub's API may refuse. A user's token stored under those names can be
+ * replaced by the platform's; under a name only this tool reads, it cannot.
  */
 export function findToken(): FoundToken | null {
+  if (process.env.PRE_POST_GH_TOKEN) return { token: process.env.PRE_POST_GH_TOKEN, source: 'PRE_POST_GH_TOKEN' };
   if (process.env.GH_TOKEN) return { token: process.env.GH_TOKEN, source: 'GH_TOKEN' };
   if (process.env.GITHUB_TOKEN) return { token: process.env.GITHUB_TOKEN, source: 'GITHUB_TOKEN' };
   try {
