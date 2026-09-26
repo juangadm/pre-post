@@ -1,14 +1,14 @@
 # Pre-Post TODO
 
-Resolved by the 1.0 rewrite (see docs/optimization-plan.md): auth-protected deployments
+Resolved by the 1.0 rewrite (see docs/internal/optimization-plan.md): auth-protected deployments
 (`pre-post login`, `VERCEL_AUTOMATION_BYPASS_SECRET`, clear 401 hints), route detection via
 the import graph, Vite support, GitHub-native storage on `pre-post-assets`, sticky PR
 comment, pixel diff with crops.
 
 ## Later
 - [ ] GIF/animated capture (parked; spec kept in git history)
-- [ ] GitHub Action mode on top of `pre-post pr` for zero-touch PRs
-- [ ] `pre-post prune` on a schedule
+- [x] GitHub Action mode on top of `pre-post pr` for zero-touch PRs (`action.yml`)
+- [x] `pre-post prune` on a schedule (workflow in docs/storage.md)
 
 ## Site / Hero
 

@@ -11,7 +11,7 @@ allowed-tools:
 
 One command does everything: detects the routes this branch changed, screenshots them on
 desktop, pixel-diffs them, uploads the images to a `pre-post-assets` branch, and
-posts or updates a single comment on the open PR. The human reviews on GitHub.
+puts them at the top of the open PR description. The human reviews on GitHub.
 
 It picks both sides itself:
 
@@ -67,8 +67,8 @@ updated. Someone following you from a phone sees it there before they open GitHu
 ## Rules
 
 - Run the command once. Do not open, read, or describe the screenshot files. The PR
-  comment is the deliverable, and the sheet is the one image you pass along. Report the
-  summary the command prints, plus the comment link.
+  description is the deliverable, and the sheet is the one image you pass along. Report the
+  summary the command prints, plus the PR link.
 - Do not switch branches, start dev servers, or use a browser tool yourself. The command
   handles all three.
 - Exit code 3 means a human must do one thing (set a token, start the dev server, pass
@@ -90,8 +90,8 @@ updated. Someone following you from a phone sees it there before they open GitHu
 | `--dry-run` | Preview locally, post nothing |
 | `--header k=v` / `--cookie k=v` | The site needs auth headers or cookies |
 
-To run on every PR without anyone invoking it, point the user to the README's GitHub Action
-section. It posts with GitHub's own token, which also covers work done in cloud sessions.
+To run on every PR without anyone invoking it, point the user to the GitHub Action guide
+(https://github.com/juangadm/pre-post/blob/main/docs/github-action.md). It posts with GitHub's own token, which also covers work done in cloud sessions.
 
 Login-protected sites: `npx -y @juangadm/pre-post@latest login https://site` opens a browser
 once; the saved session is reused automatically.

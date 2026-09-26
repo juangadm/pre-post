@@ -1,330 +1,84 @@
 # pre-post
 
-Before/after screenshots for pull requests. One command detects the routes your branch
-changed, captures each one before and after, uploads the images to GitHub, and puts them at
-the top of the PR description where a reviewer can judge them at a glance.
+**See the change before you read the diff.**
 
-It works out both sides itself, cheapest option first:
-
-| | Pre (the baseline) | Post (this branch) |
-|---|---|---|
-| 1 | `--before` | `--after` |
-| 2 | `before` in `.pre-post.json` | the preview deployment for this commit |
-| 3 | the production deployment for the base commit | a local dev server |
-| 4 | whatever is on production now | |
-| 5 | the base commit, served locally | |
-
-Rows 2 to 4 need no dev environment at all, which is the point: a preview deployment and a
-production URL are enough for anyone who can open the PR. Deployments come from the GitHub
-Deployments API, so Vercel, Cloudflare Pages, Netlify and Render all work with no extra
-token and nothing to configure; a host that records only a commit status is read from the
-deployment bot's own PR comment instead. Row 4 covers repositories that do not deploy every
-push to their default branch, so nothing is deployed at the fork point — it prints which
-commit Pre actually came from rather than implying the base.
-
-pre-post never guesses a baseline. If no deployment can be found it says so and tells you
-the one flag that fixes it, because a baseline that is quietly the wrong site reads as 100%
-changed on every route and looks exactly like a real result.
-
-The last baseline needs no network at all: it checks the base commit into a throwaway
-worktree and boots its dev script. That keeps pre-post working inside a sandboxed agent
-container, a CI job, or behind an egress allowlist — and it compares against exactly what
-the branch forked from, rendered in the same browser as the Post side.
-
-> Originally forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by James Clements / Vercel Labs.
+pre-post puts before/after screenshots of every page your branch touched at the top of the
+pull request. One command finds the changed routes, captures Pre and Post, highlights what
+moved, and updates the PR description. No setup, no pasting images.
 
 ```
 $ npx -y @juangadm/pre-post@latest pr
 
 Routes (nextjs-app, 41ms): /, /pricing
-  /                           medium src/app/page.tsx imports src/components/ui/button.tsx (2 hops)
-  /pricing                    medium src/app/pricing/page.tsx imports src/components/ui/button.tsx (2 hops)
-Capturing 8 screenshots (2 route(s) × 2 viewport(s)) ...
-  changed  /pricing @ mobile (1.42%, 1811ms)
+Capturing 4 screenshots (2 route(s) × 1 viewport(s)) ...
   changed  /pricing @ desktop (0.64%, 2036ms)
-  same     / @ mobile (0.00%, 1990ms)
   same     / @ desktop (0.00%, 2211ms)
-Publishing 10 image(s) to acme/web@pre-post-assets ...
 Updated PR description: https://github.com/acme/web/pull/42
-pre-post · PR #42 · 2 route(s) · 2 viewport(s) · 6.8s
-  /         desktop  no change
-  /         mobile   no change
-  /pricing  desktop  0.64% changed
-  /pricing  mobile   1.4% changed
-Comment: https://github.com/acme/web/pull/42
 ```
 
-## How it works
+## Get started
 
-1. **Routes.** Diffs the branch against the merge base with `main` — fetching that branch
-   first when the checkout does not have it, which is the normal shape in CI and in the
-   web/sandbox editors. When no shared history can be established it stops with one
-   sentence rather than reporting an empty diff, and `--base <ref>` names the commit
-   directly. Then it follows the import
-   graph: a change to `components/ui/button.tsx` marks every page that imports it. Next.js
-   App Router and Pages Router, Vite apps (React Router, file-based `src/pages`), and a
-   generic fallback. Monorepos are handled by picking the app that owns the changed files.
-2. **Capture.** Playwright + Chromium headless shell. The page's own clock is held
-   still while it loads and then run forward by a fixed budget, so a page that animates
-   on a timer is photographed at the same frame on both sides however fast each host
-   answered. Reduced motion, animations finished, caret hidden, fonts and images settled,
-   layout stable, lazy content primed. 2x device scale, full page (capped at 2400 CSS
-   px), desktop (add mobile with `-r`).
-   All routes and viewports run concurrently.
-3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed,
-   the bounding box, and a tight crop of the changed region. A route counts as changed when
-   the painted difference covers at least `minChangedArea` CSS pixels² (default 100, roughly
-   a third of a 16px icon) or at least `threshold` of the canvas — the first rule is what
-   decides on a page, the second on a small image.
-4. **Layout shift.** A padding change near the top of a page moves everything below it, and
-   pixel diffing counts every moved pixel as changed: a change a designer would call
-   "slightly roomier" reads as most of the page repainted, and the crop is suppressed just
-   when it would be most useful. So the two sides are checked for a single vertical offset
-   first — how far the content moved, and from which row. When one is found, Pre is re-spaced
-   into Post's layout and the two are compared there: the crop comes from that pair, and the
-   comment says `Content shifted down 48px` instead of quoting a percentage. Rows Post gained
-   are left as background rather than skipped, so content inserted above the shift — the
-   banner that caused it — still reads as new rather than as nothing. The offset is only
-   accepted when it accounts for most of the difference across the rows both sides share.
-   The raw numbers are left alone: a move is a visual change, and reporting less of one would
-   hide it. Reflow, where content moves both across and down, has no single offset to find,
-   so it is reported the way it always was.
-5. **Publish.** Images go to a `pre-post-assets` branch in the same repository via the GitHub
-   API, as one commit per run. Nothing is committed to the PR branch, no CI is triggered,
-   and the blob URLs render on private repos — a screenshot is visible to exactly whoever
-   can see the repository. `pre-post prune` removes images for PRs closed more than 90 days
-   ago, but note that it commits a deletion rather than rewriting history: the older commits
-   still hold the blobs, so a link handed out earlier keeps working. Treat anything captured
-   as permanent, and think twice before pointing pre-post at a preview holding real data.
-   See [Screenshot storage](#screenshot-storage) for how fast the branch grows.
-6. **Describe.** The images go in a delimited block at the top of the PR description,
-   replaced in place on every run and leaving your own text untouched. Changed routes show
-   a Pre/Post crop with the full page collapsed underneath; unchanged routes fold into a
-   single line. A pure layout shift — nothing changed once the move is undone — has no
-   region to crop, so it shows the full pages directly under the `Content shifted down 40px.
-   Nothing else changed.` line, with no collapsed section repeating them. If the PR cannot be edited — a fork, a read-only token — it falls back to
-   one sticky comment.
+Pick one. None of them installs anything permanently.
 
-## Install
-
-Two ways. Neither installs anything permanently.
-
-### Claude Code — easiest
+**In Claude Code**: install the skill once, then say `/pre-post` after a UI change.
 
 ```bash
 npx skills add juangadm/pre-post -y
 ```
 
-Then say `/pre-post` after a UI change. Install once, never type a flag. No npm
-knowledge needed.
-
-### Terminal
+**In a terminal**: run it on a branch with an open PR.
 
 ```bash
 npx -y @juangadm/pre-post@latest pr
 ```
 
-Run it on a branch with an open PR. No install step.
+**On every PR, automatically**: add the [GitHub Action](https://github.com/juangadm/pre-post/blob/main/docs/github-action.md). No tokens or
+secrets needed.
 
-### Both need
+### You'll need
+
+- **Node 20+**
+- **A GitHub token** with write access: `gh auth login`, or set `GH_TOKEN`
+- **An open PR**: without one, pre-post prints the markdown for you to paste
+
+The first run downloads a small browser (~80 MB). Stuck? Run
+`npx -y @juangadm/pre-post@latest doctor`.
+
+## Everyday commands
+
+```bash
+pre-post pr                              # screenshot this branch's PR
+pre-post pr --routes /pricing,/docs      # only these pages
+pre-post pr -r                           # desktop and mobile
+pre-post pr --before https://acme.com    # set the "before" site (remembered)
+pre-post pr --dry-run                    # try it without posting
+pre-post login https://staging.acme.com  # sign in once for protected sites
+pre-post doctor                          # check your setup
+```
+
+If pre-post needs something from you, it stops with one sentence saying exactly what.
+
+## How it decides what "before" is
+
+Post (your branch) is the PR's preview deployment, or a local dev server. Pre is the
+production site your branch forked from. When nothing is deployed, pre-post builds the base
+commit itself, so it works in CI and in sandboxes too. It never guesses: if it can't find a
+trustworthy baseline, it tells you which flag to pass.
+
+Screenshots are stored on a `pre-post-assets` branch in your own repo, so only people who can
+see the repo can see them. Nothing is committed to your PR branch.
+
+## Learn more
 
 | | |
 |---|---|
-| **Node 20+** | The one hard requirement. Check with `node --version`. |
-| **A GitHub token** | `gh auth login`, or set `GH_TOKEN`. Needs write access — it publishes images and edits the PR. |
-| **An open PR** | Where the images go. Without one, pre-post prints the markdown to paste. |
+| [How it works](https://github.com/juangadm/pre-post/blob/main/docs/how-it-works.md) | How Pre and Post are chosen, capture, diffing, layout shifts |
+| [GitHub Action](https://github.com/juangadm/pre-post/blob/main/docs/github-action.md) | Run on every PR with no per-person setup |
+| [Reference](https://github.com/juangadm/pre-post/blob/main/docs/reference.md) | All commands, exit codes, `.pre-post.json`, environment variables |
+| [Screenshot storage](https://github.com/juangadm/pre-post/blob/main/docs/storage.md) | How much space it uses and how to prune it |
+| [Contributing](https://github.com/juangadm/pre-post/blob/main/CONTRIBUTING.md) | Build and test locally |
 
-First run also pulls a Chromium headless shell (~80 MB), then reuses it. Stuck? Run
-`npx -y @juangadm/pre-post@latest doctor`.
+## Credits
 
-### GitHub Action: every PR, no tokens
-
-For a team, or for work done in cloud agent sessions: GitHub runs pre-post on each push to a
-PR and posts with the job's own token. Nobody sets up anything per person, and there are no
-secrets to add. Add `.github/workflows/pre-post.yml`:
-
-```yaml
-name: pre-post
-on: pull_request
-permissions: { contents: write, pull-requests: write }
-concurrency: { group: 'pre-post-${{ github.event.pull_request.number }}', cancel-in-progress: true }
-jobs:
-  pre-post:
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: { ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0 }
-      - uses: juangadm/pre-post@v1
-```
-
-The runner builds the base commit and the PR's commit and serves both, the same way pre-post
-does on a laptop with nothing deployed. No preview deployment is involved, so Vercel's
-Deployment Protection never gets in the way.
-
-- **Your app must start with its dev script without secrets.** If it needs environment
-  variables, give them to the job with `env:`.
-- **pnpm or yarn** comes from the `packageManager` field in package.json. Without one, set
-  it up before the pre-post step (e.g. `pnpm/action-setup`), as any other job would.
-- **Fork PRs are skipped:** their token cannot write, so there is nowhere to post.
-- **Flags** go in `with: { args: '--responsive' }`.
-- **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
-  posting fails.
-- **Pinned:** `@v1` runs the pre-post version released with that tag, never whatever npm
-  calls `latest`.
-
-## Usage
-
-```bash
-pre-post pr                                  # everything, on the current branch's PR
-pre-post pr --before https://acme.com        # pin the baseline (saved to .pre-post.json)
-pre-post pr --no-local-baseline              # never build the base commit locally
-pre-post pr --routes /pricing,/docs          # explicit routes
-pre-post pr --viewports desktop,1440x900     # custom viewports
-pre-post pr --dry-run                        # capture + diff locally, post nothing
-pre-post pr --json                           # machine-readable output
-
-pre-post https://acme.com http://localhost:3000 --routes /pricing   # ad-hoc comparison
-pre-post before.png after.png                # diff two images
-pre-post detect                              # which routes does this branch touch?
-pre-post login https://staging.acme.com      # sign in once; the session is reused
-pre-post prune --days 90                     # clean up the assets branch
-pre-post doctor                              # browser, token, dev server, config
-```
-
-When something needs a human, the CLI exits with code 3 and one sentence saying what to do
-(log in, start the dev server, pass `--before`). Re-running picks up where it left off.
-
-Exit codes, so a script or an agent can branch on them:
-
-| code | meaning |
-|---|---|
-| 0 | done; for `doctor`, `pre-post pr` can run |
-| 1 | the run failed — every capture errored, or an unexpected error; for `doctor`, a required check failed |
-| 2 | the arguments could not be parsed |
-| 3 | something needs a human; the message says what |
-
-`doctor` marks a check **FAIL** only when `pre-post pr` has no way to proceed without it —
-the browser, a GitHub token, and being inside a git repository. Everything else prints as
-**note**: no dev server running, or no `--before` saved, narrows *which* strategy a run
-picks rather than stopping it, so those never change the exit code.
-
-Results go into a delimited block at the top of the PR description, which re-runs replace in
-place, leaving your own text untouched. If the PR cannot be edited — a fork, a read-only
-token — it falls back to a single sticky comment.
-
-## Screenshot storage
-
-Every real run adds one commit to the `pre-post-assets` branch holding that run's images —
-roughly 100–200 KB for a small PR, and again on every re-run. As a rough guide, 20 PRs a
-week at 3 runs each is about 9 MB a week, or ~450 MB a year.
-
-Two things to know before that adds up:
-
-- **`prune` tidies the branch; it does not shrink the repository.** It commits a deletion,
-  so the images stay in history and every link already posted in a PR keeps working. The
-  repository's size only ever grows.
-- **A plain `git clone` downloads every branch**, screenshots included. Teammates who never
-  look at them can skip the branch in an existing clone (git 2.29+):
-
-  ```bash
-  git config --add remote.origin.fetch '^refs/heads/pre-post-assets'
-  ```
-
-A weekly prune keeps the branch's own listing short. As a scheduled workflow:
-
-```yaml
-# .github/workflows/pre-post-prune.yml
-on:
-  schedule: [{ cron: '17 6 * * 1' }]   # Mondays
-  workflow_dispatch:
-permissions: { contents: write, pull-requests: read }
-jobs:
-  prune:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npx -y @juangadm/pre-post@latest prune --days 90
-        env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
-```
-
-It removes folders for PRs closed more than 90 days ago, and runs made before a PR was
-opened once they are that old. Actually reclaiming the space means rewriting the branch's
-history, which also breaks the images in those older PRs — so it is left as your call.
-
-## Configuration
-
-Optional `.pre-post.json` in the repo root:
-
-```json
-{
-  "before": "https://acme.com",
-  "routes": ["/"],
-  "samples": { "/blog/[slug]": "/blog/hello-world" },
-  "viewports": ["desktop"],
-  "fullPage": true,
-  "maxHeight": 2400,
-  "scale": 2,
-  "threshold": 0.001,
-  "minChangedArea": 100,
-  "maxRoutes": 6,
-  "ignore": ["apps/docs"],
-  "headers": {},
-  "assetsBranch": "pre-post-assets",
-  "baselineSetup": "pnpm run build:packages"
-}
-```
-
-`baselineSetup` runs in the app directory between the install and the dev server when the
-baseline is built from source. Use it for whatever the app needs before it can boot — a
-workspace build, a codegen step. In a turborepo it is inferred: `turbo run build
---filter=<app>^...`, which builds the packages the app imports and leaves the app to the
-dev server. Setting it turns the guess off.
-
-A command that fails stops the run with one instruction, rather than quietly comparing
-against something else.
-
-Env files copied into the baseline's worktree get their origin variables rewritten to the
-port the baseline actually listens on, before the setup step runs so a build cannot bake in
-the old one. Without this an auth-gated app rejects its own callbacks and every capture is a
-loading skeleton. The names rewritten are the ones that can only mean the app's own address
-— `BETTER_AUTH_URL`, `NEXTAUTH_URL`, `AUTH_URL`, `APP_URL`, `SITE_URL`, `CANONICAL_URL` and
-their `_ORIGIN`/`_BASE_URL` forms, with a `NEXT_PUBLIC_` / `VITE_` / `PUBLIC_` prefix
-optional. Generic names are left alone: `BASE_URL`, `SERVER_URL` and `PUBLIC_URL` are as
-often a backend on another port or a path prefix, and `DATABASE_URL` is never an origin.
-
-Environment:
-
-| Variable | Purpose |
-|---|---|
-| `PRE_POST_GH_TOKEN` | GitHub token read before the two below. Use it where a hosted environment sets `GH_TOKEN` itself |
-| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (default: `gh auth token`) |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on preview and production URLs |
-| `PRE_POST_CONCURRENCY` | Parallel pages (default 6) |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use a specific Chromium binary |
-| `GH_REPO` | `owner/repo` when the remote URL cannot be parsed |
-
-## Library
-
-```ts
-import { runPr, captureScreenshot, diffImages, detectRoutesForRepo } from '@juangadm/pre-post';
-```
-
-## Development
-
-```bash
-pnpm install
-pnpm build
-pnpm test:unit
-TEST_BROWSER=true pnpm test        # needs a Chromium; npx playwright-core install chromium-headless-shell
-```
-
-pnpm and npm cannot share a `node_modules`. pnpm builds a symlinked tree that npm
-cannot read, so `npm install` over it fails with `Cannot read properties of null
-(reading 'edgesOut')`, which names none of that. Run `rm -rf node_modules
-site/node_modules` before switching either way. npm also installs the CLI only —
-`site/` is a pnpm workspace member, so use pnpm to work on the site.
-
-## License
-
-MIT
+Forked from [before-and-after](https://github.com/vercel-labs/before-and-after) by James
+Clements / Vercel Labs. MIT licensed.

@@ -393,7 +393,7 @@ export async function installDeps(
 /**
  * The install failed and nothing else can rescue this run.
  *
- * Its own error rather than a quiet null, for the reason docs/portability.md
+ * Its own error rather than a quiet null, for the reason docs/internal/portability.md
  * §1 gives about base resolution: a run that compared nothing must not exit
  * clean. A null here fell through to "no baseline", and on a repository with a
  * configured production URL it fell through to comparing against that instead
@@ -854,7 +854,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       log(attempt.output);
       await cleanup();
       // A command the repository asked for is the install's case exactly
-      // (docs/portability.md §1): yielding here lets the run fall through to a
+      // (docs/internal/portability.md §1): yielding here lets the run fall through to a
       // configured production URL and publish a different comparison as if it
       // were this one, or die further along on an error about dev servers that
       // names nothing the reader can fix. Only the inferred build yields —
