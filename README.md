@@ -96,6 +96,7 @@ Comment: https://github.com/acme/web/pull/42
    ago, but note that it commits a deletion rather than rewriting history: the older commits
    still hold the blobs, so a link handed out earlier keeps working. Treat anything captured
    as permanent, and think twice before pointing pre-post at a preview holding real data.
+   See [Screenshot storage](#screenshot-storage) for how fast the branch grows.
 6. **Describe.** The images go in a delimited block at the top of the PR description,
    replaced in place on every run and leaving your own text untouched. Changed routes show
    a Pre/Post crop with the full page collapsed underneath; unchanged routes fold into a
@@ -175,6 +176,45 @@ picks rather than stopping it, so those never change the exit code.
 Results go into a delimited block at the top of the PR description, which re-runs replace in
 place, leaving your own text untouched. If the PR cannot be edited — a fork, a read-only
 token — it falls back to a single sticky comment.
+
+## Screenshot storage
+
+Every real run adds one commit to the `pre-post-assets` branch holding that run's images —
+roughly 100–200 KB for a small PR, and again on every re-run. As a rough guide, 20 PRs a
+week at 3 runs each is about 9 MB a week, or ~450 MB a year.
+
+Two things to know before that adds up:
+
+- **`prune` tidies the branch; it does not shrink the repository.** It commits a deletion,
+  so the images stay in history and every link already posted in a PR keeps working. The
+  repository's size only ever grows.
+- **A plain `git clone` downloads every branch**, screenshots included. Teammates who never
+  look at them can skip the branch in an existing clone (git 2.29+):
+
+  ```bash
+  git config --add remote.origin.fetch '^refs/heads/pre-post-assets'
+  ```
+
+A weekly prune keeps the branch's own listing short. As a scheduled workflow:
+
+```yaml
+# .github/workflows/pre-post-prune.yml
+on:
+  schedule: [{ cron: '17 6 * * 1' }]   # Mondays
+  workflow_dispatch:
+permissions: { contents: write, pull-requests: read }
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx -y @juangadm/pre-post@latest prune --days 90
+        env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+```
+
+It removes folders for PRs closed more than 90 days ago, and runs made before a PR was
+opened once they are that old. Actually reclaiming the space means rewriting the branch's
+history, which also breaks the images in those older PRs — so it is left as your call.
 
 ## Configuration
 
