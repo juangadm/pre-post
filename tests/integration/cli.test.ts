@@ -11,9 +11,9 @@ const TEST_PAGES = path.resolve(__dirname, '../fixtures/pages');
 const playwrightAvailable = process.env.TEST_BROWSER === 'true';
 
 /** Async so the in-process fixture servers stay responsive while the CLI runs. */
-function runCli(args: string[], cwd = process.cwd()): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+function runCli(args: string[], cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise(resolve => {
-    execFile('node', [CLI_PATH, ...args], { cwd, encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile('node', [CLI_PATH, ...args], { cwd, env, encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       const e = error as { code?: number } | null;
       resolve({ stdout: String(stdout), stderr: String(stderr), exitCode: e ? (typeof e.code === 'number' ? e.code : 1) : 0 });
     });
@@ -144,6 +144,39 @@ describe('CLI', () => {
         expect(png.width).toBe(750); // 375 CSS px at 2x
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    // A hosted agent sandbox hands the run a GitHub token the API refuses.
+    // Stopping there left the user with nothing; the run must capture anyway,
+    // publish nothing, and end with the one sentence that fixes it.
+    it.skipIf(!playwrightAvailable)('pr captures and exits 3 with the fix when GitHub refuses the token', async () => {
+      const api = http.createServer((_req, res) => {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ message: 'Bad credentials' }));
+      });
+      await new Promise<void>(r => api.listen(0, r));
+      const apiUrl = `http://localhost:${(api.address() as { port: number }).port}`;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-refused-'));
+      const out = path.join(root, 'out');
+      try {
+        execFileSync('git', ['init', '-q'], { cwd: root });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+        const env = { ...process.env, GH_TOKEN: 'refused', GITHUB_API_URL: apiUrl };
+        delete env.PRE_POST_GH_TOKEN;
+        delete env.GITHUB_ACTIONS;
+        const { stdout, stderr, exitCode } = await runCli(
+          ['pr', '--before', before.url, '--after', after.url, '--routes', '/button-color', '--json', '-o', out], root, env);
+        expect(exitCode).toBe(3);
+        const result = JSON.parse(stdout);
+        expect(result.delivery.status).toBe('skipped');
+        expect(result.delivery.hint).toContain('GH_TOKEN');
+        expect(stderr).toContain(result.delivery.hint);
+        expect(result.outcomes[0].status).toBe('changed');
+        expect(fs.existsSync(path.join(out, 'button-color-desktop-before-crop.png'))).toBe(true);
+      } finally {
+        api.close();
+        fs.rmSync(root, { recursive: true, force: true });
       }
     });
   });

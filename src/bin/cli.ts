@@ -235,6 +235,12 @@ async function main(): Promise<void> {
       });
       output(result);
       if (result.outcomes.length && result.outcomes.every(o => o.status === 'error')) process.exit(1);
+      // Printed after the result, not instead of it: the screenshots exist and
+      // are worth looking at even though GitHub would not take them.
+      if (result.delivery?.status === 'skipped') {
+        console.error(`\n${result.delivery.hint}`);
+        process.exit(3);
+      }
       return;
     }
     case 'detect': {
