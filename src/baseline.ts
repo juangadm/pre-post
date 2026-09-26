@@ -158,6 +158,16 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
 }
 
 /** Local env files, in the order a framework would layer them. */
+/**
+ * Would serving this checkout's own dev server have to install first?
+ *
+ * True only when the app has something to run and nothing installed yet.
+ */
+export function workingTreeNeedsInstall(repoRoot: string, appPrefix?: string): boolean {
+  const app = servableDir(repoRoot, appPrefix);
+  return Boolean(app) && !fs.existsSync(path.join(app!.dir, 'node_modules'));
+}
+
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local'];
 
 /**

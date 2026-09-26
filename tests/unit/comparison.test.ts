@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
@@ -135,6 +138,61 @@ describe('resolveComparison', () => {
       gh: gh({ '/deployments?sha=': [] }),
       servePost: async () => ({ url: 'http://localhost:42222', stop: async () => { stopped = true; } }),
     }))).rejects.toBeInstanceOf(NoBaselineError);
+    expect(stopped).toBe(true);
+  });
+
+  it('boots Pre and Post at the same time', async () => {
+    const events: string[] = [];
+    const slow = (name: string, url: string) => async () => {
+      events.push(`${name} start`);
+      await new Promise(r => setTimeout(r, 30));
+      events.push(`${name} ready`);
+      return { url, stop: async () => undefined };
+    };
+    await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: slow('post', 'http://localhost:42222'),
+      serveBaseline: slow('pre', 'http://localhost:41111'),
+    }));
+    expect(events.slice(0, 2).sort()).toEqual(['post start', 'pre start']);
+  });
+
+  // Pre reuses Post's install when it can, so it must not read one mid-write.
+  it('boots Pre after Post when the checkout has nothing installed yet', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-uninstalled-'));
+    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ scripts: { dev: 'next dev' } }));
+    const events: string[] = [];
+    const slow = (name: string, url: string) => async () => {
+      events.push(`${name} start`);
+      await new Promise(r => setTimeout(r, 30));
+      events.push(`${name} ready`);
+      return { url, stop: async () => undefined };
+    };
+    await resolveComparison(ctx({
+      repoRoot: repo,
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: slow('post', 'http://localhost:42222'),
+      serveBaseline: slow('pre', 'http://localhost:41111'),
+    }));
+    expect(events).toEqual(['post start', 'post ready', 'pre start', 'pre ready']);
+  });
+
+  it('shuts down the baseline it started when the branch cannot be served', async () => {
+    let stopped = false;
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => { stopped = true; } }),
+    }))).rejects.toBeInstanceOf(NoPostError);
+    expect(stopped).toBe(true);
+  });
+
+  it('shuts down the Post server when the baseline install fails', async () => {
+    let stopped = false;
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => { stopped = true; } }),
+      serveBaseline: async () => { throw new Error('install failed'); },
+    }))).rejects.toThrow('install failed');
     expect(stopped).toBe(true);
   });
 
