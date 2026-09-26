@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Stopwatch } from '../../src/timings';
+import { Stopwatch, sumPreservingTenths } from '../../src/timings';
 
 describe('Stopwatch', () => {
   it('adds repeated steps together and prints them in order', () => {
@@ -36,5 +36,15 @@ describe('Stopwatch', () => {
     const t = new Stopwatch();
     await expect(t.time('boot', async () => { throw new Error('no'); })).rejects.toThrow('no');
     expect(t.toJSON()).toHaveProperty('boot');
+  });
+
+  it('rounds the parts so they still add up to the total', () => {
+    const t = new Stopwatch();
+    t.add('a', 349);
+    t.add('b', 349);
+    t.add('c', 302);
+    expect(t.summary(1000)[0]).toBe('Total 1.0s = a 0.4s + b 0.3s + c 0.3s + other 0.0s');
+    // 1050ms rounds to 1.1s, so the three parts must sum to 11 tenths.
+    expect(sumPreservingTenths([350, 350, 350])).toEqual([4, 4, 3]);
   });
 });

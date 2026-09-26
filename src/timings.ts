@@ -20,6 +20,23 @@ export interface StepOptions {
 
 const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
+/**
+ * Each duration in tenths of a second, rounded so the tenths sum to the
+ * rounded total (largest remainder first).
+ */
+export function sumPreservingTenths(ms: number[]): number[] {
+  const exact = ms.map(m => m / 100);
+  const floors = exact.map(Math.floor);
+  let left = Math.round(exact.reduce((sum, e) => sum + e, 0)) - floors.reduce((sum, f) => sum + f, 0);
+  const order = exact.map((e, i) => i).sort((a, b) => (exact[b] - floors[b]) - (exact[a] - floors[a]));
+  for (const i of order) {
+    if (left <= 0) break;
+    floors[i]++;
+    left--;
+  }
+  return floors;
+}
+
 export class Stopwatch {
   private readonly steps = new Map<string, number>();
   private readonly background = new Set<string>();
@@ -60,11 +77,17 @@ export class Stopwatch {
   summary(totalMs?: number): string[] {
     const entries = [...this.steps];
     const main = entries.filter(([name]) => !name.includes('.') && !this.background.has(name));
-    const parts = main.map(([name, ms]) => `${name} ${secs(ms)}`);
-    let first = parts.join(' + ');
+    const shown = new Map(main);
+    let first = main.map(([name, ms]) => `${name} ${secs(ms)}`).join(' + ');
     if (totalMs !== undefined) {
       const other = Math.max(0, totalMs - main.reduce((sum, [, ms]) => sum + ms, 0));
-      first = `Total ${secs(totalMs)} = ${[...parts, `other ${secs(other)}`].join(' + ')}`;
+      const items: Array<[string, number]> = [...main, ['other', other]];
+      // Rounded together, not one by one: three 349ms steps each read 0.3s and
+      // would sum to 0.9s under a 1.0s total, the mismatch this line exists to end.
+      const tenths = sumPreservingTenths(items.map(([, ms]) => ms));
+      const total = tenths.reduce((sum, t) => sum + t, 0);
+      items.forEach(([name], i) => shown.set(name, tenths[i] * 100));
+      first = `Total ${secs(total * 100)} = ${items.map(([name]) => `${name} ${secs(shown.get(name)!)}`).join(' + ')}`;
     }
     const lines = [first];
 
@@ -83,7 +106,7 @@ export class Stopwatch {
       byParent.set(parent, [...(byParent.get(parent) ?? []), lane]);
     }
     for (const [parent, laneTexts] of byParent) {
-      const held = parent && this.steps.has(parent) ? `inside ${parent} ${secs(this.steps.get(parent)!)}, side by side` : 'nested';
+      const held = parent && this.steps.has(parent) ? `inside ${parent} ${secs(shown.get(parent) ?? this.steps.get(parent)!)}, side by side` : 'nested';
       lines.push(`  ${held}: ${laneTexts.join(' ‖ ')}`);
     }
 
