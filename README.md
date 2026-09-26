@@ -137,6 +137,42 @@ Run it on a branch with an open PR. No install step.
 First run also pulls a Chromium headless shell (~80 MB), then reuses it. Stuck? Run
 `npx -y @juangadm/pre-post@latest doctor`.
 
+### GitHub Action: every PR, no tokens
+
+For a team, or for work done in cloud agent sessions: GitHub runs pre-post itself when a
+PR's preview deployment finishes and posts with the job's own token. Nobody sets up anything
+per person. Add `.github/workflows/pre-post.yml`:
+
+```yaml
+name: pre-post
+on: deployment_status
+permissions: { contents: write, pull-requests: write, deployments: read }
+concurrency: { group: 'pre-post-${{ github.event.deployment.sha }}', cancel-in-progress: true }
+jobs:
+  pre-post:
+    if: github.event.deployment_status.state == 'success' && !contains(github.event.deployment.environment, 'production')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: juangadm/pre-post@v1
+```
+
+This works for any host that reports deployments to GitHub (Vercel, Netlify, Cloudflare Pages,
+Render). Both sides are deployments, production against the preview, so CI never builds or
+boots your app.
+
+- **Vercel Deployment Protection** is on for previews by default. Add
+  `env: { VERCEL_AUTOMATION_BYPASS_SECRET: '${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}' }`
+  to the job.
+- **Deployments with no open PR** (pushes to `main`) end in "nothing to do".
+- **Flags** go in `with: { args: '--responsive' }`.
+- **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
+  posting fails.
+- **No preview deployments?** Trigger on `pull_request` instead, and install your app's
+  dependencies before the pre-post step. pre-post then serves both sides itself, so your
+  app must be able to boot in CI.
+
 ## Usage
 
 ```bash
