@@ -3,7 +3,8 @@
  * (for the developer or the agent that invoked the CLI).
  */
 
-import { PrRunResult, RouteCaptureOutcome } from './types.js';
+import path from 'path';
+import { ArtifactSet, PrRunResult, RouteCaptureOutcome } from './types.js';
 import { describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
 
@@ -27,6 +28,13 @@ export interface CommentOptions {
   version?: string;
   headSha?: string | null;
   now?: Date;
+  /**
+   * The folder local screenshots were written to. When nothing was published
+   * (a dry run), images are linked relative to it: an absolute temp path is
+   * noise in the markdown and names nothing a reader can open anywhere else,
+   * and the CLI already prints the folder on its own line.
+   */
+  filesDir?: string;
 }
 
 /** A run shorter than this says how long it took in the PR description. */
@@ -37,6 +45,14 @@ const FAST_RUN_MS = 30_000;
  */
 export function buildComment(result: PrRunResult, options: CommentOptions = {}): string {
   const lines: string[] = [STICKY_MARKER, '## Visual changes', ''];
+  /** Published URLs when there are any, else the local files. */
+  const images = (o: RouteCaptureOutcome): ArtifactSet => {
+    if (o.urls) return o.urls;
+    const dir = options.filesDir;
+    if (!dir || !o.files) return o.files ?? {};
+    const local = (f?: string) => f && (path.isAbsolute(f) ? path.relative(dir, f).split(path.sep).join('/') : f);
+    return Object.fromEntries(Object.entries(o.files).map(([k, f]) => [k, local(f)])) as ArtifactSet;
+  };
   const routes = groupByRoute(result.outcomes);
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
@@ -71,7 +87,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
     if (changedHere.length === 0) continue;
     for (const o of changedHere) {
-      const u = o.urls ?? o.files!;
+      const u = images(o);
       lines.push(`### ${code(route)} — ${viewportLabel(o.viewport)}`, '');
       // A move repaints everything below it, so the percentage says nothing a
       // reviewer can use. Say how far it moved instead, and whether the branch
@@ -96,7 +112,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   }
 
   for (const o of oneSided) {
-    const u = o.urls ?? o.files!;
+    const u = images(o);
     const image = o.status === 'added' ? u.after : u.before;
     if (!image) continue;
     const what = o.status === 'added' ? 'New page' : 'Page removed';

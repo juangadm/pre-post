@@ -272,7 +272,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outputDir,
     timings: timings.toJSON(),
   };
-  result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
+  result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: outputDir });
 
   if (writeGh && (opts.comment ?? true)) {
     if (pr) {
