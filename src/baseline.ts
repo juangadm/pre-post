@@ -874,7 +874,14 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null && !opts.signal?.aborted));
   if (await aborted()) return null;
   if (!ready) {
+    // A server that died is not one that was slow. Reporting "did not start
+    // within 300s" about one that exited after two seconds, as a CI run did,
+    // sends the reader to look at timeouts instead of at the crash.
+    const exitCode = child?.exitCode ?? null;
     await cleanup();
+    if (exitCode !== null) {
+      return skip(`${pm.bin} ${script} exited with code ${exitCode} before serving; run it in ${appIn} to see why.`);
+    }
     return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);
   }
   process.once('SIGINT', onSignal);
