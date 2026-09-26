@@ -157,17 +157,12 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
   return null;
 }
 
-/** Local env files, in the order a framework would layer them. */
-/**
- * Would serving this checkout's own dev server have to install first?
- *
- * True only when the app has something to run and nothing installed yet.
- */
-export function workingTreeNeedsInstall(repoRoot: string, appPrefix?: string): boolean {
-  const app = servableDir(repoRoot, appPrefix);
-  return Boolean(app) && !fs.existsSync(path.join(app!.dir, 'node_modules'));
+/** Has this app directory been installed? */
+function isInstalled(appDir: string): boolean {
+  return fs.existsSync(path.join(appDir, 'node_modules'));
 }
 
+/** Local env files, in the order a framework would layer them. */
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local'];
 
 /**
@@ -318,7 +313,7 @@ export interface InstallResult {
   attempts: InstallAttempt[];
 }
 
-export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => InstallAttempt | Promise<InstallAttempt>;
+export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => Promise<InstallAttempt>;
 
 /** Keep the end of the output: managers put the diagnosis last. */
 function tail(text: string, lines = 24): string {
@@ -513,7 +508,7 @@ export class BaselineSetupError extends NeedsHumanError {
  * the base commit and the working tree, the two installs would be the same
  * dependency tree, so the one already on disk can stand in for a fresh one.
  */
-const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'package-lock.json', 'npm-shrinkwrap.json'];
+const LOCKFILES = [...MANAGERS.map(m => m.lockfile), 'bun.lock', 'npm-shrinkwrap.json'];
 const INSTALL_INPUTS = [
   ...LOCKFILES.map(f => `:(glob)**/${f}`),
   ':(glob)**/package.json',
@@ -523,43 +518,48 @@ const INSTALL_INPUTS = [
   ':(glob)**/pnpm-workspace.yaml',
 ];
 
-/** Every tracked package.json at `sha`, as directories relative to the repo root. */
-function packageDirsAt(repoRoot: string, sha: string): string[] | null {
-  try {
-    const files = execFileSync('git', ['ls-tree', '-r', '--name-only', sha], { cwd: repoRoot, encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }).split('\n');
-    if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
-    return files
-      .filter(f => path.basename(f) === 'package.json' && !f.split('/').includes('node_modules'))
-      .map(f => path.dirname(f));
-  } catch {
-    return null;
-  }
+/** Run git without blocking the process; resolves null when it exits non-zero. */
+function gitAsync(args: string[], cwd: string): Promise<string | null> {
+  return new Promise(resolve => {
+    execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout) => resolve(err ? null : stdout));
+  });
 }
 
 /**
  * Can the base commit use the dependencies this checkout already installed?
  *
- * Only when the base carries a lockfile (without one there is nothing to prove
- * the trees match) and no install input differs between it and the working
- * tree, uncommitted edits included. Returns the package directories whose
- * node_modules to bring across, or null to install as usual.
+ * Only when no install input differs between the base and the working tree,
+ * uncommitted edits included, and a lockfile is tracked (without one there is
+ * nothing to prove the trees match). Returns the package directories whose
+ * node_modules to bring across, or null to install as usual. Once the diff is
+ * clean, the index lists the same package.json files the base has, so it
+ * answers that without walking the base commit's whole tree.
  */
-export function reusableInstall(repoRoot: string, sha: string): string[] | null {
-  const dirs = packageDirsAt(repoRoot, sha);
-  if (!dirs) return null;
-  try {
-    execFileSync('git', ['diff', '--quiet', sha, '--', ...INSTALL_INPUTS], { cwd: repoRoot, stdio: 'ignore' });
-  } catch {
-    return null;
-  }
-  return dirs.filter(dir => {
-    try {
-      return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
-    } catch {
-      return false;
-    }
-  });
+export async function reusableInstall(repoRoot: string, sha: string): Promise<string[] | null> {
+  if (await gitAsync(['diff', '--quiet', sha, '--', ...INSTALL_INPUTS], repoRoot) === null) return null;
+  const tracked = await gitAsync(['ls-files', '--', ...INSTALL_INPUTS], repoRoot);
+  const files = tracked?.split('\n') ?? [];
+  if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
+  return files
+    .filter(f => path.basename(f) === 'package.json' && !f.split('/').includes('node_modules'))
+    .map(f => path.dirname(f))
+    .filter(dir => {
+      try {
+        return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
+      } catch {
+        return false;
+      }
+    });
 }
+
+const COPY_CONCURRENCY = 6;
+
+/**
+ * Installs running in a caller's own checkout, by repository root. The base
+ * worktree waits on these before reusing that checkout's node_modules, which
+ * lets both sides boot at once even when nothing was installed yet.
+ */
+const installsInFlight = new Map<string, Promise<unknown>>();
 
 /**
  * Copy one node_modules into the worktree as its own tree.
@@ -578,12 +578,9 @@ function copyTree(from: string, to: string): Promise<boolean> {
     execFile('cp', argv, { maxBuffer: MAX_INSTALL_OUTPUT }, err => {
       if (!err) return resolve(true);
       // A cp without the clone flag (older macOS, BSD): Node's own copy.
-      fs.rmSync(to, { recursive: true, force: true });
-      fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true })
-        .then(() => resolve(true), () => {
-          fs.rmSync(to, { recursive: true, force: true });
-          resolve(false);
-        });
+      fs.promises.rm(to, { recursive: true, force: true })
+        .then(() => fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true }))
+        .then(() => resolve(true), () => fs.promises.rm(to, { recursive: true, force: true }).then(() => resolve(false)));
     });
   });
 }
@@ -594,11 +591,17 @@ function copyTree(from: string, to: string): Promise<boolean> {
  * removed so the normal install starts from a clean tree.
  */
 export async function reuseInstall(repoRoot: string, worktree: string, dirs: string[]): Promise<boolean> {
-  const targets = dirs.map(dir => ({ from: path.join(repoRoot, dir, 'node_modules'), to: path.join(worktree, dir, 'node_modules') }))
-    .filter(t => !fs.existsSync(t.to));
-  const copied = await Promise.all(targets.map(t => copyTree(t.from, t.to)));
-  if (copied.every(Boolean)) return true;
-  for (const t of targets) fs.rmSync(t.to, { recursive: true, force: true });
+  const targets = dirs.map(dir => ({ from: path.join(repoRoot, dir, 'node_modules'), to: path.join(worktree, dir, 'node_modules') }));
+  // A few at a time: a monorepo can have hundreds of packages, and hundreds of
+  // concurrent copies thrash the disk the dev servers are reading from.
+  const queue = [...targets];
+  let ok = true;
+  const worker = async () => {
+    for (let t = queue.shift(); t && ok; t = queue.shift()) ok = await copyTree(t.from, t.to) && ok;
+  };
+  await Promise.all(Array.from({ length: Math.min(COPY_CONCURRENCY, targets.length) }, worker));
+  if (ok) return true;
+  await Promise.all(targets.map(t => fs.promises.rm(t.to, { recursive: true, force: true })));
   return false;
 }
 
@@ -669,9 +672,9 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
-  const step = (name: string, ms: number) => opts.timings?.add(`${opts.sha ? 'pre' : 'post'}.${name}`, ms);
-  let stepStart = Date.now();
-  const endStep = (name: string) => { step(name, Date.now() - stepStart); stepStart = Date.now(); };
+  const side = opts.sha ? 'pre' : 'post';
+  const timed = <T>(name: string, work: Promise<T>): Promise<T> => opts.timings ? opts.timings.time(`${side}.${name}`, work) : work;
+  const started = Date.now();
 
   const worktree = opts.sha ? fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-base-')) : opts.repoRoot;
   let child: ChildProcess | null = null;
@@ -705,15 +708,15 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
 
   if (opts.sha) {
-    try {
-      execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
-    } catch {
+    // Asynchronous: in a large repository a checkout takes seconds, and the
+    // other side is booting meanwhile.
+    if (await gitAsync(['worktree', 'add', '--detach', '--force', worktree, opts.sha], opts.repoRoot) === null) {
       await cleanup();
       return skip('the worktree checkout failed.');
     }
     const copied = copyEnvFiles(opts.repoRoot, worktree, opts.appPrefix);
     if (copied.length) log(`Using local env file(s) for the baseline: ${copied.join(', ')}`);
-    endStep('checkout');
+    opts.timings?.add(`${side}.checkout`, Date.now() - started);
   }
 
   const app = servableDir(worktree, opts.appPrefix);
@@ -735,7 +738,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     return skip(`neither ${declared.bin} nor npm is on PATH, so nothing can install ${where}.`);
   }
 
-  const install = !fs.existsSync(path.join(appDir, 'node_modules'));
+  const install = !isInstalled(appDir);
   // Substituting npm for the declared manager is safe in a throwaway worktree
   // and not in the caller's own checkout: npm cannot share a node_modules with
   // pnpm, so installing over their tree leaves the working copy broken — the
@@ -748,25 +751,25 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     return skip(`${declared.bin} is not on PATH, and installing ${where} with npm instead would leave a node_modules your ${declared.bin} cannot use. Install ${declared.bin}, or run \`${declared.bin} install\` in ${appIn}.`);
   }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
-  stepStart = Date.now();
   // The slowest step of a first run, and usually one that would rebuild the
   // exact tree already on disk: most branches change code, not dependencies.
-  let reused = false;
-  if (install && opts.sha && worktree !== opts.repoRoot) {
-    const dirs = reusableInstall(opts.repoRoot, opts.sha);
-    if (dirs?.length && await reuseInstall(opts.repoRoot, worktree, dirs)) {
-      reused = fs.existsSync(path.join(appDir, 'node_modules'));
-      if (reused) {
-        log(`Dependencies are unchanged since ${opts.sha.slice(0, 7)}; reusing this checkout's install for the baseline.`);
-        endStep('reuse');
-      }
-    }
-  }
-  if (install && !reused && pm !== declared) {
-    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
-  }
+  const tryReuse = async (sha: string): Promise<boolean> => {
+    // Post may be installing this checkout right now; a half-written
+    // node_modules must never be copied, so wait for it to finish.
+    await installsInFlight.get(opts.repoRoot);
+    const dirs = await reusableInstall(opts.repoRoot, sha);
+    if (!dirs?.includes(rel || '.') || !await reuseInstall(opts.repoRoot, worktree, dirs)) return false;
+    log(`Dependencies are unchanged since ${sha.slice(0, 7)}; reusing this checkout's install for the baseline.`);
+    return true;
+  };
+  const reused = install && opts.sha ? await timed('reuse', tryReuse(opts.sha)) : false;
   if (install && !reused) {
-    const result = await installDeps(pm, appDir, deadline - Date.now());
+    if (pm !== declared) {
+      log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
+    }
+    const installing = installDeps(pm, appDir, deadline - Date.now());
+    if (worktree === opts.repoRoot) installsInFlight.set(opts.repoRoot, installing);
+    const result = await timed('install', installing).finally(() => installsInFlight.delete(opts.repoRoot));
     if (!result.ok) {
       const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');
       log(`${tried} failed${worktree === opts.repoRoot ? '' : ' in a throwaway worktree of the base commit'}:`);
@@ -778,7 +781,6 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     if (retried) {
       log(`\`${pm.bin} ${pm.install.join(' ')}\` hit a peer-dependency conflict; installed the baseline with \`${retried.argv.join(' ')}\` instead.`);
     }
-    endStep('install');
   }
 
   // Before the setup step, not after it: that step is a build, and a build that
@@ -806,7 +808,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const setup = configured ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
   if (setup) {
     log(`Preparing ${what} before its dev server (${setup.label}) ...`);
-    const attempt = await runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
+    const attempt = await timed('setup', runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell));
     if (!attempt.ok) {
       // Loud either way. A dev server started over a half-built workspace
       // serves an error page, and an error page is a baseline that reports a
@@ -822,9 +824,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       if (configured) throw new BaselineSetupError(setup.label, appIn);
       return skip(`\`${setup.label}\` failed.`);
     }
-    endStep('setup');
   }
-  stepStart = Date.now();
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
     stdio: 'ignore',
@@ -833,8 +833,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   });
   child.unref();
 
-  const ready = await waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null);
-  endStep('boot');
+  const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null));
   if (!ready) {
     await cleanup();
     return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);

@@ -35,30 +35,30 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
 
 describe('reusableInstall', () => {
-  it('reuses when only code changed since the base', () => {
+  it('reuses when only code changed since the base', async () => {
     write('apps/web/page.tsx', 'export default () => <h1>Post</h1>;');
-    expect(reusableInstall(repo, base)?.sort()).toEqual(['.', 'apps/web']);
+    expect((await reusableInstall(repo, base))?.sort()).toEqual(['.', 'apps/web']);
   });
 
-  it('installs fresh when the lockfile changed, even uncommitted', () => {
+  it('installs fresh when the lockfile changed, even uncommitted', async () => {
     write('package-lock.json', '{"lockfileVersion":3,"packages":{}}');
-    expect(reusableInstall(repo, base)).toBeNull();
+    expect(await reusableInstall(repo, base)).toBeNull();
   });
 
-  it('installs fresh when any package.json changed', () => {
+  it('installs fresh when any package.json changed', async () => {
     write('apps/web/package.json', JSON.stringify({ name: 'web', dependencies: { next: '16' } }));
-    expect(reusableInstall(repo, base)).toBeNull();
+    expect(await reusableInstall(repo, base)).toBeNull();
   });
 
-  it('installs fresh when the base has no lockfile to prove the trees match', () => {
+  it('installs fresh when the base has no lockfile to prove the trees match', async () => {
     git('rm -q package-lock.json');
     git('commit -qm unlock');
-    expect(reusableInstall(repo, git('rev-parse HEAD'))).toBeNull();
+    expect(await reusableInstall(repo, git('rev-parse HEAD'))).toBeNull();
   });
 
-  it('skips package directories this checkout never installed', () => {
+  it('skips package directories this checkout never installed', async () => {
     fs.rmSync(path.join(repo, 'apps/web/node_modules'), { recursive: true });
-    expect(reusableInstall(repo, base)).toEqual(['.']);
+    expect(await reusableInstall(repo, base)).toEqual(['.']);
   });
 });
 

@@ -11,7 +11,7 @@ const PNPM = { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s: s
 function runner(answers: Array<{ ok: boolean; output: string }>): InstallRunner & { calls: string[][] } {
   const calls: string[][] = [];
   let i = 0;
-  const fn = ((_bin: string, argv: string[]): InstallAttempt => {
+  const fn = (async (_bin: string, argv: string[]): Promise<InstallAttempt> => {
     calls.push(argv);
     const a = answers[Math.min(i++, answers.length - 1)];
     return { argv, ok: a.ok, output: a.output };

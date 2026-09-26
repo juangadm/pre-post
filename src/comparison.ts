@@ -14,7 +14,7 @@
 
 import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit, latestProductionDeployment } from './deployments.js';
-import { serveBaseCommit, serveWorkingTree, workingTreeNeedsInstall } from './baseline.js';
+import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
 import { isLocalUrl, joinUrl, normalizeUrl } from './url.js';
 import { PrePostConfig } from './types.js';
@@ -84,17 +84,17 @@ export interface ResolveContext {
 const noop = async (): Promise<void> => undefined;
 
 /**
- * Ask a dev server for every page about to be captured, without waiting.
+ * Ask a dev server for every page about to be captured, one at a time.
  *
  * A dev server compiles a page on its first request, so the first capture of
  * each route used to pay for that compile. Asked the moment the server
  * answers, the compile overlaps whatever else is still starting — usually the
- * other side's boot. Failures are ignored: the capture reports them properly.
+ * other side's boot. One at a time so it does not crowd that boot off the CPU,
+ * and through the probe so the auth headers match what the capture sends.
+ * Nothing waits on it; failures are the capture's to report.
  */
-export function warmUp(base: string, routes: string[] = []): void {
-  for (const route of new Set(routes)) {
-    fetch(joinUrl(base, route), { signal: AbortSignal.timeout(30_000) }).then(res => res.body?.cancel(), () => undefined);
-  }
+export async function warmUp(probe: (url: string) => Promise<unknown>, base: string, routes: string[] = []): Promise<void> {
+  for (const route of new Set(routes)) await probe(joinUrl(base, route)).catch(() => undefined);
 }
 
 const side = (url: string, detail: string, probe?: ProbeResult): Side => ({ url: normalizeUrl(url), detail, probe });
@@ -248,19 +248,13 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   const bootPre = ctx.allowLocalBaseline !== false && Boolean(baseSha);
 
   const common = { repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log, timings: ctx.timings };
-  const startPost = () => bootPost ? (ctx.servePost ?? serveWorkingTree)(common) : Promise.resolve(null);
-  const startPre = () => bootPre ? (ctx.serveBaseline ?? serveBaseCommit)({ ...common, sha: baseSha }) : Promise.resolve(null);
+  const warm = (url: string) => { void warmUp(ctx.probe, url, ctx.warmRoutes); };
+  if (running && !ctx.after) warm(running);
   // Both sides boot at once: each is mostly waiting on its own install and
   // compile, so running them one after the other doubled the wait for nothing.
-  // The exception is a checkout with nothing installed yet. Then Post installs
-  // first and Pre starts after it, because Pre can reuse a finished install
-  // but must never read one that is still being written.
-  const warm = <T extends { url: string } | null>(server: T): T => { if (server) warmUp(server.url, ctx.warmRoutes); return server; };
-  if (running && !ctx.after) warmUp(running, ctx.warmRoutes);
-  const postBoot = startPost().then(warm);
-  const preBoot = bootPost && workingTreeNeedsInstall(ctx.repoRoot, ctx.appPrefix)
-    ? postBoot.then(server => server ? startPre().then(warm) : null, () => null)
-    : startPre().then(warm);
+  const boot = (server: Promise<LocalBaseline | null>) => server.then(s => { if (s) warm(s.url); return s; });
+  const postBoot = bootPost ? boot((ctx.servePost ?? serveWorkingTree)(common)) : Promise.resolve(null);
+  const preBoot = bootPre ? boot((ctx.serveBaseline ?? serveBaseCommit)({ ...common, sha: baseSha })) : Promise.resolve(null);
   const [postResult, preResult] = await Promise.allSettled([postBoot, preBoot]);
   const postServer = postResult.status === 'fulfilled' ? postResult.value : null;
   const baseline = preResult.status === 'fulfilled' ? preResult.value : null;

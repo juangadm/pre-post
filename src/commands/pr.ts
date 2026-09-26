@@ -147,8 +147,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // Resolution can throw (no baseline, an install that failed): the browser was
   // launched before this and nothing else would close it, so its teardown has
   // to cover the throw as well as the happy path.
-  const resolveStart = Date.now();
-  const comparison: Comparison = await resolveComparison({
+  const comparison: Comparison = await timings.time('resolve', resolveComparison({
     gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
     // Detection already established this; the baseline must be built from the
     // same commit, or Pre and the route list disagree about what changed.
@@ -161,9 +160,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log, timings,
-    warmRoutes: (opts.routes?.length ? opts.routes : detection.routes.map(r => r.path)).map(r => resolveSample(r, config.samples || {})),
-  }).catch(async err => { await stopEverything(); throw err; });
-  timings.add('resolve', Date.now() - resolveStart);
+    warmRoutes: (opts.routes?.length ? opts.routes : detection.routes.length ? detection.routes.map(r => r.path) : ['/']).map(r => resolveSample(r, config.samples || {})),
+  })).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
@@ -225,15 +223,13 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   await browserReady;
   let run;
-  const captureStart = Date.now();
   try {
-    run = await runTasks(tasks, {
+    run = await timings.time('capture', runTasks(tasks, {
       outputDir, ...settings, wait: opts.wait, auth, log,
       // So the verdict can name how Pre was chosen, not just where it points.
       sides: { before: comparison.before, after: comparison.after },
-    });
+    }));
   } finally {
-    timings.add('capture', Date.now() - captureStart);
     await stopEverything();
   }
   const { outcomes } = run;

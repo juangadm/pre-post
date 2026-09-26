@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
@@ -155,26 +152,6 @@ describe('resolveComparison', () => {
       serveBaseline: slow('pre', 'http://localhost:41111'),
     }));
     expect(events.slice(0, 2).sort()).toEqual(['post start', 'pre start']);
-  });
-
-  // Pre reuses Post's install when it can, so it must not read one mid-write.
-  it('boots Pre after Post when the checkout has nothing installed yet', async () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-uninstalled-'));
-    fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ scripts: { dev: 'next dev' } }));
-    const events: string[] = [];
-    const slow = (name: string, url: string) => async () => {
-      events.push(`${name} start`);
-      await new Promise(r => setTimeout(r, 30));
-      events.push(`${name} ready`);
-      return { url, stop: async () => undefined };
-    };
-    await resolveComparison(ctx({
-      repoRoot: repo,
-      gh: gh({ '/deployments?sha=': [] }),
-      servePost: slow('post', 'http://localhost:42222'),
-      serveBaseline: slow('pre', 'http://localhost:41111'),
-    }));
-    expect(events).toEqual(['post start', 'post ready', 'pre start', 'pre ready']);
   });
 
   it('shuts down the baseline it started when the branch cannot be served', async () => {
@@ -369,15 +346,14 @@ describe('resolveComparison', () => {
 });
 
 describe('warmUp', () => {
-  it('requests each page once, without waiting for the answer', async () => {
+  it('requests each page once', async () => {
     const http = await import('http');
     const seen: string[] = [];
     const server = http.createServer((req, res) => { seen.push(req.url!); res.end('ok'); });
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
     const { port } = server.address() as import('net').AddressInfo;
     const { warmUp } = await import('../../src/comparison');
-    expect(warmUp(`http://127.0.0.1:${port}`, ['/about', '/', '/about'])).toBeUndefined();
-    await new Promise(r => setTimeout(r, 200));
+    await warmUp(url => fetch(url).then(r => r.text()), `http://127.0.0.1:${port}`, ['/about', '/', '/about']);
     server.close();
     expect(seen.sort()).toEqual(['/', '/about']);
   });
