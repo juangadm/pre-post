@@ -79,6 +79,7 @@ const OPTIONS = {
     'dry-run': { type: 'boolean' },
     'no-comment': { type: 'boolean' },
     'require-pr': { type: 'boolean' },
+    local: { type: 'boolean' },
     pr: { type: 'string' },
     json: { type: 'boolean' },
     days: { type: 'string' },
@@ -123,6 +124,7 @@ OPTIONS
   --dry-run                 Capture and diff only; no upload, no comment
   --no-comment              Publish images but do not touch the PR
   --require-pr              Do nothing, successfully, when no open PR is found
+  --local                   Build both sides on this machine; ignore deployments
   --pr <number>             Target a specific PR
   --json                    Machine-readable output
   -q, --quiet               Only the final summary
@@ -234,6 +236,7 @@ async function main(): Promise<void> {
         localBaseline: !values['no-local-baseline'],
         comment: !values['no-comment'],
         requirePr: values['require-pr'],
+        local: values.local,
         pr: num(values.pr, '--pr'),
         version: VERSION,
       });
