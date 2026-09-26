@@ -147,6 +147,39 @@ describe('CLI', () => {
       }
     });
 
+    // A deployment-triggered job also fires for pushes to main. With no open PR
+    // there is nobody to show the images to, so the run must not make any.
+    it.skipIf(!playwrightAvailable)('pr --require-pr exits 0 without capturing when GitHub has no open PR', async () => {
+      const asked: string[] = [];
+      const api = http.createServer((req, res) => {
+        asked.push(req.url || '');
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('[]');
+      });
+      await new Promise<void>(r => api.listen(0, r));
+      const apiUrl = `http://localhost:${(api.address() as { port: number }).port}`;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-nopr-'));
+      const out = path.join(root, 'out');
+      try {
+        execFileSync('git', ['init', '-q', '-b', 'feature'], { cwd: root });
+        // A commit, so there is a branch name for the lookup to ask GitHub about.
+        execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: root });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+        const env = { ...process.env, GH_TOKEN: 'ok', GITHUB_API_URL: apiUrl };
+        delete env.PRE_POST_GH_TOKEN;
+        const { stdout, stderr, exitCode } = await runCli(
+          ['pr', '--require-pr', '--before', before.url, '--after', after.url, '--routes', '/button-color', '--json', '-o', out], root, env);
+        expect(exitCode).toBe(0);
+        expect(JSON.parse(stdout).delivery.status).toBe('no-pr');
+        expect(asked.some(u => u.includes('/pulls?'))).toBe(true);
+        expect(stderr).not.toContain('Capturing');
+        expect(fs.existsSync(out)).toBe(false);
+      } finally {
+        api.close();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     // A hosted agent sandbox hands the run a GitHub token the API refuses.
     // Stopping there left the user with nothing; the run must capture anyway,
     // publish nothing, and end with the one sentence that fixes it.

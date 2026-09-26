@@ -78,6 +78,7 @@ const OPTIONS = {
     output: { type: 'string', short: 'o' },
     'dry-run': { type: 'boolean' },
     'no-comment': { type: 'boolean' },
+    'require-pr': { type: 'boolean' },
     pr: { type: 'string' },
     json: { type: 'boolean' },
     days: { type: 'string' },
@@ -121,6 +122,7 @@ OPTIONS
   --no-local-baseline       Do not rebuild the baseline from the base commit
   --dry-run                 Capture and diff only; no upload, no comment
   --no-comment              Publish images but do not touch the PR
+  --require-pr              Do nothing, successfully, when no open PR is found
   --pr <number>             Target a specific PR
   --json                    Machine-readable output
   -q, --quiet               Only the final summary
@@ -231,9 +233,15 @@ async function main(): Promise<void> {
         dryRun: values['dry-run'],
         localBaseline: !values['no-local-baseline'],
         comment: !values['no-comment'],
+        requirePr: values['require-pr'],
         pr: num(values.pr, '--pr'),
         version: VERSION,
       });
+      // Nothing ran, and the log already said why; a summary of zero routes adds nothing.
+      if (result.delivery?.status === 'no-pr') {
+        if (values.json) output(result);
+        return;
+      }
       output(result);
       if (result.outcomes.length && result.outcomes.every(o => o.status === 'error')) process.exit(1);
       // Printed after the result, not instead of it: the screenshots exist and
