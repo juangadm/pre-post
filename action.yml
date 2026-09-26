@@ -1,0 +1,43 @@
+name: pre-post
+description: Pre and Post screenshots of the pages a pull request changed, posted at the top of the PR.
+author: juangadm
+branding:
+  icon: image
+  color: gray-dark
+
+inputs:
+  github-token:
+    description: Publishes the images and edits the PR. Needs contents and pull-requests write, and deployments read.
+    default: ${{ github.token }}
+  args:
+    description: Extra flags for `pre-post pr`, such as --responsive or --routes /a,/b.
+    default: ''
+  cli:
+    description: How pre-post is invoked. Change it only to test an unreleased build.
+    default: npx -y @juangadm/pre-post@latest
+
+runs:
+  using: composite
+  steps:
+    # --require-pr: deployments also fire for pushes to main and for branches
+    # with no PR, where there is nobody to show the images to.
+    #
+    # GITHUB_TOKEN, not GH_TOKEN: on a refusal pre-post then names the
+    # workflow's permissions block, which is the fix inside a runner.
+    - name: Pre and Post
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PRE_POST_CLI: ${{ inputs.cli }}
+        PRE_POST_ARGS: ${{ inputs.args }}
+      run: $PRE_POST_CLI pr --require-pr -o "$RUNNER_TEMP/pre-post" $PRE_POST_ARGS
+
+    # Kept even when posting fails, so the screenshots and sheet.png can be
+    # downloaded from the run.
+    - name: Keep the screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pre-post
+        path: ${{ runner.temp }}/pre-post
+        if-no-files-found: ignore
