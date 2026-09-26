@@ -10,7 +10,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { GitHubError, NeedsHumanError, GH_LOGIN_HINT } from './errors.js';
+import { GitHubError, NeedsHumanError, GH_LOGIN_HINT, TOKEN_ENV_HINT } from './errors.js';
 export { GitHubError } from './errors.js';
 
 export const API_BASE = process.env.GITHUB_API_URL || 'https://api.github.com';
@@ -48,6 +48,21 @@ export function findToken(): FoundToken | null {
   }
 }
 
+/** Whether the gh CLI is installed, which decides whether "gh auth login" is advice anyone can follow. */
+export function hasGhCli(): boolean {
+  try {
+    execFileSync('gh', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The one sentence for a missing or refused token, fitted to what this machine has. */
+export function loginHint(): string {
+  return hasGhCli() ? GH_LOGIN_HINT : TOKEN_ENV_HINT;
+}
+
 export function getToken(): string | null {
   return findToken()?.token ?? null;
 }
@@ -55,7 +70,7 @@ export function getToken(): string | null {
 /** A token and its source, or the one sentence telling the human how to get one. */
 export function requireToken(purpose = 'publish screenshots'): FoundToken {
   const found = findToken();
-  if (!found) throw new NeedsHumanError(`GitHub access is needed to ${purpose}. ${GH_LOGIN_HINT}`);
+  if (!found) throw new NeedsHumanError(`GitHub access is needed to ${purpose}. ${loginHint()}`);
   return found;
 }
 
@@ -81,7 +96,7 @@ export class GitHub {
       json = text ? JSON.parse(text) : null;
     } catch { /* non-JSON */ }
     if (res.status === 401 || (res.status === 403 && !/rate limit/i.test(json?.message || ''))) {
-      throw new NeedsHumanError(`GitHub rejected the token (${res.status}). ${GH_LOGIN_HINT}`);
+      throw new NeedsHumanError(`GitHub rejected the token (${res.status}). ${loginHint()}`);
     }
     if (!res.ok) {
       const msg = json?.message || text || res.statusText;
@@ -168,7 +183,15 @@ export function cannotPublishHint(ownerRepo: string, source: TokenSource): strin
     return `This workflow's GITHUB_TOKEN ${nowhere}: give the job ${perms} and re-run.`;
   }
   if (inActions) {
-    return `The GH_TOKEN this workflow sets ${nowhere}: give that credential write access, or unset it so the job's own GITHUB_TOKEN is used with ${perms}.`;
+    return `The ${source} this workflow sets ${nowhere}: give that credential write access, or unset it so the job's own GITHUB_TOKEN is used with ${perms}.`;
+  }
+  if (source === 'PRE_POST_GH_TOKEN') {
+    return `The PRE_POST_GH_TOKEN set in this environment ${nowhere}: replace it with a token that has contents and pull-requests write access, then re-run.`;
+  }
+  // Without the gh CLI there is no login to fall back on. A hosted agent
+  // sandbox sets GH_TOKEN itself, so the variable read before it is the fix.
+  if (!hasGhCli()) {
+    return `The ${source} set in this environment ${nowhere}: ${TOKEN_ENV_HINT.charAt(0).toLowerCase()}${TOKEN_ENV_HINT.slice(1)}`;
   }
   return `The ${source} set in this environment ${nowhere}: set it to a token carrying repo scope, or unset it to fall back on your gh CLI login.`;
 }

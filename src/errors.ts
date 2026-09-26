@@ -49,6 +49,14 @@ export class GitHubError extends Error {
 
 export const GH_LOGIN_HINT = 'Run: gh auth login   (or set GH_TOKEN with repo access), then re-run.';
 
+/**
+ * The same instruction for a machine without the gh CLI, which is every hosted
+ * agent sandbox measured so far. There "gh auth login" names a command that
+ * does not exist, and nobody is at the machine to run it: the only fix left is
+ * a variable, set where the environment is configured.
+ */
+export const TOKEN_ENV_HINT = "Set PRE_POST_GH_TOKEN to a GitHub token with contents and pull-requests write access (in a hosted agent session, add it to the environment's variables and start a new session), then re-run.";
+
 export function isVercelResponse(headers: { get(name: string): string | null }): boolean {
   return Boolean(headers.get('x-vercel-id') || headers.get('server')?.toLowerCase().includes('vercel'));
 }
