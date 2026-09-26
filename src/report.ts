@@ -32,6 +32,9 @@ export interface CommentOptions {
 /**
  * Markdown body for the sticky PR comment.
  */
+/** A run shorter than this says how long it took in the PR description. */
+export const FAST_RUN_MS = 30_000;
+
 export function buildComment(result: PrRunResult, options: CommentOptions = {}): string {
   const lines: string[] = [STICKY_MARKER, '## Visual changes', ''];
   const routes = groupByRoute(result.outcomes);
@@ -47,7 +50,10 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // assuming Post is the reader's own checkout.
   const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
-  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>`, '');
+  // Only a quick run earns a mention: the number is there to show the tool is
+  // cheap to run, and a slow one would say the opposite.
+  const took = result.durationMs > 0 && result.durationMs < FAST_RUN_MS ? ` in ${Math.max(1, Math.round(result.durationMs / 1000))}s` : '';
+  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
   // "No visual changes" is a claim about what the two sides looked like, so it
   // may only be made about routes that were actually compared. A run where
   // every capture failed compared nothing, and printing it there — directly
