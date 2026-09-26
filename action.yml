@@ -13,8 +13,8 @@ inputs:
     description: Extra flags for `pre-post pr`, such as --responsive or --routes /a,/b.
     default: ''
   cli:
-    description: How pre-post is invoked. Change it only to test an unreleased build.
-    default: npx -y @juangadm/pre-post@latest
+    description: How pre-post is invoked. Leave empty to run the version this action revision ships; set it only to test an unreleased build.
+    default: ''
 
 runs:
   using: composite
@@ -48,7 +48,16 @@ runs:
         PRE_POST_ARGS: ${{ inputs.args }}
         # corepack would otherwise wait for a yes before its first download.
         COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
-      run: $PRE_POST_CLI pr --local --require-pr -o "$RUNNER_TEMP/pre-post" $PRE_POST_ARGS
+      # The npm release matching this action revision's package.json, never
+      # `latest`: a workflow pinned to @v1 or a SHA must not start running
+      # different code, with a write-scoped token, when a new version ships.
+      run: |
+        cli="$PRE_POST_CLI"
+        if [ -z "$cli" ]; then
+          version=$(node -p "require(process.env.GITHUB_ACTION_PATH + '/package.json').version")
+          cli="npx -y @juangadm/pre-post@$version"
+        fi
+        $cli pr --local --require-pr -o "$RUNNER_TEMP/pre-post" $PRE_POST_ARGS
 
     # Kept even when posting fails, so the screenshots and sheet.png can be
     # downloaded from the run.

@@ -170,6 +170,8 @@ Deployment Protection never gets in the way.
 - **Flags** go in `with: { args: '--responsive' }`.
 - **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
   posting fails.
+- **Pinned:** `@v1` runs the pre-post version released with that tag, never whatever npm
+  calls `latest`.
 
 ## Usage
 
