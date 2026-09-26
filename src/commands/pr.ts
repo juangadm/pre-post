@@ -59,6 +59,17 @@ function headersFor(config: PrePostConfig, opts: PrCommandOptions): Record<strin
   return resolveAuth({ configHeaders: config.headers, headers: opts.headers, urls: [] })?.headers ?? {};
 }
 
+/**
+ * The Post URL the caller fixed, if any.
+ *
+ * `--local` promises Post is built from this checkout. A `.pre-post.json`
+ * `after` is usually the author's own localhost, which a CI runner cannot
+ * reach, so in local mode only a flag on this very command overrides it.
+ */
+export function afterFor(opts: Pick<PrCommandOptions, 'after' | 'local'>, config: Pick<PrePostConfig, 'after'>): string | undefined {
+  return opts.after ?? (opts.local ? undefined : config.after);
+}
+
 function runId(now: Date): string {
   return now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 }
@@ -170,7 +181,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   };
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
-  const explicitAfter = opts.after ?? config.after;
+  const explicitAfter = afterFor(opts, config);
   const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
 
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
