@@ -98,23 +98,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     noToken: !opts.dryRun && !found ? `GitHub access is needed to publish screenshots. ${loginHint()}` : undefined,
   };
 
-  // --- Start the slow, independent things now; they overlap route detection ----
-  const browserReady = timings.time('browser', ensureBrowser(), { background: true });
-  /**
-   * Everything this run started, in a form every early exit can call.
-   *
-   * The browser is launched from here rather than at the capture, so any throw
-   * before that block owns closing it: the CLI's `process.exit` hides the
-   * difference, but a caller using `runPr()` as a library catches the error and
-   * is left with a Chromium nothing references. Awaiting the launch first is
-   * what makes it work — `closeBrowser()` drops a pending launch and closes
-   * nothing, and the launch then resolves into an orphan.
-   */
-  const stopEverything = async (): Promise<void> => {
-    await browserReady.catch(() => undefined);
-    await closeBrowser();
-    await cleanupComparison();
-  };
   // Whether the token may write, asked at the same time as the PR lookup so it
   // costs no wall clock, and answered before anything expensive begins. A token
   // that cannot read fails the lookup below and never reaches capture; one that
@@ -159,7 +142,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // token, so those runs carry on and end on the instruction that fixes them.
   if (opts.requirePr && gh && !(await prLookup) && !lookupFailed) {
     log('No open PR for this commit; nothing to do.');
-    await stopEverything();
     return {
       repo: ownerRepo, beforeBase: '', afterBase: '', outcomes: [], skippedDynamic: [],
       durationMs: Date.now() - started, markdown: '', outputDir: '',
@@ -167,6 +149,25 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     };
   }
 
+  // --- Start the slow, independent things now; they overlap route detection ----
+  // Only after the --require-pr answer: a fresh runner would otherwise
+  // download and launch Chromium for a run that is about to do nothing.
+  const browserReady = timings.time('browser', ensureBrowser(), { background: true });
+  /**
+   * Everything this run started, in a form every early exit can call.
+   *
+   * The browser is launched from here rather than at the capture, so any throw
+   * before that block owns closing it: the CLI's `process.exit` hides the
+   * difference, but a caller using `runPr()` as a library catches the error and
+   * is left with a Chromium nothing references. Awaiting the launch first is
+   * what makes it work — `closeBrowser()` drops a pending launch and closes
+   * nothing, and the launch then resolves into an orphan.
+   */
+  const stopEverything = async (): Promise<void> => {
+    await browserReady.catch(() => undefined);
+    await closeBrowser();
+    await cleanupComparison();
+  };
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
   const explicitAfter = opts.after ?? config.after;
