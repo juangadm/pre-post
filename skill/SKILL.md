@@ -53,7 +53,8 @@ re-runs replace in place — the author's own text is never touched. If the PR c
 edited (a fork, a read-only token) it falls back to a single sticky comment.
 
 Each changed route shows **Pre beside Post**, per viewport, full pages in a `<details>`. No
-overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written.
+overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written. A pure move
+("Nothing else changed.") shows the full pages with no crop and no `<details>`, by design.
 
 ## Rules
 

@@ -99,7 +99,9 @@ Comment: https://github.com/acme/web/pull/42
 6. **Describe.** The images go in a delimited block at the top of the PR description,
    replaced in place on every run and leaving your own text untouched. Changed routes show
    a Pre/Post crop with the full page collapsed underneath; unchanged routes fold into a
-   single line. If the PR cannot be edited — a fork, a read-only token — it falls back to
+   single line. A pure layout shift — nothing changed once the move is undone — has no
+   region to crop, so it shows the full pages directly under the `Content shifted down 40px.
+   Nothing else changed.` line, with no collapsed section repeating them. If the PR cannot be edited — a fork, a read-only token — it falls back to
    one sticky comment.
 
 ## Install
