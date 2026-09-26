@@ -302,4 +302,6 @@ export interface PrRunResult {
   markdown: string;
   /** Local directory holding every captured file */
   outputDir: string;
+  /** Milliseconds spent in each named step of the run; steps can overlap. */
+  timings?: Record<string, number>;
 }

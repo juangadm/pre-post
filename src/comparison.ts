@@ -19,6 +19,7 @@ import { NeedsHumanError, ProbeResult } from './doctor.js';
 import { isLocalUrl, normalizeUrl } from './url.js';
 import { PrePostConfig } from './types.js';
 import { mergeBase } from './git.js';
+import { Stopwatch } from './timings.js';
 
 export type StrategyName = 'explicit' | 'deployed' | 'local';
 
@@ -74,6 +75,8 @@ export interface ResolveContext {
   /** Injectable for tests; defaults to booting this checkout's dev server. */
   servePost?: typeof serveWorkingTree;
   log: (msg: string) => void;
+  /** Where the local servers record how long each of their steps took. */
+  timings?: Stopwatch;
 }
 
 const noop = async (): Promise<void> => undefined;
@@ -223,7 +226,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   // rather than handing back a chore.
   let postServer: LocalBaseline | null = null;
   if (!after && ctx.allowLocalBaseline !== false) {
-    postServer = await (ctx.servePost ?? serveWorkingTree)({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log });
+    postServer = await (ctx.servePost ?? serveWorkingTree)({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log, timings: ctx.timings });
     if (postServer) after = side(postServer.url, 'working tree, served locally');
   }
   if (!after) throw deployed.preview ? new NoDeployedBaselineError(deployed.preview.url, deployed.rejectedBaseline) : new NoPostError();
@@ -241,7 +244,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   // escapes; nothing above this has a handle on it yet.
   const baseline = ctx.allowLocalBaseline === false || !baseSha
     ? null
-    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log })
+    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log, timings: ctx.timings })
         .catch(async err => { await stopPost(); throw err; });
   if (baseline) {
     const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`);

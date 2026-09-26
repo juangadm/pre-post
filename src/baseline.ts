@@ -19,6 +19,7 @@ import os from 'os';
 import path from 'path';
 import { NeedsHumanError } from './errors.js';
 import { devScript, readPackage } from './pkg.js';
+import { Stopwatch } from './timings.js';
 import { findAppRoots } from './routes.js';
 
 export interface LocalBaseline {
@@ -526,6 +527,8 @@ export interface BaselineOptions {
   /** Injectable for tests; defaults to a real PATH scan. */
   pathHas?: (bin: string) => boolean;
   log?: (msg: string) => void;
+  /** Records how long each step took, under `pre.*` or `post.*`. */
+  timings?: Stopwatch;
 }
 
 /**
@@ -561,6 +564,9 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
+  const step = (name: string, ms: number) => opts.timings?.add(`${opts.sha ? 'pre' : 'post'}.${name}`, ms);
+  let stepStart = Date.now();
+  const endStep = (name: string) => { step(name, Date.now() - stepStart); stepStart = Date.now(); };
 
   const worktree = opts.sha ? fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-base-')) : opts.repoRoot;
   let child: ChildProcess | null = null;
@@ -602,6 +608,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     }
     const copied = copyEnvFiles(opts.repoRoot, worktree, opts.appPrefix);
     if (copied.length) log(`Using local env file(s) for the baseline: ${copied.join(', ')}`);
+    endStep('checkout');
   }
 
   const app = servableDir(worktree, opts.appPrefix);
@@ -639,6 +646,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
   }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
+  stepStart = Date.now();
   if (install) {
     const result = installDeps(pm, appDir, deadline - Date.now());
     if (!result.ok) {
@@ -652,6 +660,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     if (retried) {
       log(`\`${pm.bin} ${pm.install.join(' ')}\` hit a peer-dependency conflict; installed the baseline with \`${retried.argv.join(' ')}\` instead.`);
     }
+    endStep('install');
   }
 
   // Before the setup step, not after it: that step is a build, and a build that
@@ -695,7 +704,9 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       if (configured) throw new BaselineSetupError(setup.label, appIn);
       return skip(`\`${setup.label}\` failed.`);
     }
+    endStep('setup');
   }
+  stepStart = Date.now();
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
     stdio: 'ignore',
@@ -705,6 +716,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   child.unref();
 
   const ready = await waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null);
+  endStep('boot');
   if (!ready) {
     await cleanup();
     return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);
