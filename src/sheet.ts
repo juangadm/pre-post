@@ -85,7 +85,9 @@ export async function buildSheet(outcomes: RouteCaptureOutcome[], outputDir: str
   const rows = sheetRows(outcomes);
   if (!rows.length) return null;
   const browser = await getBrowser();
-  const ctx = await browser.newContext({ viewport: { width: SHEET_WIDTH, height: 800 }, deviceScaleFactor: 1 });
+  // A full-page shot is never shorter than the viewport, so a short one keeps
+  // a one-row sheet from trailing a band of empty white.
+  const ctx = await browser.newContext({ viewport: { width: SHEET_WIDTH, height: 100 }, deviceScaleFactor: 1 });
   try {
     const page = await ctx.newPage();
     await page.setContent(sheetHtml(rows), { waitUntil: 'load' });

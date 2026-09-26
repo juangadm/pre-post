@@ -43,6 +43,13 @@ describe('buildSheet', () => {
     expect(at(900, 150)).toEqual([0, 0, 255]);
   });
 
+  it.skipIf(!playwrightAvailable)('ends where its content ends, with no empty band below', async () => {
+    const pre = solid(path.join(dir, 'short-pre.png'), 800, 100, [255, 0, 0]);
+    const post = solid(path.join(dir, 'short-post.png'), 800, 100, [0, 0, 255]);
+    const file = await buildSheet([{ route: '/', resolvedRoute: '/', viewport: 'desktop', status: 'changed', files: { cropBefore: pre, cropAfter: post } }], dir);
+    expect(PNG.sync.read(fs.readFileSync(file!)).height).toBeLessThan(200);
+  });
+
   it('returns null when nothing changed', async () => {
     expect(await buildSheet([{ route: '/', resolvedRoute: '/', viewport: 'desktop', status: 'unchanged', files: {} }], dir)).toBeNull();
   });
