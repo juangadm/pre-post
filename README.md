@@ -164,6 +164,8 @@ Deployment Protection never gets in the way.
 
 - **Your app must start with its dev script without secrets.** If it needs environment
   variables, give them to the job with `env:`.
+- **pnpm or yarn** comes from the `packageManager` field in package.json. Without one, set
+  it up before the pre-post step (e.g. `pnpm/action-setup`), as any other job would.
 - **Fork PRs are skipped:** their token cannot write, so there is nowhere to post.
 - **Flags** go in `with: { args: '--responsive' }`.
 - **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
