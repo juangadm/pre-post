@@ -19,11 +19,18 @@ inputs:
 runs:
   using: composite
   steps:
-    # pre-post installs the app with the package manager it declares (pnpm,
-    # yarn), which the runner only has once corepack puts it on PATH.
-    - name: Package managers
+    # Only for a project that pins its package manager ("packageManager" in
+    # package.json). Without a pin corepack hands out the newest release, and
+    # a pnpm a major version ahead of the one the lockfile was written with
+    # reinstalls the tree instead of running the dev server — which is how
+    # this step, run unconditionally, broke the first run. An unpinned project
+    # sets its package manager up before this action, as for any other job.
+    - name: Package manager
       shell: bash
-      run: corepack enable
+      run: |
+        if node -e "process.exit(require('./package.json').packageManager ? 0 : 1)" 2>/dev/null; then
+          corepack enable
+        fi
 
     # --local: build both sides on the runner. A preview deployment is often
     # behind a login the job cannot pass (Vercel protects previews by
