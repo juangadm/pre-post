@@ -367,3 +367,18 @@ describe('resolveComparison', () => {
     expect(describeComparison(c).join('\n')).toContain('different environments');
   });
 });
+
+describe('warmUp', () => {
+  it('requests each page once, without waiting for the answer', async () => {
+    const http = await import('http');
+    const seen: string[] = [];
+    const server = http.createServer((req, res) => { seen.push(req.url!); res.end('ok'); });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as import('net').AddressInfo;
+    const { warmUp } = await import('../../src/comparison');
+    expect(warmUp(`http://127.0.0.1:${port}`, ['/about', '/', '/about'])).toBeUndefined();
+    await new Promise(r => setTimeout(r, 200));
+    server.close();
+    expect(seen.sort()).toEqual(['/', '/about']);
+  });
+});

@@ -161,6 +161,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log, timings,
+    warmRoutes: (opts.routes?.length ? opts.routes : detection.routes.map(r => r.path)).map(r => resolveSample(r, config.samples || {})),
   }).catch(async err => { await stopEverything(); throw err; });
   timings.add('resolve', Date.now() - resolveStart);
   cleanupComparison = comparison.stop;
