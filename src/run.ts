@@ -13,7 +13,7 @@ import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap 
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
-import { hostOf } from './url.js';
+import { hostOf, isLocalUrl } from './url.js';
 
 export type { RunVerdict } from './types.js';
 
@@ -439,8 +439,36 @@ function brokenHint(broken: RouteCaptureOutcome[], side: 'Pre' | 'Post', sides: 
   return `Couldn't compare: the baseline${base} doesn't render ${where}; it shows ${what}. This is not caused by this branch.`;
 }
 
+/**
+ * Ask each local server for every page once before any screenshot.
+ *
+ * A dev server compiles a route on its first request. Doing that here, rather
+ * than inside the capture, keeps compile time out of the settle budget and
+ * lets a first-compile failure heal before it is judged: a 5xx is retried
+ * after a pause, and only what the capture then sees counts. Deployments are
+ * left alone — they are already built, and a production host is not ours to
+ * load.
+ */
+export async function warmUp(
+  urls: string[],
+  headers: Record<string, string> = {},
+  { attempts = 3, pauseMs = 1500, timeoutMs = 60_000 } = {},
+): Promise<void> {
+  const local = [...new Set(urls)].filter(u => /^https?:/.test(u) && isLocalUrl(u));
+  await Promise.all(local.map(async url => {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const status = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) })
+        .then(async res => { await res.arrayBuffer().catch(() => undefined); return res.status; })
+        .catch(() => null);
+      if (status !== null && status < 500) return;
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, pauseMs));
+    }
+  }));
+}
+
 export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Promise<RunResult> {
   fs.mkdirSync(opts.outputDir, { recursive: true });
+  await warmUp(tasks.flatMap(t => [t.beforeUrl, t.afterUrl]), opts.auth?.headers);
   const pool = new DiffPool();
   let outcomes: RouteCaptureOutcome[];
   try {

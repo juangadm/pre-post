@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { brokenSide, pageFailure, verdictFor } from '../../src/run';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { brokenSide, pageFailure, verdictFor, warmUp } from '../../src/run';
 import { pageErrorFrom } from '../../src/browser';
 import { buildComment, buildSummary } from '../../src/report';
 import { CaptureResult, PrRunResult, RouteCaptureOutcome } from '../../src/types';
@@ -129,5 +129,31 @@ describe('reporting a broken branch', () => {
     expect(md).toContain('**Not compared**');
     expect(md).toContain('- `/old` desktop: HTTP 500');
     expect(md).toContain('**No visual change:** `/`');
+  });
+});
+
+describe('warmUp', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('retries a local 5xx and stops at the first healthy answer', async () => {
+    const statuses = [500, 500, 200];
+    const fetch = vi.fn(async () => new Response('', { status: statuses.shift() }));
+    vi.stubGlobal('fetch', fetch);
+    await warmUp(['http://localhost:3000/work'], {}, { pauseMs: 1 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after the last attempt without throwing', async () => {
+    const fetch = vi.fn(async () => new Response('', { status: 500 }));
+    vi.stubGlobal('fetch', fetch);
+    await warmUp(['http://localhost:3000/work'], {}, { attempts: 2, pauseMs: 1 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves deployments and duplicates alone', async () => {
+    const fetch = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+    await warmUp(['https://acme.com/', 'http://localhost:3000/', 'http://localhost:3000/'], {}, { pauseMs: 1 });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
