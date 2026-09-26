@@ -40,6 +40,29 @@ describe('resolveComparison', () => {
     expect(c.mixed).toBe(true);
   });
 
+  // CI's answer to a preview it cannot open: build both sides on the runner.
+  // The GitHub stub has no routes, so any deployment lookup would throw.
+  it('builds both sides locally and asks GitHub nothing when told to', async () => {
+    const c = await resolveComparison(ctx({
+      localOnly: true,
+      config: { before: 'https://prod.com' },
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => undefined }),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => undefined }),
+    }));
+    expect(c.strategy).toBe('local');
+    expect(c.before.url).toBe('http://localhost:41111');
+    expect(c.after.url).toBe('http://localhost:42222');
+    expect(c.mixed).toBe(false);
+  });
+
+  it('does not fall back to a production URL when told to stay local', async () => {
+    await expect(resolveComparison(ctx({
+      localOnly: true,
+      config: { before: 'https://prod.com' },
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => undefined }),
+    }))).rejects.toBeInstanceOf(NoBaselineError);
+  });
+
   it('pairs a preview deployment with a deployed baseline', async () => {
     const c = await resolveComparison(ctx({
       gh: gh({

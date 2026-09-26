@@ -39,6 +39,8 @@ export interface PrCommandOptions extends Partial<Settings> {
   comment?: boolean;
   /** Stop, successfully, before any work when GitHub says there is no open PR */
   requirePr?: boolean;
+  /** Build both sides on this machine; never use deployments */
+  local?: boolean;
   pr?: number;
   /** Rebuild the baseline from the base commit when no URL is reachable. Default true. */
   localBaseline?: boolean;
@@ -213,7 +215,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     headSha: head ?? undefined,
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
-    allowLocalBaseline: opts.localBaseline, log, timings,
+    allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
   }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);

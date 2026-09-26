@@ -70,6 +70,12 @@ export interface ResolveContext {
   headSha?: string;
   /** Skip building the base commit locally. */
   allowLocalBaseline?: boolean;
+  /**
+   * Build both sides on this machine and never look for deployments. For CI,
+   * where a preview is often behind a login the job cannot pass, and where the
+   * runner can build the app anyway.
+   */
+  localOnly?: boolean;
   /** Injectable for tests; defaults to a real git worktree + dev server. */
   serveBaseline?: typeof serveBaseCommit;
   /** Injectable for tests; defaults to booting this checkout's dev server. */
@@ -266,8 +272,9 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
     return pair('local', before, after, async () => { await baseline.stop(); await stopPost(); });
   }
 
-  // Nothing local could be built; a configured URL beats no comparison at all.
-  if (ctx.config.before) return pair('explicit', side(ctx.config.before, 'from .pre-post.json'), after, stopPost);
+  // Nothing local could be built; a configured URL beats no comparison at all,
+  // unless the caller asked for both sides to be local.
+  if (ctx.config.before && !ctx.localOnly) return pair('explicit', side(ctx.config.before, 'from .pre-post.json'), after, stopPost);
   await stopPost();
   throw new NoBaselineError();
 }
@@ -282,6 +289,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
 export async function resolveComparison(ctx: ResolveContext): Promise<Comparison> {
   const explicit = explicitPair(ctx);
   if (explicit) return explicit;
+  if (ctx.localOnly) return localPair(ctx, { comparison: null, preview: null });
   const deployed = await deployedPair(ctx);
   return deployed.comparison ?? localPair(ctx, deployed);
 }
