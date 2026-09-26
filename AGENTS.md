@@ -47,7 +47,7 @@ tests/integration     CLI; browser cases gated by TEST_BROWSER=true
 tests/browser         capture tests, gated by TEST_BROWSER=true
 skill/SKILL.md        the Claude Code skill (keep it short)
 site/                 marketing site (Next.js), independent of the CLI
-docs/optimization-plan.md   why things are the way they are
+docs/internal/      design notes: why things are the way they are
 ```
 
 ## Rules

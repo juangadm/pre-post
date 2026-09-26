@@ -12,7 +12,7 @@ honesty problems, not speed.
 ## P1
 - [x] That failure is silent and misdirects: it returns a quiet null (no
       comparison, clean exit) and says "Run it in <repo> to see why" when the
-      install actually ran in a throwaway worktree. Apply docs/portability.md
+      install actually ran in a throwaway worktree. Apply docs/internal/portability.md
       §1's rule — never a clean exit for a run that compared nothing — and say
       where it really ran, with the manager's own output.
 - [x] Stale installed skill at ~/.claude/commands/pre-post.md documents a CLI

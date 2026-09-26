@@ -371,7 +371,7 @@ describe('the setup step between install and dev', () => {
   });
 
   /**
-   * The install's rule (docs/portability.md §1), for the same reason: a quiet
+   * The install's rule (docs/internal/portability.md §1), for the same reason: a quiet
    * null lets the run fall through to a configured production URL and publish
    * a different comparison as if it were this one.
    */

@@ -1,6 +1,6 @@
 # Pre-Post TODO
 
-Resolved by the 1.0 rewrite (see docs/optimization-plan.md): auth-protected deployments
+Resolved by the 1.0 rewrite (see docs/internal/optimization-plan.md): auth-protected deployments
 (`pre-post login`, `VERCEL_AUTOMATION_BYPASS_SECRET`, clear 401 hints), route detection via
 the import graph, Vite support, GitHub-native storage on `pre-post-assets`, sticky PR
 comment, pixel diff with crops.
