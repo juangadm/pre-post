@@ -19,6 +19,7 @@ import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
+import { buildSheet } from '../sheet.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -251,12 +252,20 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   await browserReady;
   let run;
+  let sheetPath: string | undefined;
   try {
     run = await timings.time('capture', runTasks(tasks, {
       outputDir, ...settings, wait: opts.wait, auth, log,
       // So the verdict can name how Pre was chosen, not just where it points.
       sides: { before: comparison.before, after: comparison.after },
     }));
+    // Drawn while the browser is still open. A convenience, so a failure to
+    // draw it is logged and never costs the run its result.
+    if (!run.verdict) {
+      sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
+        .then(p => p ?? undefined)
+        .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+    }
   } finally {
     // Timed on its own: deleting the baseline worktree, node_modules and all,
     // is real wall clock that used to show up under no step at all.
@@ -301,6 +310,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     durationMs: Date.now() - started,
     markdown: '',
     outputDir,
+    sheetPath,
     timings: timings.toJSON(),
     delivery: opts.dryRun ? { status: 'dry-run' } : skipReason ? { status: 'skipped', hint: skipReason } : { status: 'published' },
   };

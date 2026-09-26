@@ -302,6 +302,8 @@ export interface PrRunResult {
   markdown: string;
   /** Local directory holding every captured file */
   outputDir: string;
+  /** One labelled image of every change, Pre beside Post, when anything changed */
+  sheetPath?: string;
   /** Milliseconds spent in each named step of the run; steps can overlap. */
   timings?: Record<string, number>;
   /** Whether GitHub took the result, and if not, the one sentence that would let it. */

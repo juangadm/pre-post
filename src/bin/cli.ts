@@ -182,6 +182,7 @@ function output(result: Parameters<typeof buildSummary>[0]): void {
   }
   console.log(buildSummary(result));
   console.log(`Files: ${result.outputDir}`);
+  if (result.sheetPath) console.log(`Sheet: ${result.sheetPath}`);
   if (result.markdown && !result.commentUrl) console.log('\n' + result.markdown);
 }
 

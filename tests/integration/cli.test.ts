@@ -174,6 +174,8 @@ describe('CLI', () => {
         expect(stderr).toContain(result.delivery.hint);
         expect(result.outcomes[0].status).toBe('changed');
         expect(fs.existsSync(path.join(out, 'button-color-desktop-before-crop.png'))).toBe(true);
+        expect(result.sheetPath).toBe(path.join(out, 'sheet.png'));
+        expect(fs.existsSync(result.sheetPath)).toBe(true);
       } finally {
         api.close();
         fs.rmSync(root, { recursive: true, force: true });
