@@ -90,5 +90,8 @@ updated. Someone following you from a phone sees it there before they open GitHu
 | `--dry-run` | Preview locally, post nothing |
 | `--header k=v` / `--cookie k=v` | The site needs auth headers or cookies |
 
+To run on every PR without anyone invoking it, point the user to the README's GitHub Action
+section. It posts with GitHub's own token, which also covers work done in cloud sessions.
+
 Login-protected sites: `npx -y @juangadm/pre-post@latest login https://site` opens a browser
 once; the saved session is reused automatically.
