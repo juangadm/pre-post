@@ -94,6 +94,23 @@ describe('buildComment', () => {
     });
     expect(local).toContain('![Pre](/tmp/pre.png)');
   });
+
+  it('links local files relative to the output folder when it is given', () => {
+    const local = buildComment({
+      ...base,
+      outcomes: [{
+        route: '/', resolvedRoute: '/', viewport: 'desktop', status: 'changed', changedRatio: 0.5,
+        files: { before: '/var/folders/x/pre-post/run/home-desktop-pre.png', after: '/var/folders/x/pre-post/run/home-desktop-post.png', cropBefore: '/var/folders/x/pre-post/run/home-desktop-pre-crop.png', cropAfter: '/var/folders/x/pre-post/run/home-desktop-post-crop.png' },
+      }],
+    }, { filesDir: '/var/folders/x/pre-post/run' });
+    expect(local).toContain('![Pre](home-desktop-pre-crop.png)');
+    expect(local).toContain('![Post full](home-desktop-post.png)');
+    expect(local).not.toContain('/var/folders');
+  });
+
+  it('keeps published URLs as they are', () => {
+    expect(buildComment(base, { filesDir: '/tmp/x' })).toContain('![Pre](https://u/pre-crop.png)');
+  });
 });
 
 describe('buildSummary', () => {

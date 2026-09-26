@@ -81,7 +81,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
-  const browserReady = timings.time('browser', ensureBrowser());
+  const browserReady = timings.time('browser', ensureBrowser(), { background: true });
   /**
    * Everything this run started, in a form every early exit can call.
    *
@@ -160,7 +160,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log, timings,
-  })).catch(async err => { await stopEverything(); throw err; });
+  }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
@@ -229,7 +229,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       sides: { before: comparison.before, after: comparison.after },
     }));
   } finally {
-    await stopEverything();
+    // Timed on its own: deleting the baseline worktree, node_modules and all,
+    // is real wall clock that used to show up under no step at all.
+    await timings.time('cleanup', stopEverything());
   }
   const { outcomes } = run;
 
@@ -272,9 +274,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outputDir,
     timings: timings.toJSON(),
   };
-  result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
+  result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: outputDir });
 
-  if (writeGh && (opts.comment ?? true)) {
+  if (writeGh && (opts.comment ?? true)) await timings.time('describe', async () => {
     if (pr) {
       // The description is what a reviewer reads first, so put the images there
       // and fall back to a comment only when the PR cannot be edited.
@@ -292,7 +294,14 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     } else {
       log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
     }
-  }
-  log(`Timings: ${timings.summary()}`);
+  });
+  // Measured again after the description update, so the summary's total and
+  // the Timings line below describe the same span. The markdown above keeps
+  // the earlier figure: it had to be written before this step could run.
+  result.durationMs = Date.now() - started;
+  result.timings = timings.toJSON();
+  const [first, ...rest] = timings.summary(result.durationMs);
+  log(`Timings: ${first}`);
+  for (const line of rest) log(line);
   return result;
 }

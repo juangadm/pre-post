@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, checkWriteAccess, cannotPublishHint, findToken } from '../../src/github';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
 
 type Call = { method: string; path: string; body?: any };
@@ -163,6 +163,44 @@ describe('pruneAssets', () => {
     const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
     expect(tree.body.tree.map((t: any) => t.path)).toEqual(['pr-1/x.png', 'pr-3/z.png']);
     expect(tree.body.tree.every((t: any) => t.sha === null)).toBe(true);
+  });
+
+  // Runs made before a PR was open publish under branch/<name>/<run id>/, and
+  // prune used to match pr-<n>/ only, so those stayed in the tree forever.
+  it('removes branch runs older than the cutoff by their run id', async () => {
+    const recent = new Date(Date.now() - 86_400_000).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    route(/\/git\/ref\/heads%2F/, 'GET', () => ({ object: { sha: 'head' } }));
+    route(/\/git\/commits\/head$/, 'GET', () => ({ tree: { sha: 'tree' } }));
+    route(/\/git\/trees\/tree\?recursive=1$/, 'GET', () => ({
+      truncated: false,
+      tree: [
+        { path: 'branch/feat-x/20200101-120000/home-desktop-pre.png', type: 'blob', sha: 's', mode: '100644' },
+        { path: 'branch/feat-x/20200101-120000/home-desktop-post.png', type: 'blob', sha: 's', mode: '100644' },
+        { path: `branch/feat-x/${recent}/home-desktop-pre.png`, type: 'blob', sha: 's', mode: '100644' },
+        { path: 'branch/feat-x/hand-made/a.png', type: 'blob', sha: 's', mode: '100644' },
+      ],
+    }));
+    route(/\/git\/trees$/, 'POST', () => ({ sha: 'tree2' }), 201);
+    route(/\/git\/commits$/, 'POST', () => ({ sha: 'commit2' }), 201);
+    route(/\/git\/refs\/heads%2F/, 'PATCH', () => ({}));
+
+    const result = await pruneAssets(gh, 'acme/web', 'pre-post-assets', 90);
+    expect(result.removed).toEqual(['branch/feat-x/20200101-120000']);
+    expect(result.kept).toEqual([`branch/feat-x/${recent}`, 'branch/feat-x/hand-made']);
+    const tree = calls.find(c => c.path.endsWith('/git/trees') && c.method === 'POST')!;
+    expect(tree.body.base_tree).toBe('tree');
+    expect(tree.body.tree.map((t: any) => t.path)).toEqual([
+      'branch/feat-x/20200101-120000/home-desktop-pre.png',
+      'branch/feat-x/20200101-120000/home-desktop-post.png',
+    ]);
+  });
+
+  it('reads a run id as the UTC time it was published', () => {
+    expect(runIdTime('20260926-132437')).toBe(Date.UTC(2026, 8, 26, 13, 24, 37));
+    expect(runIdTime('hand-made')).toBeNull();
+    // Shaped like a run id but impossible, so not one runPr could have written.
+    expect(runIdTime('20260231-120000')).toBeNull();
+    expect(runIdTime('20260926-246000')).toBeNull();
   });
 
   it('does nothing when the branch does not exist', async () => {

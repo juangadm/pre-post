@@ -95,7 +95,7 @@ USAGE
   pre-post detect                       Print the routes this branch affects (JSON)
   pre-post ... --base <ref>             Compare against <ref> instead of the detected fork point
   pre-post login <url>                  Sign in once; the session is reused for captures
-  pre-post prune [--days 90]            Delete screenshots for PRs closed longer ago
+  pre-post prune [--days 90]            Delete screenshots for PRs closed (or pre-PR runs made) longer ago
   pre-post doctor                       Check browser, GitHub auth, dev server
 
 OPTIONS

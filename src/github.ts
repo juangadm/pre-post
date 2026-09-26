@@ -366,16 +366,40 @@ const ASSETS_README_PATH = 'README.md';
 const ASSETS_README = `# pre-post assets
 
 Screenshots published by [pre-post](https://github.com/juangadm/pre-post), one folder per
-pull request (\`pr-<number>/\`). Nothing here is edited by hand.
+pull request (\`pr-<number>/\`), or per branch for runs made before a PR was open
+(\`branch/<name>/\`). Nothing here is edited by hand.
 
-\`pre-post prune\` removes folders for pull requests closed more than \`pruneDays\` ago. This
-file is what keeps the branch from becoming an empty tree, which the GitHub tree API
-refuses to create.
+\`pre-post prune\` removes folders for pull requests closed more than \`pruneDays\` ago, and
+branch runs older than that. This file is what keeps the branch from becoming an empty
+tree, which the GitHub tree API refuses to create.
 `;
 
 /**
+ * When a run folder was published, from the id `runPr` names it with
+ * (`20260926-132437`, UTC). Null for anything else.
+ */
+export function runIdTime(id: string): number | null {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(id);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec] = m.map(Number);
+  const t = Date.UTC(y, mo - 1, d, h, mi, sec);
+  // Date.UTC rolls an impossible date forward (Feb 31 becomes Mar 3), and a
+  // folder with such a name was not written by runPr, so it is not a run id.
+  const back = new Date(t);
+  const same = back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d
+    && back.getUTCHours() === h && back.getUTCMinutes() === mi && back.getUTCSeconds() === sec;
+  return same ? t : null;
+}
+
+/**
  * Remove `pr-<n>/` folders on the assets branch whose PR closed more than
- * `olderThanDays` ago. One commit; no history rewrite.
+ * `olderThanDays` ago, and `branch/<name>/<run>/` folders published more than
+ * that long ago. One commit; no history rewrite.
+ *
+ * Branch runs are the ones made before a PR was open. Nothing records which PR
+ * they became, so their age is the only thing to go on — and they could never
+ * be pruned before, so a repository that runs pre-post ahead of opening PRs
+ * kept every one of them in the tree forever.
  */
 export async function pruneAssets(
   gh: GitHub,
@@ -399,12 +423,20 @@ export async function pruneAssets(
   );
 
   const folders = new Map<number, string[]>();
+  const branchRuns = new Map<string, string[]>();
   for (const entry of tree.tree) {
+    if (entry.type !== 'blob') continue;
     const m = entry.path.match(/^pr-(\d+)\//);
-    if (m && entry.type === 'blob') {
+    if (m) {
       const n = Number(m[1]);
       const list = folders.get(n);
       if (list) list.push(entry.path); else folders.set(n, [entry.path]);
+      continue;
+    }
+    const b = entry.path.match(/^(branch\/[^/]+\/[^/]+)\//);
+    if (b) {
+      const list = branchRuns.get(b[1]);
+      if (list) list.push(entry.path); else branchRuns.set(b[1], [entry.path]);
     }
   }
 
@@ -431,6 +463,17 @@ export async function pruneAssets(
       kept.push(`pr-${n}`);
     }
   });
+  // A run folder whose name is not a run id was not written by this tool's
+  // publish, so it is left alone rather than guessed at.
+  for (const [folder, paths] of [...branchRuns.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const published = runIdTime(folder.split('/')[2]);
+    if (published !== null && published < cutoff) {
+      removed.push(folder);
+      deletions.push(...paths);
+    } else {
+      kept.push(folder);
+    }
+  }
 
   if (dryRun || deletions.length === 0) return { removed, kept };
 
