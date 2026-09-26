@@ -2,14 +2,14 @@
 
 import { parseArgs } from 'node:util';
 import { createRequire } from 'module';
-import { Framework } from '../types.js';
+import { Framework, isBrokenVerdict } from '../types.js';
 import { runPr } from '../commands/pr.js';
 import { runCompare } from '../commands/compare.js';
 import { runLogin } from '../commands/login.js';
 import { runPrune } from '../commands/prune.js';
 import { doctorExitCode, runDoctor } from '../commands/doctor.js';
 import { runDetect } from '../commands/detect.js';
-import { NeedsHumanError } from '../errors.js';
+import { EXIT_BROKEN_PAGE, NeedsHumanError } from '../errors.js';
 import { buildSummary } from '../report.js';
 
 const require = createRequire(import.meta.url);
@@ -190,6 +190,13 @@ function output(result: Parameters<typeof buildSummary>[0]): void {
   if (result.markdown && !result.commentUrl) console.log('\n' + result.markdown);
 }
 
+/** A side rendered an error page: say so on stderr, where a CI log shows it, and exit 4. */
+function exitForBrokenPage(result: Parameters<typeof buildSummary>[0]): boolean {
+  if (!isBrokenVerdict(result.verdict)) return false;
+  console.error(`\n${result.verdict!.hint}`);
+  process.exit(EXIT_BROKEN_PAGE);
+}
+
 async function main(): Promise<void> {
   if (values.version) {
     console.log(VERSION);
@@ -246,6 +253,7 @@ async function main(): Promise<void> {
         return;
       }
       output(result);
+      if (exitForBrokenPage(result)) return;
       if (result.outcomes.length && result.outcomes.every(o => o.status === 'error')) process.exit(1);
       // Printed after the result, not instead of it: the screenshots exist and
       // are worth looking at even though GitHub would not take them.
@@ -294,7 +302,9 @@ async function main(): Promise<void> {
         console.error('Two URLs (or two PNG files) are required.');
         process.exit(2);
       }
-      output(await runCompare({ ...common, before, after }));
+      const compared = await runCompare({ ...common, before, after });
+      output(compared);
+      exitForBrokenPage(compared);
       return;
     }
   }

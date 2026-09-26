@@ -2,6 +2,13 @@
  * Typed errors shared across modules. Thrown at the source, mapped once in the CLI.
  */
 
+/**
+ * Exit codes, so CI can tell the outcomes apart:
+ * 0 compared (changed or not) · 1 the tool failed · 2 bad usage ·
+ * 3 a human must fix the setup · 4 a page rendered an error instead of itself.
+ */
+export const EXIT_BROKEN_PAGE = 4;
+
 /** A human must do exactly one thing; the message is that one sentence. Exit code 3. */
 export class NeedsHumanError extends Error {
   constructor(message: string) {

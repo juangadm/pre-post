@@ -68,8 +68,25 @@ export interface CaptureResult {
   text?: string;
   /** Response looked like it came from Vercel (deployment protection) */
   vercel?: boolean;
+  /** The framework's own error overlay, when the page is showing one */
+  pageError?: PageError;
   /** Wall-clock milliseconds for navigation + settle + screenshot */
   durationMs: number;
+}
+
+/**
+ * An error the page itself reports, read from the framework's error overlay.
+ *
+ * Its own type rather than a string because three renderers phrase it: the PR
+ * says it to a reviewer, the terminal to the developer, JSON to a script.
+ */
+export interface PageError {
+  /** The overlay's own label, e.g. "Build Error", "Runtime Error", or "HTTP 500" */
+  kind: string;
+  /** The first line of the message, e.g. "Parsing ecmascript source code failed" */
+  message?: string;
+  /** Where the framework says it happened, e.g. "app/work/page.tsx (8:5)" */
+  location?: string;
 }
 
 export interface BeforeAfterCaptureOptions {
@@ -243,7 +260,7 @@ export interface RouteCaptureOutcome {
   /** Route actually requested (after sample substitution) */
   resolvedRoute: string;
   viewport: string;
-  status: 'changed' | 'unchanged' | 'added' | 'removed' | 'error';
+  status: 'changed' | 'unchanged' | 'added' | 'removed' | 'broken' | 'error';
   changedRatio?: number;
   sizeChanged?: boolean;
   error?: string;
@@ -258,6 +275,8 @@ export interface RouteCaptureOutcome {
   shift?: RouteShift;
   /** A side answered with a sign-in wall, so nothing was really compared */
   blocked?: BlockedSide;
+  /** A side rendered an error instead of the page, so nothing was compared */
+  broken?: BrokenSide;
   /**
    * How much of the two sides' wording is shared, or null when neither page
    * had enough text to judge. Near zero on every route means the two sides are
@@ -277,6 +296,37 @@ export interface BlockedSide {
   finalUrl: string;
   /** Deployment protection, so the bypass secret is the fix */
   vercel: boolean;
+}
+
+export interface BrokenSide {
+  /** Which side failed; `both` when Pre and Post each did. */
+  side: 'before' | 'after' | 'both';
+  /** HTTP status of the failing side's document, when it had one. */
+  status?: number;
+  /** What the failing side (Post, when both did) reported. */
+  error: PageError;
+}
+
+/**
+ * Why a run cannot be reported as a comparison of the two sites.
+ *
+ * - `walled`, `different-sites`: the run compared something other than the
+ *   site. A human must fix the setup; the CLI exits 3 and publishes nothing.
+ * - `post-broken`: this branch renders an error page. That is the result, not
+ *   a setup problem, so the PR says it in one sentence, with no screenshots,
+ *   and the CLI exits 4.
+ * - `baseline-broken`: the base renders an error page on every route, so there
+ *   is no "before". Also exit 4, worded so it does not blame the branch.
+ */
+export interface RunVerdict {
+  kind: 'walled' | 'different-sites' | 'post-broken' | 'baseline-broken';
+  /** The single actionable sentence a human needs. */
+  hint: string;
+}
+
+/** Verdicts that are a finding about the code, reported rather than thrown. */
+export function isBrokenVerdict(v: RunVerdict | null | undefined): boolean {
+  return v?.kind === 'post-broken' || v?.kind === 'baseline-broken';
 }
 
 export interface RouteShift {
@@ -308,6 +358,8 @@ export interface PrRunResult {
   timings?: Record<string, number>;
   /** Whether GitHub took the result, and if not, the one sentence that would let it. */
   delivery?: Delivery;
+  /** Set when the run found a side rendering errors instead of the page. */
+  verdict?: RunVerdict;
 }
 
 /**

@@ -6,14 +6,16 @@
 import fs from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
-import { ArtifactKind, artifactSuffix, AuthOptions, BlockedSide, CaptureResult, RouteCaptureOutcome, RouteShift, ViewportSize } from './types.js';
+import { ArtifactKind, artifactSuffix, AuthOptions, BlockedSide, BrokenSide, CaptureResult, PageError, RouteCaptureOutcome, RouteShift, RunVerdict, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
 import { checkLanding, signInHint } from './landing.js';
 import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap } from './sameness.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
 import { authHint } from './doctor.js';
-import { hostOf, joinUrl } from './url.js';
+import { hostOf } from './url.js';
+
+export type { RunVerdict } from './types.js';
 
 export interface CaptureTask {
   route: string;
@@ -35,18 +37,6 @@ export interface RunSides {
    * nothing.
    */
   fix?: string;
-}
-
-/**
- * Why this run cannot be reported as a comparison.
- *
- * Two ways to reach the same conclusion, kept apart because they need
- * different advice: a wall wants credentials, a wrong baseline wants a URL.
- */
-export interface RunVerdict {
-  kind: 'walled' | 'different-sites';
-  /** The single actionable sentence a human needs. */
-  hint: string;
 }
 
 export interface RunResult {
@@ -134,6 +124,35 @@ function blockedSide(requested: string, result: CaptureResult, side: 'before' | 
   return landing.blocked ? { side, finalUrl: landing.finalUrl, vercel: Boolean(result.vercel) } : null;
 }
 
+/**
+ * What this side shows instead of the page, or null when it rendered the page.
+ *
+ * Two signals, because neither covers both cases. A 5xx is a server's own
+ * statement that the page failed. A framework error overlay is the only
+ * statement a dev server makes when the failure happened elsewhere — a build
+ * error Turbopack pushes to every page, a client component throwing after a
+ * 200 — see `readErrorOverlay`.
+ */
+export function pageFailure(c: CaptureResult): PageError | null {
+  if (c.pageError) return c.pageError;
+  if (c.status && c.status >= 500) return { kind: `HTTP ${c.status}` };
+  return null;
+}
+
+/** Which side, if any, rendered an error instead of the page. Post wins a tie: it is what the PR is about. */
+export function brokenSide(before: CaptureResult, after: CaptureResult): BrokenSide | null {
+  const pre = pageFailure(before);
+  const post = pageFailure(after);
+  if (post) return { side: pre ? 'both' : 'after', status: after.status, error: post };
+  if (pre) return { side: 'before', status: before.status, error: pre };
+  return null;
+}
+
+/** "Build Error: Parsing ecmascript source code failed (app/work/page.tsx (8:5))" */
+export function describePageError(e: PageError): string {
+  return [e.kind, e.message].filter(Boolean).join(': ') + (e.location ? ` in ${e.location}` : '');
+}
+
 async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool): Promise<RouteCaptureOutcome> {
   const started = Date.now();
   const base: RouteCaptureOutcome = { route: task.route, resolvedRoute: task.resolvedRoute, viewport: task.viewport, status: 'error' };
@@ -175,13 +194,33 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
     };
   }
 
-  if (before.status === 404 && after.status === 404) {
-    return { ...base, error: `404 on both ${task.beforeUrl} and ${task.afterUrl} (wrong route or missing sample?)`, durationMs: Date.now() - started };
-  }
-
   const prefix = `${routeSlug(task.route)}-${task.viewport}`;
   const file = (kind: ArtifactKind) => path.join(opts.outputDir, `${prefix}-${artifactSuffix(kind)}.png`);
   const outputs = { before: file('before'), after: file('after'), diff: file('diff'), cropBefore: file('cropBefore'), cropAfter: file('cropAfter') };
+
+  // An error page is not a design. Diffing it against the real page produced
+  // a confident "changed 10.88%" and published the Build Error panel to the PR
+  // as if it were the branch's new look, with exit 0. So a broken side ends the
+  // comparison here, before the diff, and is never published. Both images are
+  // still written locally: they are the evidence of what went wrong.
+  const broken = brokenSide(before, after);
+  if (broken) {
+    fs.writeFileSync(outputs.before, Buffer.from(before.image));
+    fs.writeFileSync(outputs.after, Buffer.from(after.image));
+    const label = broken.side === 'before' ? 'Pre' : 'Post';
+    opts.log?.(`  broken   ${task.route} @ ${task.viewport} (${label}: ${describePageError(broken.error)}, ${Date.now() - started}ms)`);
+    return {
+      ...base,
+      status: 'broken',
+      broken,
+      files: { before: outputs.before, after: outputs.after },
+      durationMs: Date.now() - started,
+    };
+  }
+
+  if (before.status === 404 && after.status === 404) {
+    return { ...base, error: `404 on both ${task.beforeUrl} and ${task.afterUrl} (wrong route or missing sample?)`, durationMs: Date.now() - started };
+  }
 
   // A route that exists on only one side is not a comparison, and the moment to
   // notice is here — before the diff, not after it in a footnote.
@@ -232,10 +271,11 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   });
 
   const notes: string[] = [];
-  // The 404-on-one-side cases returned above; what is left is a page both sides
-  // served with an unhappy status, which is still worth diffing and flagging.
-  if (before.status && before.status >= 400) notes.push(`production returned ${before.status}`);
-  if (after.status && after.status >= 400) notes.push(`local returned ${after.status}`);
+  // 5xx and the one-sided 404s returned above; what is left is a 4xx both
+  // sides rendered (a 410, a 429), still worth diffing and flagging. Named Pre
+  // and Post: either can be local, either can be a deployment.
+  if (before.status && before.status >= 400) notes.push(`Pre returned ${before.status}`);
+  if (after.status && after.status >= 400) notes.push(`Post returned ${after.status}`);
 
   const changed = isChanged(diff, opts);
   // Cheap fingerprint of the baseline, kept so the run can notice a host that
@@ -367,10 +407,36 @@ export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): Ru
     const { side, vercel } = walled[0].blocked!;
     return { kind: 'walled', hint: signInHint(side === 'before' ? sides.before.url : sides.after.url, vercel) };
   }
+  // Before the different-sites check: an error page shares no words with the
+  // real one, so a broken branch would otherwise be diagnosed as a wrong URL.
+  //
+  // One broken Post page is enough. A branch that errors on any page is not
+  // ready to be judged on looks, and its other screenshots may be of a page
+  // mid-rebuild. The base failing is different: it is not this branch's fault,
+  // so it only stops the run when no route has a "before" at all; otherwise
+  // those routes are reported as not compared and the rest stand.
+  const postBroken = outcomes.filter(o => o.broken && o.broken.side !== 'before');
+  if (postBroken.length) return { kind: 'post-broken', hint: brokenHint(postBroken, 'Post', sides) };
+  const preBroken = outcomes.filter(o => o.broken);
+  if (preBroken.length && preBroken.length === outcomes.length) {
+    return { kind: 'baseline-broken', hint: brokenHint(preBroken, 'Pre', sides) };
+  }
   if (looksLikeDifferentSites(outcomes)) {
     return { kind: 'different-sites', hint: differentSitesHint(sides.before.url, sides.before.detail, sides.after.url, sides.fix) };
   }
   return null;
+}
+
+/** One sentence: which side, which page, what it said, and what now. */
+function brokenHint(broken: RouteCaptureOutcome[], side: 'Pre' | 'Post', sides: RunSides): string {
+  const routes = [...new Set(broken.map(o => o.route))];
+  const where = routes.length === 1 ? `\`${routes[0]}\`` : `${routes.length} pages (${routes.slice(0, 3).map(r => `\`${r}\``).join(', ')}${routes.length > 3 ? ', …' : ''})`;
+  const what = describePageError(broken[0].broken!.error);
+  if (side === 'Post') {
+    return `This branch doesn't render: ${where} shows ${what}. No screenshots were published; fix the error and re-run.`;
+  }
+  const base = sides.before.detail ? ` (${sides.before.detail})` : '';
+  return `Couldn't compare: the baseline${base} doesn't render ${where}; it shows ${what}. This is not caused by this branch.`;
 }
 
 export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Promise<RunResult> {

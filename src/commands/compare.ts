@@ -6,7 +6,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { PrRunResult, RouteCaptureOutcome } from '../types.js';
+import { isBrokenVerdict, PrRunResult, RouteCaptureOutcome, RunVerdict } from '../types.js';
 import { resolveSettings, Settings } from '../config.js';
 import { closeBrowser } from '../browser.js';
 import { ensureBrowser } from '../doctor.js';
@@ -39,6 +39,7 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
   const settings = resolveSettings({}, { fullPage: false, viewports: ['desktop'], ...opts });
 
   let outcomes: RouteCaptureOutcome[];
+  let verdict: RunVerdict | undefined;
   let before = opts.before;
   let after = opts.after;
 
@@ -86,9 +87,11 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
     // sign-in wall or two different sites, and a percentage printed for either
     // is the confident-and-wrong answer. This mode used to have no such check
     // at all, because both lived in `pr`.
-    if (run.verdict) throw new NeedsHumanError(run.verdict.hint);
+    // A broken page is a finding, not a setup problem: reported, not thrown.
+    if (run.verdict && !isBrokenVerdict(run.verdict)) throw new NeedsHumanError(run.verdict.hint);
     outcomes = run.outcomes;
+    verdict = run.verdict ?? undefined;
   }
 
-  return { repo: '', beforeBase: before, afterBase: after, outcomes, skippedDynamic: [], durationMs: Date.now() - started, markdown: '', outputDir };
+  return { repo: '', beforeBase: before, afterBase: after, outcomes, skippedDynamic: [], durationMs: Date.now() - started, markdown: '', outputDir, verdict };
 }

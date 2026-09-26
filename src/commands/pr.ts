@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ArtifactKind, ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, PrePostConfig, PrRunResult } from '../types.js';
+import { ArtifactKind, ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, isBrokenVerdict, PrePostConfig, PrRunResult } from '../types.js';
 import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { detectRoutesForRepo, resolveSample } from '../routes.js';
@@ -316,10 +316,16 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // in front of them — a sign-in wall, or a baseline that is a different site
   // altogether. Either way there is no honest result to publish, so stop with
   // the one thing a human has to do.
-  if (run.verdict) throw new NeedsHumanError(run.verdict.hint);
+  //
+  // A broken page is the other kind of verdict: not a setup problem but a
+  // finding about the code, and the reviewer is the person who needs it. So it
+  // is not thrown. The PR still gets its block, saying so in one sentence, and
+  // nothing else: no image of an error page is ever published.
+  const broken = isBrokenVerdict(run.verdict);
+  if (run.verdict && !broken) throw new NeedsHumanError(run.verdict.hint);
 
   // --- Publish -------------------------------------------------------------------
-  const changed = outcomes.filter(o => (o.status === 'changed' || o.status === 'added' || o.status === 'removed') && o.files);
+  const changed = broken ? [] : outcomes.filter(o => (o.status === 'changed' || o.status === 'added' || o.status === 'removed') && o.files);
   if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;
@@ -352,6 +358,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     sheetPath,
     timings: timings.toJSON(),
     delivery: opts.dryRun ? { status: 'dry-run' } : skipReason ? { status: 'skipped', hint: skipReason } : { status: 'published' },
+    verdict: run.verdict ?? undefined,
   };
   result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: outputDir });
 
