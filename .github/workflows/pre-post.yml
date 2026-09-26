@@ -1,0 +1,42 @@
+name: pre-post
+
+# Runs when a preview deployment finishes, so both sides are real
+# deployments: production against this PR's preview. No dev server, no
+# install of the app, no app secrets in CI.
+on: deployment_status
+
+permissions:
+  contents: write       # the pre-post-assets branch
+  pull-requests: write  # the PR description
+  deployments: read     # finding the preview and production
+
+concurrency:
+  group: pre-post-${{ github.event.deployment.sha }}
+  cancel-in-progress: true
+
+jobs:
+  pre-post:
+    if: github.event.deployment_status.state == 'success' && !contains(github.event.deployment.environment, 'production')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The route detection diffs against main, so it needs main's history.
+          fetch-depth: 0
+
+      # This repository is pre-post itself, so it runs the build from this
+      # checkout rather than the published package. Other repositories only
+      # need the `uses: juangadm/pre-post@v1` step.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - uses: ./
+        with:
+          cli: node dist/bin/cli.js
