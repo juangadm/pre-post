@@ -198,6 +198,9 @@ describe('pruneAssets', () => {
   it('reads a run id as the UTC time it was published', () => {
     expect(runIdTime('20260926-132437')).toBe(Date.UTC(2026, 8, 26, 13, 24, 37));
     expect(runIdTime('hand-made')).toBeNull();
+    // Shaped like a run id but impossible, so not one runPr could have written.
+    expect(runIdTime('20260231-120000')).toBeNull();
+    expect(runIdTime('20260926-246000')).toBeNull();
   });
 
   it('does nothing when the branch does not exist', async () => {

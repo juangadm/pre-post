@@ -383,7 +383,12 @@ export function runIdTime(id: string): number | null {
   if (!m) return null;
   const [, y, mo, d, h, mi, sec] = m.map(Number);
   const t = Date.UTC(y, mo - 1, d, h, mi, sec);
-  return Number.isNaN(t) ? null : t;
+  // Date.UTC rolls an impossible date forward (Feb 31 becomes Mar 3), and a
+  // folder with such a name was not written by runPr, so it is not a run id.
+  const back = new Date(t);
+  const same = back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d
+    && back.getUTCHours() === h && back.getUTCMinutes() === mi && back.getUTCSeconds() === sec;
+  return same ? t : null;
 }
 
 /**
