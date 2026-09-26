@@ -18,6 +18,10 @@ jobs:
   pre-post:
     if: github.event.deployment_status.state == 'success' && !contains(github.event.deployment.environment, 'production')
     runs-on: ubuntu-latest
+    # Previews on this project sit behind Vercel Deployment Protection, which
+    # answers a plain request with a sign-in page. Unset, it is ignored.
+    env:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - uses: actions/checkout@v4
         with:
