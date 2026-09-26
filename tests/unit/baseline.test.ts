@@ -199,6 +199,23 @@ describe('serveBaseCommit skip reasons', () => {
   });
 });
 
+describe('a dev server that crashes', () => {
+  it('says it exited, not that it was slow', async () => {
+    const own = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-crash-')));
+    fs.writeFileSync(path.join(own, 'package.json'), JSON.stringify({ name: 'app', scripts: { dev: 'node -e "process.exit(7)"' } }));
+    // Already installed, so the run goes straight to the dev server.
+    fs.mkdirSync(path.join(own, 'node_modules'));
+    const logs: string[] = [];
+    const started = Date.now();
+    const result = await serveWorkingTree({ repoRoot: own, log: m => logs.push(m), pathHas: bin => bin === 'npm' });
+    expect(result).toBeNull();
+    expect(logs.join('\n')).toMatch(/npm dev exited with code \d+ before serving/);
+    expect(logs.join('\n')).not.toMatch(/within \d+s/);
+    expect(Date.now() - started).toBeLessThan(30_000);
+    fs.rmSync(own, { recursive: true, force: true });
+  });
+});
+
 describe('copyEnvFiles', () => {
   let from: string;
   let to: string;
