@@ -1,30 +1,34 @@
 name: pre-post
 
-# Runs when a preview deployment finishes, so both sides are real
-# deployments: production against this PR's preview. No dev server, no
-# install of the app, no app secrets in CI.
-on: deployment_status
+# Runs on each push to a PR that touches the site, builds the base commit
+# and this PR's commit on the runner, and posts Pre and Post to the PR. No
+# preview deployment is involved, so nothing per project has to be set up.
+on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'action.yml'
+      - '.github/workflows/pre-post.yml'
 
 permissions:
   contents: write       # the pre-post-assets branch
   pull-requests: write  # the PR description
-  deployments: read     # finding the preview and production
 
 concurrency:
-  group: pre-post-${{ github.event.deployment.sha }}
+  group: pre-post-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   pre-post:
-    if: github.event.deployment_status.state == 'success' && !contains(github.event.deployment.environment, 'production')
+    # A fork's PR gets a read-only token, so there would be nowhere to post.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    # Previews on this project sit behind Vercel Deployment Protection, which
-    # answers a plain request with a sign-in page. Unset, it is ignored.
-    env:
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # The PR's own commit, not GitHub's merge of it into main, so Post
+          # is exactly what the author pushed.
+          ref: ${{ github.event.pull_request.head.sha }}
           # The route detection diffs against main, so it needs main's history.
           fetch-depth: 0
 
