@@ -23,16 +23,6 @@ export class Stopwatch {
     }
   }
 
-  /** A synchronous step. */
-  timeSync<T>(name: string, work: () => T): T {
-    const start = Date.now();
-    try {
-      return work();
-    } finally {
-      this.add(name, Date.now() - start);
-    }
-  }
-
   toJSON(): Record<string, number> {
     return Object.fromEntries(this.steps);
   }
