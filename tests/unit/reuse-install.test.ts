@@ -58,6 +58,11 @@ describe('reusableInstall', () => {
 
   // A generator in an install hook reads files no install input covers, so the
   // copied node_modules could hold code generated from the branch.
+  it('installs fresh when the branch added an install input it has not committed', async () => {
+    write('packages/ui/package.json', JSON.stringify({ name: 'ui' }));
+    expect(await reusableInstall(repo, base)).toBeNull();
+  });
+
   it('installs fresh when a package runs its own install hook', async () => {
     write('apps/web/package.json', JSON.stringify({ name: 'web', scripts: { dev: 'next dev', postinstall: 'prisma generate' } }));
     git('commit -qam hook');

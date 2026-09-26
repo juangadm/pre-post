@@ -313,7 +313,7 @@ export interface InstallResult {
   attempts: InstallAttempt[];
 }
 
-export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => Promise<InstallAttempt>;
+export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number, signal?: AbortSignal) => Promise<InstallAttempt>;
 
 /** Keep the end of the output: managers put the diagnosis last. */
 function tail(text: string, lines = 24): string {
@@ -337,11 +337,11 @@ const MAX_INSTALL_OUTPUT = 64 * 1024 * 1024;
  * Shared by the install and the setup step that follows it: they fail the same
  * way, and a reader needs the same thing from both — the end of the output.
  */
-function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false): Promise<InstallAttempt> {
+function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false, signal?: AbortSignal): Promise<InstallAttempt> {
   // Asynchronous, so the other side's server and the browser download keep
   // moving while this one installs: a synchronous call froze the whole process.
   return new Promise(resolve => {
-    execFile(bin, argv, { cwd, shell, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout, stderr) => {
+    execFile(bin, argv, { cwd, shell, signal, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout, stderr) => {
       // Only a failure has anything to explain, so the successful run's log is
       // dropped rather than split into lines nothing will read.
       if (!err) return resolve({ argv, ok: true, output: '' });
@@ -351,7 +351,7 @@ function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number,
   });
 }
 
-const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => runCommand(bin, argv, cwd, timeoutMs);
+const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs, signal) => runCommand(bin, argv, cwd, timeoutMs, false, signal);
 
 /**
  * Does this look like npm refusing to resolve a peer range?
@@ -379,13 +379,14 @@ export async function installDeps(
   cwd: string,
   timeoutMs: number,
   run: InstallRunner = runInstall,
+  signal?: AbortSignal,
 ): Promise<InstallResult> {
   const deadline = Date.now() + timeoutMs;
-  const first = await run(pm.bin, pm.install, cwd, timeoutMs);
-  if (first.ok || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
+  const first = await run(pm.bin, pm.install, cwd, timeoutMs, signal);
+  if (first.ok || signal?.aborted || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
   // The remainder of the original budget, not a fresh one: a first attempt
   // that burned the clock must not let the retry double the wall time.
-  const second = await run(pm.bin, pm.retry.argv, cwd, deadline - Date.now());
+  const second = await run(pm.bin, pm.retry.argv, cwd, deadline - Date.now(), signal);
   return { ok: second.ok, attempts: [first, second] };
 }
 
@@ -537,6 +538,10 @@ function gitAsync(args: string[], cwd: string): Promise<string | null> {
  */
 export async function reusableInstall(repoRoot: string, sha: string): Promise<string[] | null> {
   if (await gitAsync(['diff', '--quiet', sha, '--', ...INSTALL_INPUTS], repoRoot) === null) return null;
+  // The diff sees tracked files only. A new package.json or lockfile the
+  // branch has not added yet is still a different dependency tree.
+  const untracked = await gitAsync(['ls-files', '--others', '--exclude-standard', '--', ...INSTALL_INPUTS], repoRoot);
+  if (untracked === null || untracked.trim()) return null;
   const tracked = await gitAsync(['ls-files', '--', ...INSTALL_INPUTS], repoRoot);
   const files = tracked?.split('\n') ?? [];
   if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
@@ -656,6 +661,11 @@ export interface BaselineOptions {
   log?: (msg: string) => void;
   /** Records how long each step took, under `pre.*` or `post.*`. */
   timings?: Stopwatch;
+  /**
+   * Abort the boot: the caller no longer needs this side. Whatever it started
+   * is stopped and cleaned up, and it resolves null.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -691,6 +701,12 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
+  /** True, having cleaned up, when the caller has given up on this side. */
+  const aborted = async (): Promise<boolean> => {
+    if (!opts.signal?.aborted) return false;
+    await cleanup();
+    return true;
+  };
   const side = opts.sha ? 'pre' : 'post';
   const timed = <T>(name: string, work: Promise<T>): Promise<T> => opts.timings ? opts.timings.time(`${side}.${name}`, work) : work;
   const started = Date.now();
@@ -729,7 +745,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   if (opts.sha) {
     // Asynchronous: in a large repository a checkout takes seconds, and the
     // other side is booting meanwhile.
-    if (await gitAsync(['worktree', 'add', '--detach', '--force', worktree, opts.sha], opts.repoRoot) === null) {
+    if (await gitAsync(['worktree', 'add', '--detach', '--force', worktree, opts.sha], opts.repoRoot) === null || await aborted()) {
       await cleanup();
       return skip('the worktree checkout failed.');
     }
@@ -782,13 +798,15 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     return true;
   };
   const reused = install && opts.sha ? await timed('reuse', tryReuse(opts.sha)) : false;
+  if (await aborted()) return null;
   if (install && !reused) {
     if (pm !== declared) {
       log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
     }
-    const installing = installDeps(pm, appDir, deadline - Date.now());
+    const installing = installDeps(pm, appDir, deadline - Date.now(), runInstall, opts.signal);
     if (worktree === opts.repoRoot) installsInFlight.set(opts.repoRoot, installing);
     const result = await timed('install', installing).finally(() => installsInFlight.delete(opts.repoRoot));
+    if (await aborted()) return null;
     if (!result.ok) {
       const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');
       log(`${tried} failed${worktree === opts.repoRoot ? '' : ' in a throwaway worktree of the base commit'}:`);
@@ -827,7 +845,8 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const setup = configured ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
   if (setup) {
     log(`Preparing ${what} before its dev server (${setup.label}) ...`);
-    const attempt = await timed('setup', runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell));
+    const attempt = await timed('setup', runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell, opts.signal));
+    if (await aborted()) return null;
     if (!attempt.ok) {
       // Loud either way. A dev server started over a half-built workspace
       // serves an error page, and an error page is a baseline that reports a
@@ -852,7 +871,8 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   });
   child.unref();
 
-  const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null));
+  const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null && !opts.signal?.aborted));
+  if (await aborted()) return null;
   if (!ready) {
     await cleanup();
     return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);

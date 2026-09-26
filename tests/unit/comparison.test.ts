@@ -163,6 +163,21 @@ describe('resolveComparison', () => {
     expect(stopped).toBe(true);
   });
 
+  it('gives up on a slow baseline as soon as the branch cannot be served', async () => {
+    let cancelled = false;
+    const started = Date.now();
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => null,
+      serveBaseline: ({ signal }) => new Promise(resolve => {
+        const timer = setTimeout(() => resolve({ url: 'http://localhost:41111', stop: async () => undefined }), 5000);
+        signal?.addEventListener('abort', () => { cancelled = true; clearTimeout(timer); resolve(null); });
+      }),
+    }))).rejects.toBeInstanceOf(NoPostError);
+    expect(cancelled).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('shuts down the Post server when the baseline install fails', async () => {
     let stopped = false;
     await expect(resolveComparison(ctx({
@@ -345,16 +360,3 @@ describe('resolveComparison', () => {
   });
 });
 
-describe('warmUp', () => {
-  it('requests each page once', async () => {
-    const http = await import('http');
-    const seen: string[] = [];
-    const server = http.createServer((req, res) => { seen.push(req.url!); res.end('ok'); });
-    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-    const { port } = server.address() as import('net').AddressInfo;
-    const { warmUp } = await import('../../src/comparison');
-    await warmUp(url => fetch(url).then(r => r.text()), `http://127.0.0.1:${port}`, ['/about', '/', '/about']);
-    server.close();
-    expect(seen.sort()).toEqual(['/', '/about']);
-  });
-});
