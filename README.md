@@ -139,39 +139,35 @@ First run also pulls a Chromium headless shell (~80 MB), then reuses it. Stuck? 
 
 ### GitHub Action: every PR, no tokens
 
-For a team, or for work done in cloud agent sessions: GitHub runs pre-post itself when a
-PR's preview deployment finishes and posts with the job's own token. Nobody sets up anything
-per person. Add `.github/workflows/pre-post.yml`:
+For a team, or for work done in cloud agent sessions: GitHub runs pre-post on each push to a
+PR and posts with the job's own token. Nobody sets up anything per person, and there are no
+secrets to add. Add `.github/workflows/pre-post.yml`:
 
 ```yaml
 name: pre-post
-on: deployment_status
-permissions: { contents: write, pull-requests: write, deployments: read }
-concurrency: { group: 'pre-post-${{ github.event.deployment.sha }}', cancel-in-progress: true }
+on: pull_request
+permissions: { contents: write, pull-requests: write }
+concurrency: { group: 'pre-post-${{ github.event.pull_request.number }}', cancel-in-progress: true }
 jobs:
   pre-post:
-    if: github.event.deployment_status.state == 'success' && !contains(github.event.deployment.environment, 'production')
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with: { ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0 }
       - uses: juangadm/pre-post@v1
 ```
 
-This works for any host that reports deployments to GitHub (Vercel, Netlify, Cloudflare Pages,
-Render). Both sides are deployments, production against the preview, so CI never builds or
-boots your app.
+The runner builds the base commit and the PR's commit and serves both, the same way pre-post
+does on a laptop with nothing deployed. No preview deployment is involved, so Vercel's
+Deployment Protection never gets in the way.
 
-- **Vercel Deployment Protection** is on for previews by default. Add
-  `env: { VERCEL_AUTOMATION_BYPASS_SECRET: '${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}' }`
-  to the job.
-- **Deployments with no open PR** (pushes to `main`) end in "nothing to do".
+- **Your app must start with its dev script without secrets.** If it needs environment
+  variables, give them to the job with `env:`.
+- **Fork PRs are skipped:** their token cannot write, so there is nowhere to post.
 - **Flags** go in `with: { args: '--responsive' }`.
 - **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
   posting fails.
-- **No preview deployments?** Trigger on `pull_request` instead, and install your app's
-  dependencies before the pre-post step. pre-post then serves both sides itself, so your
-  app must be able to boot in CI.
 
 ## Usage
 
