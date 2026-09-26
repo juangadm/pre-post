@@ -12,7 +12,7 @@
  * reach for it after a reachable deployment, not before one.
  */
 
-import { spawn, ChildProcess, execFileSync } from 'child_process';
+import { spawn, ChildProcess, execFile, execFileSync } from 'child_process';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
@@ -308,7 +308,7 @@ export interface InstallResult {
   attempts: InstallAttempt[];
 }
 
-export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => InstallAttempt;
+export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => InstallAttempt | Promise<InstallAttempt>;
 
 /** Keep the end of the output: managers put the diagnosis last. */
 function tail(text: string, lines = 24): string {
@@ -332,17 +332,18 @@ const MAX_INSTALL_OUTPUT = 64 * 1024 * 1024;
  * Shared by the install and the setup step that follows it: they fail the same
  * way, and a reader needs the same thing from both — the end of the output.
  */
-function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false): InstallAttempt {
-  try {
-    execFileSync(bin, argv, { cwd, shell, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_INSTALL_OUTPUT });
-    // Only a failure has anything to explain, so the successful run's log is
-    // dropped rather than split into lines nothing will read.
-    return { argv, ok: true, output: '' };
-  } catch (err) {
-    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
-    const output = [e.stdout, e.stderr].map(part => (part ? String(part) : '')).join('');
-    return { argv, ok: false, output: tail(output || e.message || '') };
-  }
+function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false): Promise<InstallAttempt> {
+  // Asynchronous, so the other side's server and the browser download keep
+  // moving while this one installs: a synchronous call froze the whole process.
+  return new Promise(resolve => {
+    execFile(bin, argv, { cwd, shell, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout, stderr) => {
+      // Only a failure has anything to explain, so the successful run's log is
+      // dropped rather than split into lines nothing will read.
+      if (!err) return resolve({ argv, ok: true, output: '' });
+      const output = [stdout, stderr].map(part => (part ? String(part) : '')).join('');
+      resolve({ argv, ok: false, output: tail(output || err.message || '') });
+    }).stdin?.end();
+  });
 }
 
 const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => runCommand(bin, argv, cwd, timeoutMs);
@@ -368,18 +369,18 @@ export function isPeerConflict(output: string): boolean {
  * the comparison this tool exists to make is between two renders of the same
  * app, not between two dependency trees.
  */
-export function installDeps(
+export async function installDeps(
   pm: PackageManager,
   cwd: string,
   timeoutMs: number,
   run: InstallRunner = runInstall,
-): InstallResult {
+): Promise<InstallResult> {
   const deadline = Date.now() + timeoutMs;
-  const first = run(pm.bin, pm.install, cwd, timeoutMs);
+  const first = await run(pm.bin, pm.install, cwd, timeoutMs);
   if (first.ok || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
   // The remainder of the original budget, not a fresh one: a first attempt
   // that burned the clock must not let the retry double the wall time.
-  const second = run(pm.bin, pm.retry.argv, cwd, deadline - Date.now());
+  const second = await run(pm.bin, pm.retry.argv, cwd, deadline - Date.now());
   return { ok: second.ok, attempts: [first, second] };
 }
 
@@ -648,7 +649,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
   stepStart = Date.now();
   if (install) {
-    const result = installDeps(pm, appDir, deadline - Date.now());
+    const result = await installDeps(pm, appDir, deadline - Date.now());
     if (!result.ok) {
       const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');
       log(`${tried} failed${worktree === opts.repoRoot ? '' : ' in a throwaway worktree of the base commit'}:`);
@@ -688,7 +689,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const setup = configured ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
   if (setup) {
     log(`Preparing ${what} before its dev server (${setup.label}) ...`);
-    const attempt = runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
+    const attempt = await runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
     if (!attempt.ok) {
       // Loud either way. A dev server started over a half-built workspace
       // serves an error page, and an error page is a baseline that reports a
