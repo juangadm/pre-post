@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken, loginHint } from '../../src/github';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken, loginHint, findOpenPrForCommit } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
 
 /**
@@ -77,6 +77,22 @@ describe('findOpenPr', () => {
   it('returns null when there is no PR', async () => {
     route(/\/pulls\?/, 'GET', () => []);
     expect(await findOpenPr(gh, 'acme/web', 'nope')).toBeNull();
+  });
+});
+
+describe('findOpenPrForCommit', () => {
+  const pr = (number: number, state: string, sha: string) => ({ number, state, html_url: 'u', head: { sha, ref: 'b' } });
+
+  it('returns the open PR headed by the commit', async () => {
+    route(/\/repos\/acme\/web\/commits\/abc\/pulls/, 'GET', () => [pr(3, 'closed', 'abc'), pr(7, 'open', 'abc')]);
+    expect((await findOpenPrForCommit(gh, 'acme/web', 'abc'))?.number).toBe(7);
+  });
+
+  // The endpoint also lists PRs that merely contain the commit, and a merged
+  // PR's commit is contained in every later branch off main.
+  it('ignores an open PR the commit is only buried in', async () => {
+    route(/\/commits\/abc\/pulls/, 'GET', () => [pr(9, 'open', 'def')]);
+    expect(await findOpenPrForCommit(gh, 'acme/web', 'abc')).toBeNull();
   });
 });
 

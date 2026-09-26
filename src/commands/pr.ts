@@ -12,7 +12,7 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
@@ -67,7 +67,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const config = loadConfig(root);
   const settings = resolveSettings(config, opts);
   const ownerRepo = resolveOwnerRepo(root);
-  const branch = currentBranch(root);
+  // A pull_request job checks out a merge commit with no branch, but names the
+  // PR's branch in GITHUB_HEAD_REF.
+  const branch = currentBranch(root) ?? (process.env.GITHUB_HEAD_REF?.trim() || null);
+  const head = headSha(root);
   /** Tears down anything resolution started (a local dev server). */
   let cleanupComparison: () => Promise<void> = async () => undefined;
 
@@ -117,8 +120,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const writeAccess = writeGh && found
     ? checkWriteAccess(writeGh, ownerRepo).then(access => ({ access, source: found.source }))
     : null;
+  // Without a branch name (a detached checkout, as a deployment-triggered job
+  // has) the PR is found from the commit it is headed by.
   const lookup = gh
-    ? opts.pr ? getPr(gh, ownerRepo, opts.pr) : branch ? findOpenPr(gh, ownerRepo, branch) : Promise.resolve(null)
+    ? opts.pr ? getPr(gh, ownerRepo, opts.pr)
+      : branch ? findOpenPr(gh, ownerRepo, branch)
+        : head ? findOpenPrForCommit(gh, ownerRepo, head) : Promise.resolve(null)
     : Promise.resolve(null);
   // A dry run used to touch GitHub not at all, and must still work when it
   // cannot: it is what someone runs before anything is set up. A stale token or
@@ -149,7 +156,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
   timings.add('detect', detection.durationMs);
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
-  const head = headSha(root);
   const pr = await timings.time('github', prLookup);
   // Whatever refused the lookup refuses every later read too: resolution would
   // only spend time asking GitHub for deployments it cannot see.

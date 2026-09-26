@@ -213,6 +213,20 @@ export async function findOpenPr(gh: GitHub, ownerRepo: string, branch: string):
   return prs[0] ?? null;
 }
 
+/**
+ * The open PR whose head is `sha`, for a checkout that has a commit but no
+ * branch name. A GitHub Actions job triggered by a deployment checks out the
+ * deployed commit detached, so the branch lookup above has nothing to ask with.
+ *
+ * The endpoint also lists merged PRs that contain the commit, and open ones
+ * where it is buried in history, so only an open PR headed by this exact
+ * commit counts: one merely containing it is not the PR being deployed.
+ */
+export async function findOpenPrForCommit(gh: GitHub, ownerRepo: string, sha: string): Promise<PullRequestRef | null> {
+  const prs = await gh.request<Array<PullRequestRef & { state: string }>>('GET', `/repos/${ownerRepo}/commits/${sha}/pulls?per_page=100`);
+  return prs.find(pr => pr.state === 'open' && pr.head.sha === sha) ?? null;
+}
+
 export async function getPr(gh: GitHub, ownerRepo: string, number: number): Promise<PullRequestRef & { state: string; closed_at: string | null; merged_at: string | null }> {
   return gh.request('GET', `/repos/${ownerRepo}/pulls/${number}`);
 }
