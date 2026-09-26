@@ -508,6 +508,100 @@ export class BaselineSetupError extends NeedsHumanError {
   }
 }
 
+/**
+ * Files that decide what an install produces. When none of them differ between
+ * the base commit and the working tree, the two installs would be the same
+ * dependency tree, so the one already on disk can stand in for a fresh one.
+ */
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'package-lock.json', 'npm-shrinkwrap.json'];
+const INSTALL_INPUTS = [
+  ...LOCKFILES.map(f => `:(glob)**/${f}`),
+  ':(glob)**/package.json',
+  ':(glob)**/.npmrc',
+  ':(glob)**/.yarnrc.yml',
+  ':(glob)**/.pnpmfile.cjs',
+  ':(glob)**/pnpm-workspace.yaml',
+];
+
+/** Every tracked package.json at `sha`, as directories relative to the repo root. */
+function packageDirsAt(repoRoot: string, sha: string): string[] | null {
+  try {
+    const files = execFileSync('git', ['ls-tree', '-r', '--name-only', sha], { cwd: repoRoot, encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }).split('\n');
+    if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
+    return files
+      .filter(f => path.basename(f) === 'package.json' && !f.split('/').includes('node_modules'))
+      .map(f => path.dirname(f));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Can the base commit use the dependencies this checkout already installed?
+ *
+ * Only when the base carries a lockfile (without one there is nothing to prove
+ * the trees match) and no install input differs between it and the working
+ * tree, uncommitted edits included. Returns the package directories whose
+ * node_modules to bring across, or null to install as usual.
+ */
+export function reusableInstall(repoRoot: string, sha: string): string[] | null {
+  const dirs = packageDirsAt(repoRoot, sha);
+  if (!dirs) return null;
+  try {
+    execFileSync('git', ['diff', '--quiet', sha, '--', ...INSTALL_INPUTS], { cwd: repoRoot, stdio: 'ignore' });
+  } catch {
+    return null;
+  }
+  return dirs.filter(dir => {
+    try {
+      return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Copy one node_modules into the worktree as its own tree.
+ *
+ * A copy, not a symlink: package managers link workspace packages with
+ * relative paths, and through a symlink those would resolve back into this
+ * checkout, so Pre would quietly render the branch's own workspace code.
+ * Turbopack also refuses a node_modules that points outside the project. The
+ * copy keeps those links relative, so they land in the worktree. On macOS
+ * (APFS) and on reflink filesystems it is copy-on-write: near-instant and no
+ * extra disk.
+ */
+function copyTree(from: string, to: string): Promise<boolean> {
+  const argv = process.platform === 'darwin' ? ['-c', '-R', from, to] : ['-a', '--reflink=auto', from, to];
+  return new Promise(resolve => {
+    execFile('cp', argv, { maxBuffer: MAX_INSTALL_OUTPUT }, err => {
+      if (!err) return resolve(true);
+      // A cp without the clone flag (older macOS, BSD): Node's own copy.
+      fs.rmSync(to, { recursive: true, force: true });
+      fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true })
+        .then(() => resolve(true), () => {
+          fs.rmSync(to, { recursive: true, force: true });
+          resolve(false);
+        });
+    });
+  });
+}
+
+/**
+ * Bring this checkout's installed dependencies into the base worktree.
+ * True when every one was copied; on any failure the partial copies are
+ * removed so the normal install starts from a clean tree.
+ */
+export async function reuseInstall(repoRoot: string, worktree: string, dirs: string[]): Promise<boolean> {
+  const targets = dirs.map(dir => ({ from: path.join(repoRoot, dir, 'node_modules'), to: path.join(worktree, dir, 'node_modules') }))
+    .filter(t => !fs.existsSync(t.to));
+  const copied = await Promise.all(targets.map(t => copyTree(t.from, t.to)));
+  if (copied.every(Boolean)) return true;
+  for (const t of targets) fs.rmSync(t.to, { recursive: true, force: true });
+  return false;
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -653,12 +747,25 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     await cleanup();
     return skip(`${declared.bin} is not on PATH, and installing ${where} with npm instead would leave a node_modules your ${declared.bin} cannot use. Install ${declared.bin}, or run \`${declared.bin} install\` in ${appIn}.`);
   }
-  if (pm !== declared) {
-    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
-  }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
   stepStart = Date.now();
-  if (install) {
+  // The slowest step of a first run, and usually one that would rebuild the
+  // exact tree already on disk: most branches change code, not dependencies.
+  let reused = false;
+  if (install && opts.sha && worktree !== opts.repoRoot) {
+    const dirs = reusableInstall(opts.repoRoot, opts.sha);
+    if (dirs?.length && await reuseInstall(opts.repoRoot, worktree, dirs)) {
+      reused = fs.existsSync(path.join(appDir, 'node_modules'));
+      if (reused) {
+        log(`Dependencies are unchanged since ${opts.sha.slice(0, 7)}; reusing this checkout's install for the baseline.`);
+        endStep('reuse');
+      }
+    }
+  }
+  if (install && !reused && pm !== declared) {
+    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
+  }
+  if (install && !reused) {
     const result = await installDeps(pm, appDir, deadline - Date.now());
     if (!result.ok) {
       const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');

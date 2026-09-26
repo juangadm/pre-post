@@ -1,0 +1,82 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execSync } from 'child_process';
+import { reusableInstall, reuseInstall } from '../../src/baseline';
+
+let repo: string;
+let base: string;
+const write = (rel: string, content: string) => {
+  const file = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+};
+const git = (cmd: string) => execSync(`git ${cmd}`, { cwd: repo, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+
+beforeEach(() => {
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-reuse-')));
+  git('init -q -b main');
+  git('config user.email t@t');
+  git('config user.name t');
+  write('package.json', JSON.stringify({ name: 'root', private: true }));
+  write('package-lock.json', '{"lockfileVersion":3}');
+  write('apps/web/package.json', JSON.stringify({ name: 'web', scripts: { dev: 'next dev' } }));
+  write('apps/web/page.tsx', 'export default () => <h1>Pre</h1>;');
+  write('.gitignore', 'node_modules\n');
+  git('add -A');
+  git('commit -qm base');
+  base = git('rev-parse HEAD');
+  // Installed in this checkout, with a workspace link that must stay relative.
+  write('node_modules/react/index.js', 'module.exports = 1;');
+  fs.mkdirSync(path.join(repo, 'apps/web/node_modules'), { recursive: true });
+  fs.symlinkSync('../../../node_modules/react', path.join(repo, 'apps/web/node_modules/react'));
+});
+afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+describe('reusableInstall', () => {
+  it('reuses when only code changed since the base', () => {
+    write('apps/web/page.tsx', 'export default () => <h1>Post</h1>;');
+    expect(reusableInstall(repo, base)?.sort()).toEqual(['.', 'apps/web']);
+  });
+
+  it('installs fresh when the lockfile changed, even uncommitted', () => {
+    write('package-lock.json', '{"lockfileVersion":3,"packages":{}}');
+    expect(reusableInstall(repo, base)).toBeNull();
+  });
+
+  it('installs fresh when any package.json changed', () => {
+    write('apps/web/package.json', JSON.stringify({ name: 'web', dependencies: { next: '16' } }));
+    expect(reusableInstall(repo, base)).toBeNull();
+  });
+
+  it('installs fresh when the base has no lockfile to prove the trees match', () => {
+    git('rm -q package-lock.json');
+    git('commit -qm unlock');
+    expect(reusableInstall(repo, git('rev-parse HEAD'))).toBeNull();
+  });
+
+  it('skips package directories this checkout never installed', () => {
+    fs.rmSync(path.join(repo, 'apps/web/node_modules'), { recursive: true });
+    expect(reusableInstall(repo, base)).toEqual(['.']);
+  });
+});
+
+describe('reuseInstall', () => {
+  it('copies each node_modules into the worktree as its own tree, links kept relative', async () => {
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-reuse-wt-'));
+    fs.mkdirSync(path.join(worktree, 'apps/web'), { recursive: true });
+    try {
+      expect(await reuseInstall(repo, worktree, ['.', 'apps/web'])).toBe(true);
+      const link = path.join(worktree, 'apps/web/node_modules/react');
+      expect(fs.readlinkSync(link)).toBe('../../../node_modules/react');
+      expect(fs.realpathSync(link)).toBe(fs.realpathSync(path.join(worktree, 'node_modules/react')));
+      // A copy, not a link back: writing to it leaves this checkout alone.
+      expect(fs.lstatSync(path.join(worktree, 'node_modules')).isSymbolicLink()).toBe(false);
+      fs.writeFileSync(path.join(worktree, 'node_modules/react/index.js'), 'changed');
+      expect(fs.readFileSync(path.join(repo, 'node_modules/react/index.js'), 'utf-8')).toBe('module.exports = 1;');
+    } finally {
+      fs.rmSync(worktree, { recursive: true, force: true });
+    }
+  });
+});
