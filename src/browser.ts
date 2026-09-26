@@ -11,7 +11,7 @@ import { chromium, Browser, BrowserContext, Page } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
 import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
 
@@ -228,11 +228,20 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> 
 
 export type BrowserKind = 'chromium-headless-shell' | 'chromium';
 
-/** Install a browser through playwright-core's CLI. Returns true on success. */
-export function installBrowser(kind: BrowserKind): boolean {
+/**
+ * Install a browser through playwright-core's CLI. Resolves true on success.
+ *
+ * Asynchronous so a first run's download overlaps the dev servers booting
+ * instead of freezing the process until it finishes.
+ */
+export function installBrowser(kind: BrowserKind): Promise<boolean> {
   const cli = path.join(playwrightCoreDir(), 'cli.js');
   console.error(`Installing ${kind} (one-time, ~${kind === 'chromium' ? '170' : '80'} MB)...`);
-  return spawnSync(process.execPath, [cli, 'install', kind], { stdio: 'inherit' }).status === 0;
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [cli, 'install', kind], { stdio: ['ignore', 'inherit', 'inherit'] });
+    child.on('error', () => resolve(false));
+    child.on('close', code => resolve(code === 0));
+  });
 }
 
 /**
@@ -245,7 +254,7 @@ export async function launchBrowserOrInstall(opts: LaunchOptions = {}): Promise<
   } catch (err) {
     if (!(err instanceof BrowserNotFoundError)) throw err;
   }
-  const installed = installBrowser(opts.headless === false ? 'chromium' : 'chromium-headless-shell');
+  const installed = await installBrowser(opts.headless === false ? 'chromium' : 'chromium-headless-shell');
   if (!installed) throw new BrowserNotFoundError(null, false);
   try {
     return await launchBrowser(opts);
