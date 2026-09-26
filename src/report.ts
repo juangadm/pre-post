@@ -29,12 +29,12 @@ export interface CommentOptions {
   now?: Date;
 }
 
+/** A run shorter than this says how long it took in the PR description. */
+const FAST_RUN_MS = 30_000;
+
 /**
  * Markdown body for the sticky PR comment.
  */
-/** A run shorter than this says how long it took in the PR description. */
-export const FAST_RUN_MS = 30_000;
-
 export function buildComment(result: PrRunResult, options: CommentOptions = {}): string {
   const lines: string[] = [STICKY_MARKER, '## Visual changes', ''];
   const routes = groupByRoute(result.outcomes);
