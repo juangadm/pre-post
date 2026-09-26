@@ -42,7 +42,9 @@ the Post side. Pass `--no-local-baseline` to turn it off.
 npx -y @juangadm/pre-post@latest pr
 ```
 
-Add `--routes /a,/b` when the user names pages explicitly. Add
+If you have a folder the user can open from wherever they are following you (a scratchpad
+or workspace directory in a hosted session), add `-o <that folder>/pre-post` so the images
+land somewhere they can see. Add `--routes /a,/b` when the user names pages explicitly. Add
 `--before https://production-url` only if the run reports it cannot work out the baseline
 (it is then saved to `.pre-post.json` for next time).
 
@@ -56,14 +58,23 @@ Each changed route shows **Pre beside Post**, per viewport, full pages in a `<de
 overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written. A pure move
 ("Nothing else changed.") shows the full pages with no crop and no `<details>`, by design.
 
+## Show the user
+
+When anything changed, the command prints `Sheet: <path>`: one image with Pre beside Post for
+every change. If you can send files to the user, send that one file, even when the PR was
+updated. Someone following you from a phone sees it there before they open GitHub.
+
 ## Rules
 
-- Run the command once. Do not open, read, or describe the screenshot files; the PR
-  comment is the deliverable. Report the summary the command prints, plus the comment link.
+- Run the command once. Do not open, read, or describe the screenshot files. The PR
+  comment is the deliverable, and the sheet is the one image you pass along. Report the
+  summary the command prints, plus the comment link.
 - Do not switch branches, start dev servers, or use a browser tool yourself. The command
   handles all three.
-- Exit code 3 means a human must do one thing (log in, start the dev server, pass
-  `--before`). Relay that one sentence verbatim and stop.
+- Exit code 3 means a human must do one thing (set a token, start the dev server, pass
+  `--before`). Relay that one sentence verbatim and stop. If GitHub refused the token, the
+  screenshots were still taken: send the sheet first, then relay the sentence. Never ask the
+  user to paste a token into the chat; the sentence names where it goes.
 - Do not use `--dry-run` unless the user asks to preview without posting.
 - If the summary lists routes that "need a sample URL", ask the user for one example URL per
   dynamic route and add it under `"samples"` in `.pre-post.json`, then re-run.
