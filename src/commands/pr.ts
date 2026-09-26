@@ -81,7 +81,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
-  const browserReady = timings.time('browser', ensureBrowser());
+  const browserReady = timings.time('browser', ensureBrowser(), { background: true });
   /**
    * Everything this run started, in a form every early exit can call.
    *
@@ -160,7 +160,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
     allowLocalBaseline: opts.localBaseline, log, timings,
-  })).catch(async err => { await stopEverything(); throw err; });
+  }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
@@ -293,6 +293,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
     }
   }
-  log(`Timings: ${timings.summary()}`);
+  const [first, ...rest] = timings.summary(Date.now() - started);
+  log(`Timings: ${first}`);
+  for (const line of rest) log(line);
   return result;
 }
