@@ -32,7 +32,7 @@ npx skills add juangadm/pre-post -y
 npx -y @juangadm/pre-post@latest pr
 ```
 
-**On every PR, automatically**: add the [GitHub Action](docs/github-action.md). No tokens or
+**On every PR, automatically**: add the [GitHub Action](https://github.com/juangadm/pre-post/blob/main/docs/github-action.md). No tokens or
 secrets needed.
 
 ### You'll need
@@ -72,11 +72,11 @@ see the repo can see them. Nothing is committed to your PR branch.
 
 | | |
 |---|---|
-| [How it works](docs/how-it-works.md) | How Pre and Post are chosen, capture, diffing, layout shifts |
-| [GitHub Action](docs/github-action.md) | Run on every PR with no per-person setup |
-| [Reference](docs/reference.md) | All commands, exit codes, `.pre-post.json`, environment variables |
-| [Screenshot storage](docs/storage.md) | How much space it uses and how to prune it |
-| [Contributing](CONTRIBUTING.md) | Build and test locally |
+| [How it works](https://github.com/juangadm/pre-post/blob/main/docs/how-it-works.md) | How Pre and Post are chosen, capture, diffing, layout shifts |
+| [GitHub Action](https://github.com/juangadm/pre-post/blob/main/docs/github-action.md) | Run on every PR with no per-person setup |
+| [Reference](https://github.com/juangadm/pre-post/blob/main/docs/reference.md) | All commands, exit codes, `.pre-post.json`, environment variables |
+| [Screenshot storage](https://github.com/juangadm/pre-post/blob/main/docs/storage.md) | How much space it uses and how to prune it |
+| [Contributing](https://github.com/juangadm/pre-post/blob/main/CONTRIBUTING.md) | Build and test locally |
 
 ## Credits
 
