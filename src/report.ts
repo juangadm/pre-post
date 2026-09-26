@@ -4,8 +4,8 @@
  */
 
 import path from 'path';
-import { ArtifactSet, PrRunResult, RouteCaptureOutcome } from './types.js';
-import { describeShift } from './run.js';
+import { ArtifactSet, isBrokenVerdict, PrRunResult, RouteCaptureOutcome } from './types.js';
+import { describePageError, describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
@@ -57,6 +57,8 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
   const errors = result.outcomes.filter(o => o.status === 'error');
+  // Only the baseline can be broken here: a broken Post is a verdict, above.
+  const notCompared = result.outcomes.filter(o => o.status === 'broken');
   // A page that only one side has is still something a reviewer must see, so it
   // counts as a change for "did anything happen" — but it is shown as one
   // screenshot, never as a Pre/Post pair, because there is no pair.
@@ -70,14 +72,27 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // cheap to run, and a slow one would say the opposite.
   const took = result.durationMs > 0 && result.durationMs < FAST_RUN_MS ? ` in ${Math.max(1, Math.round(result.durationMs / 1000))}s` : '';
   lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
+
+  // A side that renders an error page is the whole story. One sentence and
+  // where it happened; no screenshots, because a picture of an error panel in a
+  // Pre/Post table reads as a design, and that is how it used to ship.
+  if (isBrokenVerdict(result.verdict)) {
+    lines.push(`**${result.verdict!.hint}**`, '');
+    for (const o of result.outcomes.filter(o => o.broken)) {
+      lines.push(`- ${code(o.route)} ${viewportLabel(o.viewport)}: ${describePageError(o.broken!.error)}`);
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
   // "No visual changes" is a claim about what the two sides looked like, so it
   // may only be made about routes that were actually compared. A run where
   // every capture failed compared nothing, and printing it there — directly
   // above a list of six "Could not capture" lines, which is how it shipped —
   // reports a clean diff for a run that produced no diff at all.
   if (changed.length + unchanged.length + oneSided.length === 0) {
-    lines.push(errors.length
-      ? `**Nothing was compared** — ${errors.length === 1 ? 'the only capture' : `all ${errors.length} captures`} failed. See below.`
+    const failed = errors.length + notCompared.length;
+    lines.push(failed
+      ? `**Nothing was compared** — ${failed === 1 ? 'the only capture' : `all ${failed} captures`} failed. See below.`
       : '**Nothing was compared** — no route produced a screenshot.', '');
   } else if (changed.length === 0 && oneSided.length === 0) {
     lines.push('No visual changes.', '');
@@ -136,6 +151,12 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     lines.push('');
   }
 
+  if (notCompared.length) {
+    lines.push('**Not compared** (the baseline shows an error on these pages, not caused by this branch):');
+    for (const o of notCompared) lines.push(`- ${code(o.route)} ${o.viewport}: ${describePageError(o.broken!.error)}`);
+    lines.push('');
+  }
+
   if (result.skippedDynamic.length) {
     lines.push(
       `**Needs a sample URL:** ${result.skippedDynamic.map(code).join(', ')} — add them under ${code('"samples"')} in ${code('.pre-post.json')}.`,
@@ -163,11 +184,14 @@ export function buildSummary(result: PrRunResult): string {
     o.route,
     o.viewport,
     o.status === 'error' ? 'error'
+      : o.status === 'broken' ? 'broken'
       : o.status === 'changed' ? 'changed'
       : o.status === 'added' ? 'new page'
       : o.status === 'removed' ? 'removed'
       : 'no change',
-    o.status === 'error' ? (o.error ?? '') : (o.note || ''),
+    o.status === 'error' ? (o.error ?? '')
+      : o.broken ? `${o.broken.side === 'before' ? 'Pre' : o.broken.side === 'both' ? 'Pre and Post' : 'Post'}: ${describePageError(o.broken.error)}`
+      : (o.note || ''),
   ]);
   const widths = [0, 1, 2].map(i => Math.max(...rows.map(r => r[i].length), 0));
   for (const r of rows) {

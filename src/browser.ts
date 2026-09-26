@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { spawn } from 'child_process';
-import { AuthOptions, CaptureResult, ViewportSize } from './types.js';
+import { AuthOptions, CaptureResult, PageError, ViewportSize } from './types.js';
 import { BrowserNotFoundError, HttpStatusError, NavigationError, isVercelResponse } from './errors.js';
 
 
@@ -341,6 +341,62 @@ async function hideDevIndicator(page: Page): Promise<void> {
   }).catch(() => undefined);
 }
 
+/**
+ * Read the framework's error overlay, if the page is showing one.
+ *
+ * The overlay is the only reliable sign that a dev server is serving an error
+ * instead of the page. HTTP status is not enough: measured against Next
+ * 16.0.7 (Turbopack), a syntax error in one page is pushed to *every* open
+ * page, so `/about` answers 200 while showing the Build Error dialog, and a
+ * client component throwing in an effect is a 200 with a Runtime Error
+ * dialog. Both use `[data-nextjs-dialog-overlay]` inside `nextjs-portal`'s
+ * shadow root, with the label in `#nextjs__container_errors_label` and the
+ * message in `#nextjs__container_errors_desc`; a healthy page has neither.
+ *
+ * Vite pushes `vite-error-overlay` onto a page that still answers 200; its
+ * `.message-body` holds the message (from Vite's overlay template, not
+ * measured here).
+ *
+ * Returns plain strings so it can run inside `page.evaluate`.
+ */
+function readErrorOverlay(): { kind: string; message?: string; text?: string } | null {
+  const firstLine = (s: string | null | undefined) => (s ?? '').trim().split('\n')[0].trim() || undefined;
+  const hosts = Array.prototype.slice.call(document.querySelectorAll('nextjs-portal')) as Element[];
+  for (const host of hosts) {
+    const root = host.shadowRoot;
+    const overlay = root?.querySelector('[data-nextjs-dialog-overlay]');
+    if (!root || !overlay) continue;
+    return {
+      kind: firstLine(root.querySelector('#nextjs__container_errors_label')?.textContent) ?? 'Error',
+      message: firstLine(root.querySelector('#nextjs__container_errors_desc')?.textContent),
+      // innerText, not textContent: it keeps the dialog's line breaks, so the
+      // source location stays on a line of its own instead of being glued to
+      // the message before it.
+      text: (overlay as HTMLElement).innerText ?? '',
+    };
+  }
+  const vite = document.querySelector('vite-error-overlay');
+  if (vite) {
+    const root = vite.shadowRoot;
+    return { kind: 'Build Error', message: firstLine(root?.querySelector('.message-body')?.textContent) };
+  }
+  return null;
+}
+
+/** "./app/work/page.tsx (8:5)" on a line of its own, as Next's dialog prints a source location. */
+const SOURCE_LOCATION = /^(?:\.\/)?((?:[\w@\[\]().-]+\/)*[\w@\[\]().-]+\.(?:[cm]?[jt]sx?|css|scss|sass|less|mdx?|vue|svelte|astro)) \((\d+):(\d+)\)/m;
+
+/** The overlay's raw strings, turned into the error a report can phrase. */
+export function pageErrorFrom(raw: { kind: string; message?: string; text?: string } | null): PageError | undefined {
+  if (!raw) return undefined;
+  const at = raw.text?.match(SOURCE_LOCATION);
+  return {
+    kind: raw.kind,
+    message: raw.message?.slice(0, 200),
+    location: at ? `${at[1]} (${at[2]}:${at[3]})` : undefined,
+  };
+}
+
 const INIT_SCRIPT = `
   (() => {
     // Deterministic pseudo-random for pages that seed layout from Math.random().
@@ -641,9 +697,13 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
     // from a different site altogether. One round trip, and strictly after the
     // screenshot — reading the page must not be able to influence the pixels
     // the run is about to compare.
-    const { title, text } = await page
-      .evaluate(() => ({ title: document.title, text: document.body?.innerText ?? '' }))
-      .catch(() => ({ title: '', text: '' }));
+    //
+    // The error overlay is read in the same trip. It is not hidden for the
+    // screenshot (see DEV_OVERLAY_SELECTORS), so what this finds is exactly
+    // what the image shows.
+    const { title, text, overlay } = await page
+      .evaluate(`({ title: document.title, text: document.body?.innerText ?? '', overlay: (${readErrorOverlay.toString()})() })`)
+      .catch(() => ({ title: '', text: '', overlay: null })) as { title: string; text: string; overlay: Parameters<typeof pageErrorFrom>[0] };
 
     return {
       image,
@@ -654,6 +714,7 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       title,
       text,
       vercel,
+      pageError: pageErrorFrom(overlay),
       selector: options.selector,
       durationMs: Date.now() - started,
     };
