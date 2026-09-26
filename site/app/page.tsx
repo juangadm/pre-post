@@ -75,7 +75,7 @@ export default function Page() {
         {/* Content - constrained width */}
         <div className="max-w-[640px] mx-auto px-4 sm:px-6 space-y-8 sm:space-y-10">
           <section className="space-y-3">
-            <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">How pre-post works, step by step</h2>
+            <h2 className="text-neutral-800 text-[14px] font-[family-name:var(--font-departure)] flex items-center gap-4 after:content-[''] after:flex-1 after:h-px after:bg-neutral-200">How it works</h2>
             <ol className="text-sm space-y-2 list-decimal list-inside">
               <li>Make your UI changes</li>
               <li>Say <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">/pre-post</code> in Claude Code, or run <code className="text-neutral-800 bg-neutral-50 px-1 sm:px-1.5 py-0.5 rounded font-mono text-[12px] sm:text-[14px]">pre-post pr</code></li>
