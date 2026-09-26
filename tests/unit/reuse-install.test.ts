@@ -56,6 +56,19 @@ describe('reusableInstall', () => {
     expect(await reusableInstall(repo, git('rev-parse HEAD'))).toBeNull();
   });
 
+  // A generator in an install hook reads files no install input covers, so the
+  // copied node_modules could hold code generated from the branch.
+  it('installs fresh when a package runs its own install hook', async () => {
+    write('apps/web/package.json', JSON.stringify({ name: 'web', scripts: { dev: 'next dev', postinstall: 'prisma generate' } }));
+    git('commit -qam hook');
+    expect(await reusableInstall(repo, git('rev-parse HEAD'))).toBeNull();
+  });
+
+  it('installs fresh when node_modules holds a generated Prisma client', async () => {
+    write('node_modules/.prisma/client/index.js', 'generated');
+    expect(await reusableInstall(repo, base)).toBeNull();
+  });
+
   it('skips package directories this checkout never installed', async () => {
     fs.rmSync(path.join(repo, 'apps/web/node_modules'), { recursive: true });
     expect(await reusableInstall(repo, base)).toEqual(['.']);

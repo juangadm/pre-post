@@ -540,16 +540,35 @@ export async function reusableInstall(repoRoot: string, sha: string): Promise<st
   const tracked = await gitAsync(['ls-files', '--', ...INSTALL_INPUTS], repoRoot);
   const files = tracked?.split('\n') ?? [];
   if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
-  return files
+  const dirs = files
     .filter(f => path.basename(f) === 'package.json' && !f.split('/').includes('node_modules'))
-    .map(f => path.dirname(f))
-    .filter(dir => {
-      try {
-        return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
-      } catch {
-        return false;
-      }
-    });
+    .map(f => path.dirname(f));
+  if (dirs.some(dir => generatesDuringInstall(path.join(repoRoot, dir)))) return null;
+  return dirs.filter(dir => {
+    try {
+      return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Scripts a package manager runs on the project itself during an install. */
+const INSTALL_HOOKS = ['preinstall', 'install', 'postinstall', 'prepare'];
+
+/**
+ * Could this package's install have written code built from its own source?
+ *
+ * An install hook can read files no install input covers — `prisma generate`
+ * reads a schema — and write the result into node_modules. Copying that into
+ * the baseline would render Pre with the branch's generated code, so such a
+ * package is installed fresh. Prisma is checked by its output as well, because
+ * `@prisma/client` generates from its own postinstall with no project hook.
+ */
+function generatesDuringInstall(dir: string): boolean {
+  const scripts = readPackage(dir)?.scripts ?? {};
+  if (INSTALL_HOOKS.some(hook => typeof scripts[hook] === 'string' && scripts[hook].trim())) return true;
+  return fs.existsSync(path.join(dir, 'node_modules', '.prisma'));
 }
 
 const COPY_CONCURRENCY = 6;
