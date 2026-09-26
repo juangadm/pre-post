@@ -155,8 +155,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // PR will ever show. Asked before detection, which can fetch history and
   // fail on its own, because none of it matters when there is nothing to post
   // to. Only an answer from GitHub counts as "no PR": a lookup that failed
-  // says nothing either way, so that run carries on.
-  if (opts.requirePr && !(await prLookup) && !lookupFailed) {
+  // says nothing either way, and neither does one never made for want of a
+  // token, so those runs carry on and end on the instruction that fixes them.
+  if (opts.requirePr && gh && !(await prLookup) && !lookupFailed) {
     log('No open PR for this commit; nothing to do.');
     await stopEverything();
     return {

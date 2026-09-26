@@ -180,6 +180,32 @@ describe('CLI', () => {
       }
     });
 
+    // With no token at all nothing asked GitHub, so "no open PR" would be a
+    // guess. The run must not exit 0 on it; it captures and says what to set.
+    it.skipIf(!playwrightAvailable)('pr --require-pr without a token does not claim there is no PR', async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-notoken-'));
+      const out = path.join(root, 'out');
+      // A PATH holding node and git only, so no gh login can supply a token.
+      const bin = path.join(root, 'bin');
+      fs.mkdirSync(bin);
+      fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+      fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(bin, 'git'));
+      try {
+        execFileSync('git', ['init', '-q', '-b', 'feature'], { cwd: root });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+        const env: NodeJS.ProcessEnv = { ...process.env, PATH: bin };
+        for (const k of ['PRE_POST_GH_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITHUB_ACTIONS']) delete env[k];
+        const { stdout, exitCode } = await runCli(
+          ['pr', '--require-pr', '--before', before.url, '--after', after.url, '--routes', '/button-color', '--json', '-o', out], root, env);
+        expect(exitCode).toBe(3);
+        const result = JSON.parse(stdout);
+        expect(result.delivery.status).toBe('skipped');
+        expect(result.delivery.hint).toContain('PRE_POST_GH_TOKEN');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     // A hosted agent sandbox hands the run a GitHub token the API refuses.
     // Stopping there left the user with nothing; the run must capture anyway,
     // publish nothing, and end with the one sentence that fixes it.
