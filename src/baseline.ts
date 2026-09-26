@@ -12,13 +12,14 @@
  * reach for it after a reachable deployment, not before one.
  */
 
-import { spawn, ChildProcess, execFileSync } from 'child_process';
+import { spawn, ChildProcess, execFile, execFileSync } from 'child_process';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
 import { NeedsHumanError } from './errors.js';
 import { devScript, readPackage } from './pkg.js';
+import { Stopwatch } from './timings.js';
 import { findAppRoots } from './routes.js';
 
 export interface LocalBaseline {
@@ -154,6 +155,11 @@ export function servableDir(treeRoot: string, appPrefix?: string): { dir: string
     if (script) return { dir, script };
   }
   return null;
+}
+
+/** Has this app directory been installed? */
+function isInstalled(appDir: string): boolean {
+  return fs.existsSync(path.join(appDir, 'node_modules'));
 }
 
 /** Local env files, in the order a framework would layer them. */
@@ -307,7 +313,7 @@ export interface InstallResult {
   attempts: InstallAttempt[];
 }
 
-export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number) => InstallAttempt;
+export type InstallRunner = (bin: string, argv: string[], cwd: string, timeoutMs: number, signal?: AbortSignal) => Promise<InstallAttempt>;
 
 /** Keep the end of the output: managers put the diagnosis last. */
 function tail(text: string, lines = 24): string {
@@ -331,20 +337,21 @@ const MAX_INSTALL_OUTPUT = 64 * 1024 * 1024;
  * Shared by the install and the setup step that follows it: they fail the same
  * way, and a reader needs the same thing from both — the end of the output.
  */
-function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false): InstallAttempt {
-  try {
-    execFileSync(bin, argv, { cwd, shell, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_INSTALL_OUTPUT });
-    // Only a failure has anything to explain, so the successful run's log is
-    // dropped rather than split into lines nothing will read.
-    return { argv, ok: true, output: '' };
-  } catch (err) {
-    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
-    const output = [e.stdout, e.stderr].map(part => (part ? String(part) : '')).join('');
-    return { argv, ok: false, output: tail(output || e.message || '') };
-  }
+function runCommand(bin: string, argv: string[], cwd: string, timeoutMs: number, shell = false, signal?: AbortSignal): Promise<InstallAttempt> {
+  // Asynchronous, so the other side's server and the browser download keep
+  // moving while this one installs: a synchronous call froze the whole process.
+  return new Promise(resolve => {
+    execFile(bin, argv, { cwd, shell, signal, timeout: Math.max(1, timeoutMs), encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout, stderr) => {
+      // Only a failure has anything to explain, so the successful run's log is
+      // dropped rather than split into lines nothing will read.
+      if (!err) return resolve({ argv, ok: true, output: '' });
+      const output = [stdout, stderr].map(part => (part ? String(part) : '')).join('');
+      resolve({ argv, ok: false, output: tail(output || err.message || '') });
+    }).stdin?.end();
+  });
 }
 
-const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs) => runCommand(bin, argv, cwd, timeoutMs);
+const runInstall: InstallRunner = (bin, argv, cwd, timeoutMs, signal) => runCommand(bin, argv, cwd, timeoutMs, false, signal);
 
 /**
  * Does this look like npm refusing to resolve a peer range?
@@ -367,18 +374,19 @@ export function isPeerConflict(output: string): boolean {
  * the comparison this tool exists to make is between two renders of the same
  * app, not between two dependency trees.
  */
-export function installDeps(
+export async function installDeps(
   pm: PackageManager,
   cwd: string,
   timeoutMs: number,
   run: InstallRunner = runInstall,
-): InstallResult {
+  signal?: AbortSignal,
+): Promise<InstallResult> {
   const deadline = Date.now() + timeoutMs;
-  const first = run(pm.bin, pm.install, cwd, timeoutMs);
-  if (first.ok || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
+  const first = await run(pm.bin, pm.install, cwd, timeoutMs, signal);
+  if (first.ok || signal?.aborted || !pm.retry?.when(first.output)) return { ok: first.ok, attempts: [first] };
   // The remainder of the original budget, not a fresh one: a first attempt
   // that burned the clock must not let the retry double the wall time.
-  const second = run(pm.bin, pm.retry.argv, cwd, deadline - Date.now());
+  const second = await run(pm.bin, pm.retry.argv, cwd, deadline - Date.now(), signal);
   return { ok: second.ok, attempts: [first, second] };
 }
 
@@ -496,6 +504,131 @@ export class BaselineSetupError extends NeedsHumanError {
   }
 }
 
+/**
+ * Files that decide what an install produces. When none of them differ between
+ * the base commit and the working tree, the two installs would be the same
+ * dependency tree, so the one already on disk can stand in for a fresh one.
+ */
+const LOCKFILES = [...MANAGERS.map(m => m.lockfile), 'bun.lock', 'npm-shrinkwrap.json'];
+const INSTALL_INPUTS = [
+  ...LOCKFILES.map(f => `:(glob)**/${f}`),
+  ':(glob)**/package.json',
+  ':(glob)**/.npmrc',
+  ':(glob)**/.yarnrc.yml',
+  ':(glob)**/.pnpmfile.cjs',
+  ':(glob)**/pnpm-workspace.yaml',
+];
+
+/** Run git without blocking the process; resolves null when it exits non-zero. */
+function gitAsync(args: string[], cwd: string): Promise<string | null> {
+  return new Promise(resolve => {
+    execFile('git', args, { cwd, encoding: 'utf-8', maxBuffer: MAX_INSTALL_OUTPUT }, (err, stdout) => resolve(err ? null : stdout));
+  });
+}
+
+/**
+ * Can the base commit use the dependencies this checkout already installed?
+ *
+ * Only when no install input differs between the base and the working tree,
+ * uncommitted edits included, and a lockfile is tracked (without one there is
+ * nothing to prove the trees match). Returns the package directories whose
+ * node_modules to bring across, or null to install as usual. Once the diff is
+ * clean, the index lists the same package.json files the base has, so it
+ * answers that without walking the base commit's whole tree.
+ */
+export async function reusableInstall(repoRoot: string, sha: string): Promise<string[] | null> {
+  if (await gitAsync(['diff', '--quiet', sha, '--', ...INSTALL_INPUTS], repoRoot) === null) return null;
+  // The diff sees tracked files only. A new package.json or lockfile the
+  // branch has not added yet is still a different dependency tree.
+  const untracked = await gitAsync(['ls-files', '--others', '--exclude-standard', '--', ...INSTALL_INPUTS], repoRoot);
+  if (untracked === null || untracked.trim()) return null;
+  const tracked = await gitAsync(['ls-files', '--', ...INSTALL_INPUTS], repoRoot);
+  const files = tracked?.split('\n') ?? [];
+  if (!files.some(f => LOCKFILES.includes(path.basename(f)))) return null;
+  const dirs = files
+    .filter(f => path.basename(f) === 'package.json' && !f.split('/').includes('node_modules'))
+    .map(f => path.dirname(f));
+  if (dirs.some(dir => generatesDuringInstall(path.join(repoRoot, dir)))) return null;
+  return dirs.filter(dir => {
+    try {
+      return fs.lstatSync(path.join(repoRoot, dir, 'node_modules')).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Scripts a package manager runs on the project itself during an install. */
+const INSTALL_HOOKS = ['preinstall', 'install', 'postinstall', 'prepare'];
+
+/**
+ * Could this package's install have written code built from its own source?
+ *
+ * An install hook can read files no install input covers — `prisma generate`
+ * reads a schema — and write the result into node_modules. Copying that into
+ * the baseline would render Pre with the branch's generated code, so such a
+ * package is installed fresh. Prisma is checked by its output as well, because
+ * `@prisma/client` generates from its own postinstall with no project hook.
+ */
+function generatesDuringInstall(dir: string): boolean {
+  const scripts = readPackage(dir)?.scripts ?? {};
+  if (INSTALL_HOOKS.some(hook => typeof scripts[hook] === 'string' && scripts[hook].trim())) return true;
+  return fs.existsSync(path.join(dir, 'node_modules', '.prisma'));
+}
+
+const COPY_CONCURRENCY = 6;
+
+/**
+ * Installs running in a caller's own checkout, by repository root. The base
+ * worktree waits on these before reusing that checkout's node_modules, which
+ * lets both sides boot at once even when nothing was installed yet.
+ */
+const installsInFlight = new Map<string, Promise<unknown>>();
+
+/**
+ * Copy one node_modules into the worktree as its own tree.
+ *
+ * A copy, not a symlink: package managers link workspace packages with
+ * relative paths, and through a symlink those would resolve back into this
+ * checkout, so Pre would quietly render the branch's own workspace code.
+ * Turbopack also refuses a node_modules that points outside the project. The
+ * copy keeps those links relative, so they land in the worktree. On macOS
+ * (APFS) and on reflink filesystems it is copy-on-write: near-instant and no
+ * extra disk.
+ */
+function copyTree(from: string, to: string): Promise<boolean> {
+  const argv = process.platform === 'darwin' ? ['-c', '-R', from, to] : ['-a', '--reflink=auto', from, to];
+  return new Promise(resolve => {
+    execFile('cp', argv, { maxBuffer: MAX_INSTALL_OUTPUT }, err => {
+      if (!err) return resolve(true);
+      // A cp without the clone flag (older macOS, BSD): Node's own copy.
+      fs.promises.rm(to, { recursive: true, force: true })
+        .then(() => fs.promises.cp(from, to, { recursive: true, verbatimSymlinks: true }))
+        .then(() => resolve(true), () => fs.promises.rm(to, { recursive: true, force: true }).then(() => resolve(false)));
+    });
+  });
+}
+
+/**
+ * Bring this checkout's installed dependencies into the base worktree.
+ * True when every one was copied; on any failure the partial copies are
+ * removed so the normal install starts from a clean tree.
+ */
+export async function reuseInstall(repoRoot: string, worktree: string, dirs: string[]): Promise<boolean> {
+  const targets = dirs.map(dir => ({ from: path.join(repoRoot, dir, 'node_modules'), to: path.join(worktree, dir, 'node_modules') }));
+  // A few at a time: a monorepo can have hundreds of packages, and hundreds of
+  // concurrent copies thrash the disk the dev servers are reading from.
+  const queue = [...targets];
+  let ok = true;
+  const worker = async () => {
+    for (let t = queue.shift(); t && ok; t = queue.shift()) ok = await copyTree(t.from, t.to) && ok;
+  };
+  await Promise.all(Array.from({ length: Math.min(COPY_CONCURRENCY, targets.length) }, worker));
+  if (ok) return true;
+  await Promise.all(targets.map(t => fs.promises.rm(t.to, { recursive: true, force: true })));
+  return false;
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -526,6 +659,13 @@ export interface BaselineOptions {
   /** Injectable for tests; defaults to a real PATH scan. */
   pathHas?: (bin: string) => boolean;
   log?: (msg: string) => void;
+  /** Records how long each step took, under `pre.*` or `post.*`. */
+  timings?: Stopwatch;
+  /**
+   * Abort the boot: the caller no longer needs this side. Whatever it started
+   * is stopped and cleaned up, and it resolves null.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -561,6 +701,15 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const deadline = Date.now() + timeoutMs;
+  /** True, having cleaned up, when the caller has given up on this side. */
+  const aborted = async (): Promise<boolean> => {
+    if (!opts.signal?.aborted) return false;
+    await cleanup();
+    return true;
+  };
+  const side = opts.sha ? 'pre' : 'post';
+  const timed = <T>(name: string, work: Promise<T>): Promise<T> => opts.timings ? opts.timings.time(`${side}.${name}`, work) : work;
+  const started = Date.now();
 
   const worktree = opts.sha ? fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-base-')) : opts.repoRoot;
   let child: ChildProcess | null = null;
@@ -594,14 +743,15 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   };
 
   if (opts.sha) {
-    try {
-      execFileSync('git', ['worktree', 'add', '--detach', '--force', worktree, opts.sha], { cwd: opts.repoRoot, stdio: 'ignore' });
-    } catch {
+    // Asynchronous: in a large repository a checkout takes seconds, and the
+    // other side is booting meanwhile.
+    if (await gitAsync(['worktree', 'add', '--detach', '--force', worktree, opts.sha], opts.repoRoot) === null || await aborted()) {
       await cleanup();
       return skip('the worktree checkout failed.');
     }
     const copied = copyEnvFiles(opts.repoRoot, worktree, opts.appPrefix);
     if (copied.length) log(`Using local env file(s) for the baseline: ${copied.join(', ')}`);
+    opts.timings?.add(`${side}.checkout`, Date.now() - started);
   }
 
   const app = servableDir(worktree, opts.appPrefix);
@@ -623,7 +773,7 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     return skip(`neither ${declared.bin} nor npm is on PATH, so nothing can install ${where}.`);
   }
 
-  const install = !fs.existsSync(path.join(appDir, 'node_modules'));
+  const install = !isInstalled(appDir);
   // Substituting npm for the declared manager is safe in a throwaway worktree
   // and not in the caller's own checkout: npm cannot share a node_modules with
   // pnpm, so installing over their tree leaves the working copy broken — the
@@ -635,12 +785,28 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     await cleanup();
     return skip(`${declared.bin} is not on PATH, and installing ${where} with npm instead would leave a node_modules your ${declared.bin} cannot use. Install ${declared.bin}, or run \`${declared.bin} install\` in ${appIn}.`);
   }
-  if (pm !== declared) {
-    log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
-  }
   log(`Starting a dev server for ${what} (${pm.bin} ${script}) ...`);
-  if (install) {
-    const result = installDeps(pm, appDir, deadline - Date.now());
+  // The slowest step of a first run, and usually one that would rebuild the
+  // exact tree already on disk: most branches change code, not dependencies.
+  const tryReuse = async (sha: string): Promise<boolean> => {
+    // Post may be installing this checkout right now; a half-written
+    // node_modules must never be copied, so wait for it to finish.
+    await installsInFlight.get(opts.repoRoot);
+    const dirs = await reusableInstall(opts.repoRoot, sha);
+    if (!dirs?.includes(rel || '.') || !await reuseInstall(opts.repoRoot, worktree, dirs)) return false;
+    log(`Dependencies are unchanged since ${sha.slice(0, 7)}; reusing this checkout's install for the baseline.`);
+    return true;
+  };
+  const reused = install && opts.sha ? await timed('reuse', tryReuse(opts.sha)) : false;
+  if (await aborted()) return null;
+  if (install && !reused) {
+    if (pm !== declared) {
+      log(`${declared.bin} is not on PATH; installing the baseline with ${pm.bin} instead (it will not honour the ${declared.bin} lockfile).`);
+    }
+    const installing = installDeps(pm, appDir, deadline - Date.now(), runInstall, opts.signal);
+    if (worktree === opts.repoRoot) installsInFlight.set(opts.repoRoot, installing);
+    const result = await timed('install', installing).finally(() => installsInFlight.delete(opts.repoRoot));
+    if (await aborted()) return null;
     if (!result.ok) {
       const tried = result.attempts.map(a => `\`${pm.bin} ${a.argv.join(' ')}\``).join(', then ');
       log(`${tried} failed${worktree === opts.repoRoot ? '' : ' in a throwaway worktree of the base commit'}:`);
@@ -679,7 +845,8 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   const setup = configured ? setupStep(worktree, appDir, opts.setup) : install ? setupStep(worktree, appDir) : null;
   if (setup) {
     log(`Preparing ${what} before its dev server (${setup.label}) ...`);
-    const attempt = runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell);
+    const attempt = await timed('setup', runCommand(setup.bin, setup.argv, setup.cwd, deadline - Date.now(), setup.shell, opts.signal));
+    if (await aborted()) return null;
     if (!attempt.ok) {
       // Loud either way. A dev server started over a half-built workspace
       // serves an error page, and an error page is a baseline that reports a
@@ -704,7 +871,8 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   });
   child.unref();
 
-  const ready = await waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null);
+  const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null && !opts.signal?.aborted));
+  if (await aborted()) return null;
   if (!ready) {
     await cleanup();
     return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);

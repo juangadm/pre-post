@@ -11,7 +11,7 @@ const PNPM = { bin: 'pnpm', install: ['install', '--prefer-offline'], run: (s: s
 function runner(answers: Array<{ ok: boolean; output: string }>): InstallRunner & { calls: string[][] } {
   const calls: string[][] = [];
   let i = 0;
-  const fn = ((_bin: string, argv: string[]): InstallAttempt => {
+  const fn = (async (_bin: string, argv: string[]): Promise<InstallAttempt> => {
     calls.push(argv);
     const a = answers[Math.min(i++, answers.length - 1)];
     return { argv, ok: a.ok, output: a.output };
@@ -40,41 +40,41 @@ describe('isPeerConflict', () => {
 });
 
 describe('installDeps', () => {
-  it('does not retry an install that worked', () => {
+  it('does not retry an install that worked', async () => {
     const run = runner([{ ok: true, output: 'added 504 packages' }]);
-    const result = installDeps(NPM, '/app', 1000, run);
+    const result = await installDeps(NPM, '/app', 1000, run);
     expect(result.ok).toBe(true);
     expect(run.calls).toEqual([['install']]);
   });
 
   // The blocker from the field test: React 19 against one dependency whose peer
   // range still says <=18. Common, temporary, and it took the whole baseline out.
-  it('retries an ERESOLVE with --legacy-peer-deps', () => {
+  it('retries an ERESOLVE with --legacy-peer-deps', async () => {
     const run = runner([{ ok: false, output: ERESOLVE }, { ok: true, output: 'added 504 packages in 10s' }]);
-    const result = installDeps(NPM, '/app', 1000, run);
+    const result = await installDeps(NPM, '/app', 1000, run);
     expect(result.ok).toBe(true);
     expect(run.calls).toEqual([['install'], ['install', '--legacy-peer-deps']]);
   });
 
-  it('does not retry a failure a looser resolver would not have fixed', () => {
+  it('does not retry a failure a looser resolver would not have fixed', async () => {
     const run = runner([{ ok: false, output: 'npm error 404 Not Found' }]);
-    const result = installDeps(NPM, '/app', 1000, run);
+    const result = await installDeps(NPM, '/app', 1000, run);
     expect(result.ok).toBe(false);
     expect(run.calls).toEqual([['install']]);
   });
 
   // pnpm warns on an unsatisfiable peer rather than aborting, so it has no
   // looser mode to fall back to and must not be handed npm's flag.
-  it('does not retry a manager with no looser mode', () => {
+  it('does not retry a manager with no looser mode', async () => {
     const run = runner([{ ok: false, output: ERESOLVE }]);
-    const result = installDeps(PNPM, '/app', 1000, run);
+    const result = await installDeps(PNPM, '/app', 1000, run);
     expect(result.ok).toBe(false);
     expect(run.calls).toEqual([['install', '--prefer-offline']]);
   });
 
-  it('reports failure when the retry fails too', () => {
+  it('reports failure when the retry fails too', async () => {
     const run = runner([{ ok: false, output: ERESOLVE }, { ok: false, output: ERESOLVE }]);
-    const result = installDeps(NPM, '/app', 1000, run);
+    const result = await installDeps(NPM, '/app', 1000, run);
     expect(result.ok).toBe(false);
     expect(result.attempts).toHaveLength(2);
   });
@@ -95,6 +95,32 @@ describe('the real manager table', () => {
     fs.rmSync(path.join(empty, 'package-lock.json'));
     fs.writeFileSync(path.join(empty, 'pnpm-lock.yaml'), '');
     expect(detectPackageManager(empty).retry).toBeUndefined();
+  });
+});
+
+describe('the real runner', () => {
+  const node = (script: string) => ({ bin: process.execPath, install: ['-e', script], run: (sc: string, a: string[]) => [sc, ...a] });
+
+  it('keeps the end of what a failed command said', async () => {
+    const result = await installDeps(node('console.log("resolving"); console.error("boom"); process.exit(1)'), os.tmpdir(), 10_000);
+    expect(result.ok).toBe(false);
+    expect(result.attempts[0].output).toContain('boom');
+  });
+
+  it('stops a command that outlives its budget', async () => {
+    const started = Date.now();
+    const result = await installDeps(node('setTimeout(() => {}, 10000)'), os.tmpdir(), 300);
+    expect(result.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  // Asynchronous is the point: an install must not freeze the other side's boot.
+  it('does not block the event loop while it runs', async () => {
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 20);
+    await installDeps(node('setTimeout(() => {}, 300)'), os.tmpdir(), 10_000);
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(3);
   });
 });
 

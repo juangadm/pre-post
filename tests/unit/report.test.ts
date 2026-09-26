@@ -139,3 +139,15 @@ describe('buildComment with a layout shift', () => {
     expect(md).not.toContain('<details>');
   });
 });
+
+describe('run time in the description', () => {
+  it('says how long a quick run took', () => {
+    expect(buildComment({ ...base, durationMs: 15_800 })).toContain('pre-post</a> in 16s');
+  });
+
+  it('says nothing about a run that took 30 seconds or more', () => {
+    const md = buildComment({ ...base, durationMs: 30_000 });
+    expect(md).toContain('pre-post</a>\n');
+    expect(md).not.toMatch(/pre-post<\/a> in \d+s/);
+  });
+});

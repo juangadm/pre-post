@@ -18,6 +18,7 @@ import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
+import { Stopwatch } from '../timings.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -59,6 +60,7 @@ function runId(now: Date): string {
 
 export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const started = Date.now();
+  const timings = new Stopwatch();
   const log = opts.log ?? (() => undefined);
   const root = repoRoot(opts.cwd);
   const config = loadConfig(root);
@@ -79,7 +81,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const writeGh = opts.dryRun ? null : gh;
 
   // --- Start the slow, independent things now; they overlap route detection ----
-  const browserReady = ensureBrowser();
+  const browserReady = timings.time('browser', ensureBrowser());
   /**
    * Everything this run started, in a form every early exit can call.
    *
@@ -122,9 +124,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
   // flight rather than after it.
   const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
+  timings.add('detect', detection.durationMs);
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const head = headSha(root);
-  const pr = await prLookup;
+  const pr = await timings.time('github', prLookup);
 
   // Before the local baseline, which can install and build a whole app, and
   // long before the captures. An answer that is not about access — a 500, a
@@ -144,7 +147,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // Resolution can throw (no baseline, an install that failed): the browser was
   // launched before this and nothing else would close it, so its teardown has
   // to cover the throw as well as the happy path.
-  const comparison: Comparison = await resolveComparison({
+  const comparison: Comparison = await timings.time('resolve', resolveComparison({
     gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
     // Detection already established this; the baseline must be built from the
     // same commit, or Pre and the route list disagree about what changed.
@@ -156,8 +159,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     headSha: head ?? undefined,
     before: opts.before, after: explicitAfter,
     devServer, probe: url => probeUrl(url, headers),
-    allowLocalBaseline: opts.localBaseline, log,
-  }).catch(async err => { await stopEverything(); throw err; });
+    allowLocalBaseline: opts.localBaseline, log, timings,
+  })).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
   for (const line of describeComparison(comparison)) log(line);
 
@@ -220,11 +223,11 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   await browserReady;
   let run;
   try {
-    run = await runTasks(tasks, {
+    run = await timings.time('capture', runTasks(tasks, {
       outputDir, ...settings, wait: opts.wait, auth, log,
       // So the verdict can name how Pre was chosen, not just where it points.
       sides: { before: comparison.before, after: comparison.after },
-    });
+    }));
   } finally {
     await stopEverything();
   }
@@ -249,7 +252,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       }
     }
     log(`Publishing ${files.length} image(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
-    const published = await publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`);
+    const published = await timings.time('publish', () => publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`));
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
       for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
@@ -267,6 +270,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     durationMs: Date.now() - started,
     markdown: '',
     outputDir,
+    timings: timings.toJSON(),
   };
   result.markdown = buildComment(result, { version: opts.version, headSha: head, now });
 
@@ -289,5 +293,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
     }
   }
+  log(`Timings: ${timings.summary()}`);
   return result;
 }

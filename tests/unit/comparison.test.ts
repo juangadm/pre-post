@@ -138,6 +138,56 @@ describe('resolveComparison', () => {
     expect(stopped).toBe(true);
   });
 
+  it('boots Pre and Post at the same time', async () => {
+    const events: string[] = [];
+    const slow = (name: string, url: string) => async () => {
+      events.push(`${name} start`);
+      await new Promise(r => setTimeout(r, 30));
+      events.push(`${name} ready`);
+      return { url, stop: async () => undefined };
+    };
+    await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: slow('post', 'http://localhost:42222'),
+      serveBaseline: slow('pre', 'http://localhost:41111'),
+    }));
+    expect(events.slice(0, 2).sort()).toEqual(['post start', 'pre start']);
+  });
+
+  it('shuts down the baseline it started when the branch cannot be served', async () => {
+    let stopped = false;
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => { stopped = true; } }),
+    }))).rejects.toBeInstanceOf(NoPostError);
+    expect(stopped).toBe(true);
+  });
+
+  it('gives up on a slow baseline as soon as the branch cannot be served', async () => {
+    let cancelled = false;
+    const started = Date.now();
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => null,
+      serveBaseline: ({ signal }) => new Promise(resolve => {
+        const timer = setTimeout(() => resolve({ url: 'http://localhost:41111', stop: async () => undefined }), 5000);
+        signal?.addEventListener('abort', () => { cancelled = true; clearTimeout(timer); resolve(null); });
+      }),
+    }))).rejects.toBeInstanceOf(NoPostError);
+    expect(cancelled).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('shuts down the Post server when the baseline install fails', async () => {
+    let stopped = false;
+    await expect(resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=': [] }),
+      servePost: async () => ({ url: 'http://localhost:42222', stop: async () => { stopped = true; } }),
+      serveBaseline: async () => { throw new Error('install failed'); },
+    }))).rejects.toThrow('install failed');
+    expect(stopped).toBe(true);
+  });
+
   it('pairs a preview with what is on production when the base commit was never deployed', async () => {
     const c = await resolveComparison(ctx({
       gh: gh({
@@ -309,3 +359,4 @@ describe('resolveComparison', () => {
     expect(describeComparison(c).join('\n')).toContain('different environments');
   });
 });
+

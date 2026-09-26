@@ -14,11 +14,12 @@
 
 import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit, latestProductionDeployment } from './deployments.js';
-import { LocalBaseline, serveBaseCommit, serveWorkingTree } from './baseline.js';
+import { serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
 import { isLocalUrl, normalizeUrl } from './url.js';
 import { PrePostConfig } from './types.js';
 import { mergeBase } from './git.js';
+import { Stopwatch } from './timings.js';
 
 export type StrategyName = 'explicit' | 'deployed' | 'local';
 
@@ -74,6 +75,8 @@ export interface ResolveContext {
   /** Injectable for tests; defaults to booting this checkout's dev server. */
   servePost?: typeof serveWorkingTree;
   log: (msg: string) => void;
+  /** Where the local servers record how long each of their steps took. */
+  timings?: Stopwatch;
 }
 
 const noop = async (): Promise<void> => undefined;
@@ -221,28 +224,43 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   // Nothing deployed and nothing running is not a reason to stop: this is the
   // command you hit on the way out of a PR, so it starts the dev server itself
   // rather than handing back a chore.
-  let postServer: LocalBaseline | null = null;
-  if (!after && ctx.allowLocalBaseline !== false) {
-    postServer = await (ctx.servePost ?? serveWorkingTree)({ repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log });
-    if (postServer) after = side(postServer.url, 'working tree, served locally');
-  }
-  if (!after) throw deployed.preview ? new NoDeployedBaselineError(deployed.preview.url, deployed.rejectedBaseline) : new NoPostError();
-  const stopPost = postServer ? postServer.stop : noop;
-
-  // A baseline the caller named wins even if it is remote; they asked for it.
-  if (ctx.before) return pair('explicit', side(ctx.before, 'passed with --before'), after, stopPost);
-
+  const bootPost = !after && ctx.allowLocalBaseline !== false;
   // git knows what this branch forked from, so a baseline does not depend on a
-  // PR existing yet — this often runs before one is opened.
-  const baseSha = ctx.baseSha ?? ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
-  // Serving the base can now fail loudly rather than yielding — an install
-  // that died is not a "try the next option", it is the answer. The Post
-  // server is already up by then, so it has to come down before the throw
-  // escapes; nothing above this has a handle on it yet.
-  const baseline = ctx.allowLocalBaseline === false || !baseSha
-    ? null
-    : await (ctx.serveBaseline ?? serveBaseCommit)({ repoRoot: ctx.repoRoot, sha: baseSha, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log })
-        .catch(async err => { await stopPost(); throw err; });
+  // PR existing yet — this often runs before one is opened. A baseline the
+  // caller named wins even if it is remote; they asked for it.
+  const baseSha = ctx.before ? undefined : ctx.baseSha ?? ctx.pr?.base.sha ?? mergeBase(ctx.repoRoot) ?? undefined;
+  const bootPre = ctx.allowLocalBaseline !== false && Boolean(baseSha);
+
+  const common = { repoRoot: ctx.repoRoot, appPrefix: ctx.appPrefix, setup: ctx.config.baselineSetup, log: ctx.log, timings: ctx.timings };
+  // Both sides boot at once: each is mostly waiting on its own install and
+  // compile, so running them one after the other doubled the wait for nothing.
+  // Only Pre can be cancelled: it lives in a throwaway worktree, while Post
+  // may be installing into the caller's own checkout, which must never be
+  // left half-written.
+  const cancelPre = new AbortController();
+  const postBoot = bootPost ? (ctx.servePost ?? serveWorkingTree)(common) : Promise.resolve(null);
+  const preBoot = bootPre ? (ctx.serveBaseline ?? serveBaseCommit)({ ...common, sha: baseSha, signal: cancelPre.signal }) : Promise.resolve(null);
+  // Without a Post there is nothing to compare, so a slow baseline must not
+  // hold that answer back for the length of its install.
+  postBoot.then(server => { if (!server && !after) cancelPre.abort(); }, () => cancelPre.abort());
+  const [postResult, preResult] = await Promise.allSettled([postBoot, preBoot]);
+  const postServer = postResult.status === 'fulfilled' ? postResult.value : null;
+  const baseline = preResult.status === 'fulfilled' ? preResult.value : null;
+  const stopPost = postServer ? postServer.stop : noop;
+  const stopPre = baseline ? baseline.stop : noop;
+
+  // A side that failed loudly (an install that died) is the answer, not a
+  // "try the next option" — but whatever the other side started has to come
+  // down before the error escapes; nothing above this has a handle on it.
+  if (postResult.status === 'rejected') { await stopPre(); throw postResult.reason; }
+  if (postServer) after = side(postServer.url, 'working tree, served locally');
+  if (!after) {
+    await stopPre();
+    throw deployed.preview ? new NoDeployedBaselineError(deployed.preview.url, deployed.rejectedBaseline) : new NoPostError();
+  }
+  if (preResult.status === 'rejected') { await stopPost(); throw preResult.reason; }
+
+  if (ctx.before) return pair('explicit', side(ctx.before, 'passed with --before'), after, stopPost);
   if (baseline) {
     const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`);
     return pair('local', before, after, async () => { await baseline.stop(); await stopPost(); });
