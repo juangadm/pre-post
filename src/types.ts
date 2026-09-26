@@ -315,10 +315,11 @@ export interface PrRunResult {
  *
  * - `published`: GitHub accepted writes; `commentUrl` says whether a PR was updated.
  * - `dry-run`: nothing was written, as asked.
+ * - `no-pr`: `--require-pr` found no open PR, so nothing was done.
  * - `skipped`: the screenshots were taken but GitHub would not take them;
  *   `hint` is the one thing a human must do. The CLI exits 3 after printing.
  */
 export interface Delivery {
-  status: 'published' | 'dry-run' | 'skipped';
+  status: 'published' | 'dry-run' | 'skipped' | 'no-pr';
   hint?: string;
 }

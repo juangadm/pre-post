@@ -37,6 +37,8 @@ export interface PrCommandOptions extends Partial<Settings> {
   dryRun?: boolean;
   /** Publish assets but do not touch the PR */
   comment?: boolean;
+  /** Stop, successfully, before any work when GitHub says there is no open PR */
+  requirePr?: boolean;
   pr?: number;
   /** Rebuild the baseline from the base commit when no URL is reachable. Default true. */
   localBaseline?: boolean;
@@ -146,6 +148,22 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     }
     return null;
   });
+  // A deployment-triggered job fires for pushes to main and for branches with
+  // no PR, too. Capturing there would add images to the assets branch that no
+  // PR will ever show. Asked before detection, which can fetch history and
+  // fail on its own, because none of it matters when there is nothing to post
+  // to. Only an answer from GitHub counts as "no PR": a lookup that failed
+  // says nothing either way, so that run carries on.
+  if (opts.requirePr && !(await prLookup) && !lookupFailed) {
+    log('No open PR for this commit; nothing to do.');
+    await stopEverything();
+    return {
+      repo: ownerRepo, beforeBase: '', afterBase: '', outcomes: [], skippedDynamic: [],
+      durationMs: Date.now() - started, markdown: '', outputDir: '',
+      delivery: { status: 'no-pr' },
+    };
+  }
+
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
   const explicitAfter = opts.after ?? config.after;
