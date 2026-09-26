@@ -7,10 +7,9 @@ import path from 'path';
 import { browserDescription } from '../browser.js';
 import { configPath, CONFIG_FILENAME, loadConfig } from '../config.js';
 import { ensureBrowser, scanDevServers } from '../doctor.js';
-import { GH_LOGIN_HINT } from '../errors.js';
 import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
-import { cannotPublishHint, checkWriteAccess, findToken, GitHub } from '../github.js';
+import { cannotPublishHint, checkWriteAccess, findToken, GitHub, loginHint } from '../github.js';
 import { closeBrowser } from '../browser.js';
 
 export interface DoctorCheck {
@@ -77,7 +76,7 @@ async function githubCheck(cwd?: string): Promise<DoctorCheck> {
   const found = findToken();
   // Required because `pr` calls requireToken() on any run that is not a dry
   // run, so without one the command stops before it captures anything.
-  if (!found) return { name: 'github', ok: false, detail: GH_LOGIN_HINT, required: true };
+  if (!found) return { name: 'github', ok: false, detail: loginHint(), required: true };
   let ownerRepo: string;
   try {
     ownerRepo = resolveOwnerRepo(repoRoot(cwd));

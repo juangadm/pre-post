@@ -302,6 +302,23 @@ export interface PrRunResult {
   markdown: string;
   /** Local directory holding every captured file */
   outputDir: string;
+  /** One labelled image of every change, Pre beside Post, when anything changed */
+  sheetPath?: string;
   /** Milliseconds spent in each named step of the run; steps can overlap. */
   timings?: Record<string, number>;
+  /** Whether GitHub took the result, and if not, the one sentence that would let it. */
+  delivery?: Delivery;
+}
+
+/**
+ * What happened to a run's result on GitHub.
+ *
+ * - `published`: GitHub accepted writes; `commentUrl` says whether a PR was updated.
+ * - `dry-run`: nothing was written, as asked.
+ * - `skipped`: the screenshots were taken but GitHub would not take them;
+ *   `hint` is the one thing a human must do. The CLI exits 3 after printing.
+ */
+export interface Delivery {
+  status: 'published' | 'dry-run' | 'skipped';
+  hint?: string;
 }

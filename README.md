@@ -261,6 +261,7 @@ Environment:
 
 | Variable | Purpose |
 |---|---|
+| `PRE_POST_GH_TOKEN` | GitHub token read before the two below. Use it where a hosted environment sets `GH_TOKEN` itself |
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub token (default: `gh auth token`) |
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on preview and production URLs |
 | `PRE_POST_CONCURRENCY` | Parallel pages (default 6) |

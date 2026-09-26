@@ -12,13 +12,14 @@ import { detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findToken, getPr, GitHub, publishAssets, requireToken, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
+import { buildSheet } from '../sheet.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -76,9 +77,19 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // entirely made --dry-run the one mode that could never use a deployment,
   // so it always demanded a dev server — from the person least likely to have
   // one. Reads use `gh`; publishing and commenting use `writeGh`.
-  const found = opts.dryRun ? findToken() : requireToken();
-  const gh = found ? new GitHub(found.token) : null;
-  const writeGh = opts.dryRun ? null : gh;
+  //
+  // A real run without working GitHub access still captures. Refusing up front
+  // was right for someone at a laptop, who can log in and re-run; in a hosted
+  // agent sandbox nobody is at the machine and the platform's own token is the
+  // one refused, so stopping left the user with nothing to look at. The run now
+  // captures, publishes nothing, and ends with the one sentence that fixes it.
+  const found = findToken();
+  let gh = found ? new GitHub(found.token) : null;
+  let writeGh = opts.dryRun ? null : gh;
+  /** Why nothing will be published, one per way of finding out; the most specific wins. */
+  const notPublished: { noToken?: string; lookup?: string; write?: string } = {
+    noToken: !opts.dryRun && !found ? `GitHub access is needed to publish screenshots. ${loginHint()}` : undefined,
+  };
 
   // --- Start the slow, independent things now; they overlap route detection ----
   const browserReady = timings.time('browser', ensureBrowser(), { background: true });
@@ -112,10 +123,22 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // A dry run used to touch GitHub not at all, and must still work when it
   // cannot: it is what someone runs before anything is set up. A stale token or
   // an unreachable API degrades it to "no PR", never ends the run. A real run
-  // needs the PR to publish against, so there the failure still surfaces.
-  const prLookup = opts.dryRun
-    ? lookup.catch(err => { log(`GitHub lookup failed (${err instanceof Error ? err.message : err}); continuing without it.`); return null; })
-    : lookup;
+  // degrades the same way and records why, so it can say so at the end.
+  let lookupFailed = false;
+  const prLookup = lookup.catch(err => {
+    lookupFailed = true;
+    const message = err instanceof Error ? err.message : String(err);
+    if (opts.dryRun) {
+      log(`GitHub lookup failed (${message}); continuing without it.`);
+    } else {
+      // A refused token already carries its fix; an answer from GitHub names
+      // itself; anything else never reached GitHub at all.
+      notPublished.lookup = err instanceof NeedsHumanError || err instanceof GitHubError
+        ? message
+        : `GitHub could not be reached (${message}), so nothing was published: check that this environment can reach ${API_BASE}, then re-run.`;
+    }
+    return null;
+  });
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
   const explicitAfter = opts.after ?? config.after;
@@ -128,6 +151,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const head = headSha(root);
   const pr = await timings.time('github', prLookup);
+  // Whatever refused the lookup refuses every later read too: resolution would
+  // only spend time asking GitHub for deployments it cannot see.
+  if (lookupFailed) gh = null;
 
   // Before the local baseline, which can install and build a whole app, and
   // long before the captures. An answer that is not about access — a 500, a
@@ -135,11 +161,15 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // continues to fail wherever it really fails.
   const write = await writeAccess;
   if (write && !write.access.writable) {
-    if (write.access.reason === 'rejected') {
-      await stopEverything();
-      throw new NeedsHumanError(cannotPublishHint(ownerRepo, write.source));
-    }
-    log(`Could not check whether the token can publish (${write.access.detail}); continuing.`);
+    if (write.access.reason === 'rejected') notPublished.write = cannotPublishHint(ownerRepo, write.source);
+    else log(`Could not check whether the token can publish (${write.access.detail}); continuing.`);
+  }
+  // The write probe knows which credential was refused, so its sentence is the
+  // most precise; a failed lookup is next; a missing token is the fallback.
+  const skipReason = notPublished.write ?? notPublished.lookup ?? notPublished.noToken;
+  if (skipReason) {
+    writeGh = null;
+    log('GitHub will not accept this run\'s screenshots; capturing anyway, nothing will be published.');
   }
 
   // --- What are we comparing? ---------------------------------------------------
@@ -222,12 +252,20 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   await browserReady;
   let run;
+  let sheetPath: string | undefined;
   try {
     run = await timings.time('capture', runTasks(tasks, {
       outputDir, ...settings, wait: opts.wait, auth, log,
       // So the verdict can name how Pre was chosen, not just where it points.
       sides: { before: comparison.before, after: comparison.after },
     }));
+    // Drawn while the browser is still open. A convenience, so a failure to
+    // draw it is logged and never costs the run its result.
+    if (!run.verdict) {
+      sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
+        .then(p => p ?? undefined)
+        .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+    }
   } finally {
     // Timed on its own: deleting the baseline worktree, node_modules and all,
     // is real wall clock that used to show up under no step at all.
@@ -272,7 +310,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     durationMs: Date.now() - started,
     markdown: '',
     outputDir,
+    sheetPath,
     timings: timings.toJSON(),
+    delivery: opts.dryRun ? { status: 'dry-run' } : skipReason ? { status: 'skipped', hint: skipReason } : { status: 'published' },
   };
   result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: outputDir });
 

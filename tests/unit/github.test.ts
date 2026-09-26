@@ -1,6 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken } from '../../src/github';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken, loginHint } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
+
+/**
+ * Point PATH at a folder with or without a stand-in `gh`, so the hints are
+ * tested for both machines rather than for whichever one runs the suite.
+ */
+const savedPath = process.env.PATH;
+const bins: string[] = [];
+function withGh(installed: boolean): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-gh-'));
+  bins.push(dir);
+  if (installed) fs.writeFileSync(path.join(dir, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  process.env.PATH = dir;
+}
+function restorePath(): void {
+  process.env.PATH = savedPath;
+  while (bins.length) fs.rmSync(bins.pop()!, { recursive: true, force: true });
+}
 
 type Call = { method: string; path: string; body?: any };
 let calls: Call[];
@@ -400,9 +420,10 @@ describe('checkWriteAccess', () => {
 });
 
 describe('findToken', () => {
-  const saved = { gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN };
+  const saved = { prePost: process.env.PRE_POST_GH_TOKEN, gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN };
+  beforeEach(() => { delete process.env.PRE_POST_GH_TOKEN; });
   afterEach(() => {
-    for (const [k, v] of [['GH_TOKEN', saved.gh], ['GITHUB_TOKEN', saved.github]] as const) {
+    for (const [k, v] of [['PRE_POST_GH_TOKEN', saved.prePost], ['GH_TOKEN', saved.gh], ['GITHUB_TOKEN', saved.github]] as const) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   });
@@ -413,6 +434,15 @@ describe('findToken', () => {
     expect(findToken()).toEqual({ token: 'a', source: 'GH_TOKEN' });
   });
 
+  // Hosted agent environments set GH_TOKEN to a credential of their own, so a
+  // user's token has to be able to win over it without unsetting anything.
+  it('prefers PRE_POST_GH_TOKEN over both', () => {
+    process.env.PRE_POST_GH_TOKEN = 'p';
+    process.env.GH_TOKEN = 'a';
+    process.env.GITHUB_TOKEN = 'b';
+    expect(findToken()).toEqual({ token: 'p', source: 'PRE_POST_GH_TOKEN' });
+  });
+
   it('falls back to GITHUB_TOKEN', () => {
     delete process.env.GH_TOKEN;
     process.env.GITHUB_TOKEN = 'b';
@@ -421,7 +451,8 @@ describe('findToken', () => {
 });
 
 describe('cannotPublishHint', () => {
-  afterEach(() => { delete process.env.GITHUB_ACTIONS; });
+  beforeEach(() => withGh(true));
+  afterEach(() => { delete process.env.GITHUB_ACTIONS; restorePath(); });
 
   it('names the workflow permissions when the run is on the job\'s own GITHUB_TOKEN', () => {
     process.env.GITHUB_ACTIONS = 'true';
@@ -462,11 +493,47 @@ describe('cannotPublishHint', () => {
   it('is one sentence for every source, in and out of a runner', () => {
     for (const inActions of [true, false]) {
       if (inActions) process.env.GITHUB_ACTIONS = 'true'; else delete process.env.GITHUB_ACTIONS;
-      for (const source of ['GH_TOKEN', 'GITHUB_TOKEN', 'gh'] as const) {
-        const hint = cannotPublishHint('acme/web', source);
-        expect(hint.match(/\.(\s|$)/g) ?? []).toHaveLength(1);
-        expect(hint.trimEnd().endsWith('.')).toBe(true);
+      for (const gh of [true, false]) {
+        withGh(gh);
+        for (const source of ['PRE_POST_GH_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'gh'] as const) {
+          const hint = cannotPublishHint('acme/web', source);
+          expect(hint.match(/\.(\s|$)/g) ?? []).toHaveLength(1);
+          expect(hint.trimEnd().endsWith('.')).toBe(true);
+        }
       }
     }
+  });
+
+  // A hosted agent sandbox has no gh CLI and sets GH_TOKEN itself: unsetting
+  // it or logging in are both impossible there, so the variable read first is
+  // the one fix that can work.
+  it('names PRE_POST_GH_TOKEN, not a login, when gh is not installed', () => {
+    withGh(false);
+    const hint = cannotPublishHint('acme/web', 'GH_TOKEN');
+    expect(hint).toContain('PRE_POST_GH_TOKEN');
+    expect(hint).toContain('acme/web');
+    expect(hint).not.toContain('gh auth login');
+    expect(hint).not.toContain('gh CLI');
+  });
+
+  it('asks for a better token when PRE_POST_GH_TOKEN itself is refused', () => {
+    const hint = cannotPublishHint('acme/web', 'PRE_POST_GH_TOKEN');
+    expect(hint).toContain('PRE_POST_GH_TOKEN');
+    expect(hint).toContain('pull-requests write');
+  });
+});
+
+describe('loginHint', () => {
+  afterEach(restorePath);
+
+  it('sends someone with the gh CLI to gh auth login', () => {
+    withGh(true);
+    expect(loginHint()).toContain('gh auth login');
+  });
+
+  it('names the environment variable when gh is not installed', () => {
+    withGh(false);
+    expect(loginHint()).toContain('PRE_POST_GH_TOKEN');
+    expect(loginHint()).not.toContain('gh auth login');
   });
 });
