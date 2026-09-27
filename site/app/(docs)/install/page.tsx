@@ -41,9 +41,8 @@ export default function InstallPage() {
         <p>
           Node 20+, GitHub sign-in (<InlineCode>gh auth login</InlineCode>), and an open PR.
         </p>
-        <p>
-          Stuck? Run <InlineCode>pre-post doctor</InlineCode>.
-        </p>
+        <p>Stuck? This checks your setup:</p>
+        <Code>npx -y @juangadm/pre-post@latest doctor</Code>
       </Section>
     </>
   )
