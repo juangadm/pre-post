@@ -36,13 +36,18 @@ export interface ChangeGroup {
  * A nav edit touches every page, and the report used to repeat it: six
  * sections, 24 images, one change. Routes whose change has the same
  * fingerprint, at the same viewport, are one entry led by the first of them.
- * A route without a fingerprint (no crop, or a shift) always stands alone.
+ * So are routes whose only change is the same move: the sentence ("Content
+ * shifted down 8px. Nothing else changed.") is the whole report, and eight
+ * pages of it was twelve full-page images saying one thing. A move with
+ * something else on top, or a change with no fingerprint, stands alone.
  */
 export function groupChanges(outcomes: RouteCaptureOutcome[]): ChangeGroup[] {
   const groups: ChangeGroup[] = [];
   const byKey = new Map<string, ChangeGroup>();
   for (const o of outcomes) {
-    const key = o.fingerprint && !o.shift ? `${o.viewport}:${o.fingerprint}` : null;
+    const key = o.shift
+      ? (o.shift.otherChange ? null : `${o.viewport}:move:${Math.round(o.shift.px)}`)
+      : o.fingerprint ? `${o.viewport}:${o.fingerprint}` : null;
     const existing = key ? byKey.get(key) : undefined;
     if (existing) {
       existing.others.push(o);
