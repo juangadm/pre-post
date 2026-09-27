@@ -106,7 +106,8 @@ export function describeShift(px: number): string {
   return `shifted ${px < 0 ? 'up' : 'down'} ${rounded}px`;
 }
 
-function describeError(err: unknown, side: 'before' | 'after', url: string): string {
+/** One sentence for a side that could not be loaded. */
+export function describeError(err: unknown, side: 'before' | 'after', url: string): string {
   if (err instanceof HttpStatusError) return authHint(err);
   if (err instanceof NavigationError) {
     switch (err.kind) {
