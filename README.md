@@ -74,6 +74,7 @@ see the repo can see them. Nothing is committed to your PR branch.
 |---|---|
 | [How it works](https://github.com/juangadm/pre-post/blob/main/docs/how-it-works.md) | How Pre and Post are chosen, capture, diffing, layout shifts |
 | [GitHub Action](https://github.com/juangadm/pre-post/blob/main/docs/github-action.md) | Run on every PR with no per-person setup |
+| [Video: Moments](https://github.com/juangadm/pre-post/blob/main/docs/video.md) | Record interactions (menus, hovers, transitions) as synced Pre \| Post clips |
 | [Reference](https://github.com/juangadm/pre-post/blob/main/docs/reference.md) | All commands, exit codes, `.pre-post.json`, environment variables |
 | [Screenshot storage](https://github.com/juangadm/pre-post/blob/main/docs/storage.md) | How much space it uses and how to prune it |
 | [Contributing](https://github.com/juangadm/pre-post/blob/main/CONTRIBUTING.md) | Build and test locally |
