@@ -734,6 +734,18 @@ function classifyNavigationError(err: Error): NavigationError['kind'] {
 }
 
 /**
+ * How long a graceful browser shutdown may take before the run stops waiting.
+ *
+ * Playwright's close waits on the browser process with no limit, and a
+ * full Chrome — what runs when no headless shell is installed — sometimes
+ * takes minutes to exit: measured at 12–31s across a stress test, and once
+ * at exactly 300s, all spent after the last screenshot was taken. Nothing is
+ * leaked by moving on: Playwright SIGKILLs every browser it launched when
+ * this process exits.
+ */
+export const BROWSER_CLOSE_TIMEOUT_MS = 5_000;
+
+/**
  * Close the browser session and clean up resources.
  */
 export async function closeBrowser(): Promise<void> {
@@ -742,5 +754,11 @@ export async function closeBrowser(): Promise<void> {
   launching = null;
   activePages = 0;
   pageQueue.length = 0;
-  if (b) await b.close().catch(() => undefined);
+  if (!b) return;
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    b.close().catch(() => undefined),
+    new Promise<void>(resolve => { timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS); timer.unref(); }),
+  ]);
+  clearTimeout(timer);
 }
