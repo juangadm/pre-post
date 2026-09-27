@@ -25,6 +25,7 @@ export interface DiffJobResult {
   hasHighlight: boolean;
   /** Plain numbers, so the summary survives the structured clone back to the pool. */
   shift?: ShiftSummary;
+  fingerprint?: string;
   error?: string;
 }
 
@@ -46,6 +47,7 @@ export function executeDiffJob(job: DiffJob): DiffJobResult {
     hasCrop: Boolean(result.crop),
     hasHighlight: Boolean(result.highlight),
     shift: result.shift,
+    fingerprint: result.fingerprint,
   };
 }
 

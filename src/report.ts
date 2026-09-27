@@ -24,6 +24,37 @@ function groupByRoute(outcomes: RouteCaptureOutcome[]): Map<string, RouteCapture
   return map;
 }
 
+/** One change to show, and the other routes that show exactly the same change. */
+export interface ChangeGroup {
+  lead: RouteCaptureOutcome;
+  others: RouteCaptureOutcome[];
+}
+
+/**
+ * Collapse routes that show the same change into one entry.
+ *
+ * A nav edit touches every page, and the report used to repeat it: six
+ * sections, 24 images, one change. Routes whose change has the same
+ * fingerprint, at the same viewport, are one entry led by the first of them.
+ * A route without a fingerprint (no crop, or a shift) always stands alone.
+ */
+export function groupChanges(outcomes: RouteCaptureOutcome[]): ChangeGroup[] {
+  const groups: ChangeGroup[] = [];
+  const byKey = new Map<string, ChangeGroup>();
+  for (const o of outcomes) {
+    const key = o.fingerprint && !o.shift ? `${o.viewport}:${o.fingerprint}` : null;
+    const existing = key ? byKey.get(key) : undefined;
+    if (existing) {
+      existing.others.push(o);
+      continue;
+    }
+    const group = { lead: o, others: [] };
+    groups.push(group);
+    if (key) byKey.set(key, group);
+  }
+  return groups;
+}
+
 export interface CommentOptions {
   version?: string;
   headSha?: string | null;
@@ -53,7 +84,6 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     const local = (f?: string) => f && (path.isAbsolute(f) ? path.relative(dir, f).split(path.sep).join('/') : f);
     return Object.fromEntries(Object.entries(o.files).map(([k, f]) => [k, local(f)])) as ArtifactSet;
   };
-  const routes = groupByRoute(result.outcomes);
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
   const errors = result.outcomes.filter(o => o.status === 'error');
@@ -107,31 +137,35 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     lines.push('No visual changes.', '');
   }
 
-  for (const [route, outcomes] of routes) {
-    const changedHere = outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
-    if (changedHere.length === 0) continue;
-    for (const o of changedHere) {
-      const u = images(o);
-      lines.push(`### ${code(route)} — ${viewportLabel(o.viewport)}`, '');
-      // A move repaints everything below it, so the percentage says nothing a
-      // reviewer can use. Say how far it moved instead, and whether the branch
-      // changed anything else.
-      if (o.shift) {
-        lines.push(o.shift.otherChange
-          ? `Content ${describeShift(o.shift.px)}. The pair below is aligned on that move, so it shows what changed besides it.`
-          : `Content ${describeShift(o.shift.px)}. Nothing else changed.`, '');
-      }
-      const cropped = Boolean(u.cropBefore && u.cropAfter);
-      const pre = u.cropBefore ?? u.before!;
-      const post = u.cropAfter ?? u.after!;
-      lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
-      // Without a crop the pair above is already the full page; repeating it
-      // under a fold gives a reviewer two more identical images to scroll past.
-      if (cropped) {
-        lines.push('<details>', `<summary>Full page</summary>`, '');
-        lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
-        lines.push('</details>', '');
-      }
+  // In run order, as `pr` groups them when choosing what to publish, so the
+  // route that leads a group here is the one whose images were uploaded.
+  const shown = result.outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
+  for (const { lead: o, others } of groupChanges(shown)) {
+    const u = images(o);
+    if (others.length) {
+      const all = [o, ...others].map(r => code(r.route)).join(', ');
+      lines.push(`### Same change on ${others.length + 1} pages — ${viewportLabel(o.viewport)}`, '', `${all}. Shown on ${code(o.route)}:`, '');
+    } else {
+      lines.push(`### ${code(o.route)} — ${viewportLabel(o.viewport)}`, '');
+    }
+    // A move repaints everything below it, so the percentage says nothing a
+    // reviewer can use. Say how far it moved instead, and whether the branch
+    // changed anything else.
+    if (o.shift) {
+      lines.push(o.shift.otherChange
+        ? `Content ${describeShift(o.shift.px)}. The pair below is aligned on that move, so it shows what changed besides it.`
+        : `Content ${describeShift(o.shift.px)}. Nothing else changed.`, '');
+    }
+    const cropped = Boolean(u.cropBefore && u.cropAfter);
+    const pre = u.cropBefore ?? u.before!;
+    const post = u.cropAfter ?? u.after!;
+    lines.push('| Pre | Post |', '|:---:|:---:|', `| ![Pre](${pre}) | ![Post](${post}) |`, '');
+    // Without a crop the pair above is already the full page; repeating it
+    // under a fold gives a reviewer two more identical images to scroll past.
+    if (cropped) {
+      lines.push('<details>', `<summary>Full page</summary>`, '');
+      lines.push('| Pre (full) | Post (full) |', '|:---:|:---:|', `| ![Pre full](${u.before}) | ![Post full](${u.after}) |`, '');
+      lines.push('</details>', '');
     }
   }
 

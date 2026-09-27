@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildComment, buildSummary, STICKY_MARKER } from '../../src/report';
-import { PrRunResult } from '../../src/types';
+import { buildComment, buildSummary, groupChanges, STICKY_MARKER } from '../../src/report';
+import { PrRunResult, RouteCaptureOutcome } from '../../src/types';
 
 const base: PrRunResult = {
   repo: 'acme/web',
@@ -188,5 +188,36 @@ describe('run time in the description', () => {
     const md = buildComment({ ...base, durationMs: 30_000 });
     expect(md).toContain('pre-post</a>\n');
     expect(md).not.toMatch(/pre-post<\/a> in \d+s/);
+  });
+});
+
+describe('the same change on several pages', () => {
+  const nav = (route: string, fingerprint = 'nav', viewport = 'desktop'): RouteCaptureOutcome => ({
+    route, resolvedRoute: route, viewport, status: 'changed', changedRatio: 0.0018, fingerprint,
+    urls: { before: `https://u${route}-pre.png`, after: `https://u${route}-post.png`, cropBefore: `https://u${route}-pre-crop.png`, cropAfter: `https://u${route}-post-crop.png` },
+  });
+
+  // Scenario 3: one header-link change produced six sections and 24 images.
+  it('shows one change once, naming every page it appears on', () => {
+    const md = buildComment({ ...base, skippedDynamic: [], outcomes: ['/', '/about', '/faq'].map(r => nav(r)) });
+    expect(md).toContain('### Same change on 3 pages — Desktop');
+    expect(md).toContain('`/`, `/about`, `/faq`. Shown on `/`:');
+    expect(md.match(/!\[Pre\]/g)).toHaveLength(1);
+    expect(md).not.toContain('/about-pre-crop.png');
+  });
+
+  it('keeps different changes, viewports and moves apart', () => {
+    const groups = groupChanges([
+      nav('/'), nav('/about'), nav('/work', 'other'), nav('/', 'nav', 'mobile'),
+      { ...nav('/faq'), shift: { px: 48, otherChange: false, residualRatio: 0 } },
+      { ...nav('/x'), fingerprint: undefined },
+    ]);
+    expect(groups.map(g => [g.lead.route, g.lead.viewport, g.others.map(o => o.route)])).toEqual([
+      ['/', 'desktop', ['/about']],
+      ['/work', 'desktop', []],
+      ['/', 'mobile', []],
+      ['/faq', 'desktop', []],
+      ['/x', 'desktop', []],
+    ]);
   });
 });

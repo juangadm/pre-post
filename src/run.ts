@@ -322,6 +322,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
     textOverlap: overlap,
     titleOverlap: titles,
     shift,
+    fingerprint: diff.fingerprint,
     files: {
       before: outputs.before,
       after: outputs.after,

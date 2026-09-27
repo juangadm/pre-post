@@ -6,6 +6,7 @@
  * highlight image, and tight crops of before/after around the change.
  */
 
+import { createHash } from 'crypto';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import { DiffRegion, DiffResult, ShiftSummary } from './types.js';
@@ -261,6 +262,26 @@ export function regionOfInterest(clusters: Cluster[], rule: ChangeRule): DiffReg
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
+/**
+ * What changed, as a value: the exact pixels of both sides inside the changed
+ * region, not where on the page it sits.
+ *
+ * Two routes with the same fingerprint show the same change — one nav edit
+ * seen on six pages — so the report can show it once. Exact bytes, not a
+ * tolerance: merging two changes that merely look alike would hide one.
+ */
+function fingerprint(before: PNG, after: PNG, region: DiffRegion): string {
+  const hash = createHash('sha1').update(`${region.width}x${region.height}`);
+  const stride = before.width * 4;
+  for (const img of [before, after]) {
+    for (let y = region.y; y < region.y + region.height; y++) {
+      const start = y * stride + region.x * 4;
+      hash.update(img.data.subarray(start, start + region.width * 4));
+    }
+  }
+  return hash.digest('hex');
+}
+
 /** Bounding box of pixels painted with the diff color. */
 function boundingBox(diff: PNG): DiffRegion | null {
   const { width, height, data } = diff;
@@ -403,6 +424,7 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     ? regionOfInterest(findClusters(alignedDiff ?? diff, options.clusterGap ?? 48), rule)
     : null;
   if (cropRegion) {
+    result.fingerprint = fingerprint(cropFrom, after, cropRegion);
     const area = cropRegion.width * cropRegion.height;
     if (area / (width * height) <= CROP_MAX_RATIO) {
       let expanded = expandRegion(

@@ -180,3 +180,22 @@ describe('crops follow the change rule', () => {
     expect(result.crop!.region.width).toBe(1000);
   });
 });
+
+describe('change fingerprints', () => {
+  const pair = (y: number, rgb: [number, number, number]) => {
+    const a = solid(600, 900, [255, 255, 255]);
+    const b = solid(600, 900, [255, 255, 255]);
+    paint(a, 50, y, 200, 30, [0, 0, 0]);
+    paint(b, 50, y, 200, 30, rgb);
+    return diffImages(encode(a), encode(b), { padding: 10, minCrop: { width: 100, height: 80 } }).fingerprint;
+  };
+
+  it('is the same for the same change wherever it sits on the page', () => {
+    expect(pair(100, [0, 0, 200])).toBeDefined();
+    expect(pair(100, [0, 0, 200])).toBe(pair(600, [0, 0, 200]));
+  });
+
+  it('differs for a different change', () => {
+    expect(pair(100, [0, 0, 200])).not.toBe(pair(100, [200, 0, 0]));
+  });
+});
