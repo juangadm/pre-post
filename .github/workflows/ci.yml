@@ -48,8 +48,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: chromium-headless-shell-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Chromium
-        run: pnpm exec playwright-core install --with-deps chromium-headless-shell
+      # ffmpeg (~2 MB) is what Moments encode with; the video tests need it.
+      - name: Install Chromium and ffmpeg
+        run: pnpm exec playwright-core install --with-deps chromium-headless-shell ffmpeg
 
       # Gated behind TEST_BROWSER=true, which nothing else sets — CI is the
       # only place these run, so they must run here.
