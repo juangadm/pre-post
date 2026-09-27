@@ -21,6 +21,9 @@ import { Comparison, describeComparison, resolveComparison } from '../comparison
 import { Stopwatch } from '../timings.js';
 import { driftNotes } from '../drift.js';
 import { buildSheet } from '../sheet.js';
+import { Moment, parseMoments, selectMoments, skippedNote } from '../moments.js';
+import { recordMoments } from '../video.js';
+import { ghAttachSupport, uploadAttachments } from '../attach.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -46,6 +49,10 @@ export interface PrCommandOptions extends Partial<Settings> {
   /** Rebuild the baseline from the base commit when no URL is reachable. Default true. */
   localBaseline?: boolean;
   version?: string;
+  /** Moments to record, already validated (a `--moments` file). Default: `.pre-post.json` "moments". */
+  moments?: Moment[];
+  /** False to record no video this run. */
+  video?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -87,6 +94,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // PR's branch in GITHUB_HEAD_REF.
   const branch = currentBranch(root) ?? (process.env.GITHUB_HEAD_REF?.trim() || null);
   const head = headSha(root);
+  // Validated before anything slow: a typo in a step should cost a second,
+  // not a whole capture pass.
+  const { run: moments, skipped: momentsSkipped } = selectMoments(opts.video === false ? []
+    : opts.moments ?? (config.moments ? parseMoments(config.moments, '.pre-post.json "moments"') : []));
   /** Tears down anything resolution started (a local dev server). */
   let cleanupComparison: () => Promise<void> = async () => undefined;
 
@@ -181,7 +192,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // still needs a sample URL gets that answer in a second, not after a browser
   // and two dev servers have started for nothing.
   const explicitRoutes = Boolean(opts.routes?.length);
-  const routes = explicitRoutes ? opts.routes! : detection.routes.map(r => r.path);
+  let routes = explicitRoutes ? opts.routes! : detection.routes.map(r => r.path);
   const skippedDynamic = explicitRoutes ? [] : detection.skippedDynamic;
   const omitted = !explicitRoutes && detection.omitted.length
     ? { routes: detection.omitted.map(r => r.path), cap: settings.maxRoutes }
@@ -196,6 +207,15 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
         : 'Nothing this branch changed renders on a page; nothing to capture.');
     }
   }
+
+  // A Moment names its page, so a branch whose changes detection cannot place
+  // (a shared component, a style) still has something to capture.
+  if (!routes.length && moments.length) {
+    routes = [...new Set(moments.map(m => m.route))];
+    log(`Capturing the pages the Moments use: ${routes.join(', ')}`);
+  }
+  const momentsSkippedNote = skippedNote(momentsSkipped);
+  if (momentsSkippedNote) log(momentsSkippedNote);
 
   // --- Start the slow, independent things now; they overlap resolution -------
   // Only after the --require-pr answer and only with a page to capture: a
@@ -246,11 +266,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const id = runId(now);
 
   /** Assemble the result from whatever was captured, write it to the PR, and time it. */
-  const finish = async (captured: Pick<PrRunResult, 'outcomes' | 'beforeBase' | 'afterBase' | 'beforeLabel' | 'afterLabel' | 'outputDir' | 'sheetPath' | 'verdict'>): Promise<PrRunResult> => {
+  const finish = async (captured: Pick<PrRunResult, 'outcomes' | 'beforeBase' | 'afterBase' | 'beforeLabel' | 'afterLabel' | 'outputDir' | 'sheetPath' | 'verdict' | 'moments' | 'momentsHint'>): Promise<PrRunResult> => {
     const result: PrRunResult = {
       repo: ownerRepo,
       prNumber: pr?.number,
       ...captured,
+      momentsSkipped: momentsSkipped.length ? momentsSkipped : undefined,
       skippedDynamic,
       omitted,
       durationMs: Date.now() - started,
@@ -355,6 +376,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   await browserReady;
   let run;
   let sheetPath: string | undefined;
+  let momentOutcomes: PrRunResult['moments'];
   try {
     run = await timings.time('capture', runTasks(tasks, {
       outputDir, ...settings, wait: opts.wait, auth, log,
@@ -362,11 +384,18 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       sides: { before: comparison.before, after: comparison.after },
     }));
     // Drawn while the browser is still open. A convenience, so a failure to
-    // draw it is logged and never costs the run its result.
+    // draw it is logged and never costs the run its result. The clips follow
+    // the same rule, and run beside it: neither needs the other.
     if (!run.verdict) {
-      sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
-        .then(p => p ?? undefined)
-        .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+      [sheetPath, momentOutcomes] = await Promise.all([
+        timings.time('sheet', buildSheet(run.outcomes, outputDir))
+          .then(p => p ?? undefined)
+          .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; }),
+        moments.length
+          ? timings.time('video', recordMoments(moments, { before, after, auth, outputDir, log }))
+            .catch(err => { log(`Could not record the Moments (${err instanceof Error ? err.message : err}).`); return undefined; })
+          : Promise.resolve(undefined),
+      ]);
     }
   } finally {
     // Timed on its own: stopping the servers and the browser is real wall
@@ -386,7 +415,33 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // leads its group in the PR; the rest would be images nothing links to.
   const leads = new Set(groupChanges(outcomes).map(g => g.lead));
   const changed = isBrokenVerdict(verdict) ? [] : outcomes.filter(o => (leads.has(o) || o.status === 'added' || o.status === 'removed') && o.files);
-  if (writeGh && changed.length) {
+
+  // Clips go up as PR attachments, the only place GitHub plays video inline.
+  // Where that cannot happen (old gh, no PR yet, a token --attach refuses)
+  // they go on the assets branch beside the screenshots, poster first, and the
+  // PR says what would make them play.
+  const clips = (momentOutcomes ?? []).filter(m => m.status === 'recorded' && m.file);
+  let momentsHint: string | undefined;
+  if (writeGh && clips.length) {
+    const support = pr ? ghAttachSupport() : { ok: false as const, reason: 'Open the PR and re-run to play the videos inline.' };
+    if (support.ok) {
+      try {
+        const urls = await timings.time('attach', uploadAttachments(writeGh, ownerRepo, pr!.number, clips.map(m => m.file!), found?.token));
+        for (const m of clips) { m.videoUrl = urls.get(m.file!); m.inline = true; }
+        log(`Attached ${clips.length} video(s) to PR #${pr!.number}.`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        momentsHint = `GitHub did not take the videos as attachments (${message}); they are linked instead. Inline video needs gh signed in as a person or with a classic token, not the Actions GITHUB_TOKEN.`;
+        log(momentsHint);
+      }
+    } else {
+      momentsHint = support.reason;
+      log(`Videos will be linked, not inline: ${support.reason}`);
+    }
+  }
+  const linkedClips = clips.filter(m => !m.inline);
+
+  if (writeGh && (changed.length || linkedClips.length)) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;
     const files: AssetFile[] = [];
@@ -396,12 +451,21 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
         if (local) files.push({ path: keyFor(o, kind), content: fs.readFileSync(local) });
       }
     }
-    log(`Publishing ${files.length} image(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
+    for (const m of linkedClips) {
+      for (const local of [m.file!, m.poster!]) {
+        if (local && fs.existsSync(local)) files.push({ path: `${folder}/${path.basename(local)}`, content: fs.readFileSync(local) });
+      }
+    }
+    log(`Publishing ${files.length} file(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
     const published = await timings.time('publish', () => publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`));
     for (const o of changed) {
       const urls: Partial<ArtifactSet> = {};
       for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
       o.urls = urls as ArtifactSet;
+    }
+    for (const m of linkedClips) {
+      m.videoUrl = published.urls.get(`${folder}/${path.basename(m.file!)}`);
+      if (m.poster) m.posterUrl = published.urls.get(`${folder}/${path.basename(m.poster)}`);
     }
   }
 
@@ -409,5 +473,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     outcomes, beforeBase: before, afterBase: after,
     beforeLabel: comparison.before.label, afterLabel: comparison.after.label,
     outputDir, sheetPath, verdict: verdict ?? undefined,
+    moments: momentOutcomes?.length ? momentOutcomes : undefined, momentsHint,
   });
 }
