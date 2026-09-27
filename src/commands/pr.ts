@@ -13,7 +13,7 @@ import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
 import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
-import { buildComment, STICKY_MARKER } from '../report.js';
+import { buildComment, groupChanges, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
@@ -348,7 +348,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   if (run.verdict && !broken) throw new NeedsHumanError(run.verdict.hint);
 
   // --- Publish -------------------------------------------------------------------
-  const changed = broken ? [] : outcomes.filter(o => (o.status === 'changed' || o.status === 'added' || o.status === 'removed') && o.files);
+  // A change shown on several routes is published once, for the route that
+  // leads its group in the PR; the rest would be images nothing links to.
+  const leads = new Set(groupChanges(outcomes.filter(o => o.status === 'changed' && o.files)).map(g => g.lead));
+  const changed = broken ? [] : outcomes.filter(o => (leads.has(o) || o.status === 'added' || o.status === 'removed') && o.files);
   if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;

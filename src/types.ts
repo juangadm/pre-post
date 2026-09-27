@@ -130,6 +130,8 @@ export interface DiffResult {
   crop?: { before: Buffer; after: Buffer; region: DiffRegion };
   /** Vertical displacement explaining most of the difference, when one does */
   shift?: ShiftSummary;
+  /** The changed pixels of both sides, hashed: equal on two routes means the same change */
+  fingerprint?: string;
 }
 
 /**
@@ -273,6 +275,8 @@ export interface RouteCaptureOutcome {
   note?: string;
   /** Vertical displacement of Post against Pre, when one explains the change */
   shift?: RouteShift;
+  /** Identifies the change itself; routes that share one show the same change */
+  fingerprint?: string;
   /** A side answered with a sign-in wall, so nothing was really compared */
   blocked?: BlockedSide;
   /** A side rendered an error instead of the page, so nothing was compared */
