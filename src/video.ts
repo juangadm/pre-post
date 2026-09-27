@@ -8,9 +8,9 @@
 
 import path from 'path';
 import { AuthOptions, MomentOutcome } from './types.js';
-import { Moment, longClipNote } from './moments.js';
+import { Moment, longClipNote, quote } from './moments.js';
 import { recordSide, SideRecording } from './record.js';
-import { Card, composeMoment } from './compose.js';
+import { Card, composeMoment, layoutFor } from './compose.js';
 import { parseViewport } from './viewport.js';
 import { describeError, routeSlug } from './run.js';
 import { joinUrl } from './url.js';
@@ -23,30 +23,31 @@ export interface RecordMomentsOptions {
   log?: (msg: string) => void;
 }
 
-function kb(bytes: number): string {
+function size(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
 /**
- * What the Pre pane says when Pre could not play the Moment. A missing page or
- * a missing button on Pre is the normal case for a new feature, so it reads as
- * news, not as a failure.
+ * What the Pre pane shows: the recording (null when there is none to show),
+ * and the card and note when Pre could not play the Moment. A missing page or
+ * a missing button on Pre is the normal case for a new feature, so it reads
+ * as news, not as a failure.
  */
-function preCardFor(pre: PromiseSettledResult<SideRecording>, url: string): { card: Card; note?: string; absent: boolean } {
+function preSide(pre: PromiseSettledResult<SideRecording>, url: string): { pre: SideRecording | null; card?: Card; note?: string } {
   if (pre.status === 'rejected') {
     const why = describeError(pre.reason, 'before', url);
-    return { card: { title: 'Pre could not be loaded', detail: why.slice(0, 90) }, note: `Pre could not be loaded (${why}).`, absent: true };
+    return { pre: null, card: { title: 'Pre could not be loaded', detail: why.slice(0, 90) }, note: `Pre could not be loaded (${why}).` };
   }
   const rec = pre.value;
   if (rec.status !== undefined && rec.status >= 400) {
     return rec.status === 404
-      ? { card: { title: 'New page in this PR', detail: 'No page here on Pre' }, note: 'This page is new, so Pre has nothing to show.', absent: true }
-      : { card: { title: `Pre answered HTTP ${rec.status}` }, note: `Pre answered HTTP ${rec.status}.`, absent: true };
+      ? { pre: null, card: { title: 'New page in this PR', detail: 'No page here on Pre' }, note: 'This page is new, so Pre has nothing to show.' }
+      : { pre: null, card: { title: `Pre answered HTTP ${rec.status}` }, note: `Pre answered HTTP ${rec.status}.` };
   }
   if (rec.failure) {
-    return { card: { title: 'Not in the old version', detail: `${rec.failure.message} on Pre` }, note: `${rec.failure.message} on Pre, so it is shown as new.`, absent: false };
+    return { pre: rec, card: { title: 'Not in the old version', detail: `${rec.failure.message} on Pre` }, note: `${rec.failure.message} on Pre, so it is shown as new.` };
   }
-  return { card: { title: '' }, absent: false };
+  return { pre: rec };
 }
 
 async function recordOne(moment: Moment, opts: RecordMomentsOptions): Promise<MomentOutcome> {
@@ -54,9 +55,10 @@ async function recordOne(moment: Moment, opts: RecordMomentsOptions): Promise<Mo
   const base: MomentOutcome = { name: moment.name, route: moment.route, viewport: vp.label, status: 'error' };
   const beforeUrl = joinUrl(opts.before, moment.route);
   const afterUrl = joinUrl(opts.after, moment.route);
+  const side = { auth: opts.auth, maxWidth: layoutFor(vp.size).paneWidth };
   const [pre, post] = await Promise.allSettled([
-    recordSide(beforeUrl, moment, vp.size, opts.auth),
-    recordSide(afterUrl, moment, vp.size, opts.auth),
+    recordSide(beforeUrl, moment, vp.size, side),
+    recordSide(afterUrl, moment, vp.size, side),
   ]);
 
   // Post is the change under review: if it cannot play the Moment there is no
@@ -65,22 +67,22 @@ async function recordOne(moment: Moment, opts: RecordMomentsOptions): Promise<Mo
   if (post.value.status !== undefined && post.value.status >= 400) return { ...base, error: `Post answered HTTP ${post.value.status} for ${moment.route}.` };
   if (post.value.failure) return { ...base, error: `${post.value.failure.message} on Post (step ${post.value.failure.step + 1}).` };
 
-  const { card, note, absent } = preCardFor(pre, beforeUrl);
+  const shown = preSide(pre, beforeUrl);
   const stem = path.join(opts.outputDir, `moment-${routeSlug(moment.name.toLowerCase())}-${vp.label}`);
   try {
     const clip = await composeMoment({
       name: moment.name,
       steps: moment.steps,
-      pre: absent || pre.status === 'rejected' ? null : pre.value,
+      pre: shown.pre,
       post: post.value,
-      preCard: card,
+      preCard: shown.card,
       out: `${stem}.webm`,
       poster: `${stem}.jpg`,
     });
     return {
       ...base,
       status: 'recorded',
-      preNote: note,
+      preNote: shown.note,
       durationMs: clip.durationMs,
       bytes: clip.bytes,
       file: `${stem}.webm`,
@@ -102,8 +104,8 @@ export async function recordMoments(moments: Moment[], opts: RecordMomentsOption
   const outcomes = await Promise.all(moments.map(m => recordOne(m, opts)));
   for (const o of outcomes) {
     log(o.status === 'recorded'
-      ? `  “${o.name}” ${(o.durationMs! / 1000).toFixed(1)}s, ${kb(o.bytes!)}${o.preNote ? ` — ${o.preNote}` : ''}`
-      : `  “${o.name}” not recorded: ${o.error}`);
+      ? `  ${quote(o.name)} ${(o.durationMs! / 1000).toFixed(1)}s, ${size(o.bytes!)}${o.preNote ? ` — ${o.preNote}` : ''}`
+      : `  ${quote(o.name)} not recorded: ${o.error}`);
     if (o.note) log(`  Note: ${o.note}`);
   }
   return outcomes;
