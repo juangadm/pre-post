@@ -162,7 +162,7 @@ files belong to the reader. Its own change.
 
 # Fix pass from the 1.3.0 stress test (juangadm/pre-post-lab, #1–#15)
 
-Plan: docs/stress-test-1.3.0-plan.md. Every root cause was re-measured on the
+Plan: docs/internal/stress-test-1.3.0-plan.md. Every root cause was re-measured on the
 lab before fixing; where the measurement disagreed with the plan, the
 measurement won (noted below).
 
