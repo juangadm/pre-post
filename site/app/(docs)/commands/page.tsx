@@ -37,7 +37,7 @@ export default function CommandsPage() {
           head={["Add", "To"]}
           rows={[
             ["--routes /pricing", "Pick the pages yourself"],
-            ["-r", "Add mobile"],
+            ["--mobile", "Add mobile"],
             ["--dry-run", "Try it without touching your PR"],
           ]}
         />
