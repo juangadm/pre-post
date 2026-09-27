@@ -80,9 +80,11 @@ Clips appear above the screenshots.
 - **Inline player**: when `gh` 2.99 or newer is installed and signed in as a person (or with
   a classic token), clips upload as GitHub attachments and play right in the PR description.
 - **Linked**: otherwise, including with the Actions `GITHUB_TOKEN`, which `gh --attach`
-  refuses, the clip and its last frame go on the `pre-post-assets` branch. The PR shows the
-  frame linking to the clip, plus one line on what would make it play inline. `pre-post
-  doctor` reports which case you are in.
+  refuses, the PR shows the clip's last frame plus one line on what would make it play
+  inline. In a public repo the frame links to the clip, served through jsDelivr from the
+  `pre-post-assets` branch, and it plays in the browser. A private repo gets the frame
+  alone: jsDelivr cannot read it, so the clip is not uploaded. `pre-post doctor` reports
+  whether clips will play inline.
 
 ```bash
 brew upgrade gh   # or see https://cli.github.com
