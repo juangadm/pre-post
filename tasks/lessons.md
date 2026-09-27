@@ -94,3 +94,15 @@ workflow file.
 steps in order (`tsc`, `test:unit`, `build`, `test:browser`, which includes
 integration). A test that checks process state once, right after a kill,
 must poll with a deadline instead.
+
+## A dry run is not a no-op for local state
+
+Testing Moments with `pre-post pr --dry-run --before http://127.0.0.1:4711`, the run saved
+that fixture URL into the repo's `.pre-post.json` — `--before` persists by design, and
+`--dry-run` only means "do not write to GitHub". Caught in `git status` before committing.
+
+**Why:** I read "dry run" as "touches nothing" without checking what else the flags do.
+
+**How to apply:** after any exploratory CLI run inside this repo, run `git status` and
+revert config the run wrote. Prefer pointing test runs at a scratch repo, or pass the
+sides in a way that does not persist (`--after` alone, or `--local`).
