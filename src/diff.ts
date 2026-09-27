@@ -50,10 +50,10 @@ export interface ChangeRule {
   minRatio: number;
 }
 
-/** Does this many changed pixels, out of this canvas, count under the rule? */
-export function meetsRule(pixels: number, canvasArea: number, rule: ChangeRule): boolean {
+/** Do this many changed pixels, this share of the canvas, count under the rule? */
+export function meetsRule(pixels: number, ratio: number, rule: ChangeRule): boolean {
   if (pixels === 0) return false;
-  return pixels >= rule.minPixels || pixels / canvasArea >= rule.minRatio;
+  return pixels >= rule.minPixels || ratio >= rule.minRatio;
 }
 
 const ANY_PIXEL: ChangeRule = { minPixels: 1, minRatio: 0 };
@@ -163,16 +163,18 @@ export function decodePng(buffer: Buffer): PNG {
   return PNG.sync.read(buffer);
 }
 
+/** Is the pixel at byte offset `i` of a diff image painted as changed? */
+function isDiffPixel(data: Buffer, i: number): boolean {
+  return data[i] === DIFF_COLOR[0] && data[i + 1] === DIFF_COLOR[1] && data[i + 2] === DIFF_COLOR[2];
+}
+
 /** Diff-coloured pixels within a row range, for weighing one band against another. */
 function countChangedRows(diff: PNG, y0: number, y1: number): number {
   const { width, data } = diff;
   let count = 0;
   for (let y = Math.max(0, y0); y < Math.min(diff.height, y1); y++) {
     const row = y * width * 4;
-    for (let x = 0; x < width; x++) {
-      const i = row + x * 4;
-      if (data[i] === DIFF_COLOR[0] && data[i + 1] === DIFF_COLOR[1] && data[i + 2] === DIFF_COLOR[2]) count++;
-    }
+    for (let x = 0; x < width; x++) if (isDiffPixel(data, row + x * 4)) count++;
   }
   return count;
 }
@@ -207,8 +209,7 @@ export function findClusters(diff: PNG, gap: number): Cluster[] {
     const row = y * width * 4;
     const cy = Math.floor(y / cell) * cols;
     for (let x = 0; x < width; x++) {
-      const i = row + x * 4;
-      if (data[i] !== DIFF_COLOR[0] || data[i + 1] !== DIFF_COLOR[1] || data[i + 2] !== DIFF_COLOR[2]) continue;
+      if (!isDiffPixel(data, row + x * 4)) continue;
       const c = cy + Math.floor(x / cell);
       count[c]++;
       if (x < minX[c]) minX[c] = x;
@@ -253,12 +254,16 @@ export function findClusters(diff: PNG, gap: number): Cluster[] {
  */
 export function regionOfInterest(clusters: Cluster[], rule: ChangeRule): DiffRegion | null {
   const own = clusters.filter(c => c.pixels >= rule.minPixels);
-  const chosen = own.length ? own : clusters;
-  if (!chosen.length) return null;
-  const x0 = Math.min(...chosen.map(c => c.x));
-  const y0 = Math.min(...chosen.map(c => c.y));
-  const x1 = Math.max(...chosen.map(c => c.x + c.width));
-  const y1 = Math.max(...chosen.map(c => c.y + c.height));
+  return union(own.length ? own : clusters);
+}
+
+/** The box around every region given, or null for none. */
+function union(regions: DiffRegion[]): DiffRegion | null {
+  if (!regions.length) return null;
+  const x0 = Math.min(...regions.map(r => r.x));
+  const y0 = Math.min(...regions.map(r => r.y));
+  const x1 = Math.max(...regions.map(r => r.x + r.width));
+  const y1 = Math.max(...regions.map(r => r.y + r.height));
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
@@ -280,26 +285,6 @@ function fingerprint(before: PNG, after: PNG, region: DiffRegion): string {
     }
   }
   return hash.digest('hex');
-}
-
-/** Bounding box of pixels painted with the diff color. */
-function boundingBox(diff: PNG): DiffRegion | null {
-  const { width, height, data } = diff;
-  let minX = width, minY = height, maxX = -1, maxY = -1;
-  for (let y = 0; y < height; y++) {
-    const row = y * width * 4;
-    for (let x = 0; x < width; x++) {
-      const i = row + x * 4;
-      if (data[i] === DIFF_COLOR[0] && data[i + 1] === DIFF_COLOR[1] && data[i + 2] === DIFF_COLOR[2]) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return null;
-  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
 }
 
 /** Expand a region by padding and to a minimum size, clamped to the canvas. */
@@ -397,7 +382,10 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
     }
   }
 
-  const region = changedPixels > 0 ? boundingBox(diff) : null;
+  // One pass groups the changed pixels; their union is the bounding box.
+  const gap = options.clusterGap ?? 48;
+  const clusters = changedPixels > 0 ? findClusters(diff, gap) : [];
+  const region = union(clusters);
   const result: DiffResult = {
     changedRatio: changedPixels / (width * height),
     changedPixels,
@@ -419,14 +407,16 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
   // something the report just called unchanged.
   const rule = options.rule ?? ANY_PIXEL;
   const cropFrom = alignedBefore ?? before;
-  const leftOver = alignedDiff && shift ? shift.alignedChangedPixels : changedPixels;
-  const cropRegion = meetsRule(leftOver, width * height, rule)
-    ? regionOfInterest(findClusters(alignedDiff ?? diff, options.clusterGap ?? 48), rule)
+  const leftOver = shift ? shift.alignedChangedPixels : changedPixels;
+  const cropRegion = meetsRule(leftOver, leftOver / (width * height), rule)
+    ? regionOfInterest(alignedDiff ? findClusters(alignedDiff, gap) : clusters, rule)
     : null;
   if (cropRegion) {
-    result.fingerprint = fingerprint(cropFrom, after, cropRegion);
     const area = cropRegion.width * cropRegion.height;
     if (area / (width * height) <= CROP_MAX_RATIO) {
+      // Only what can be grouped is fingerprinted: a localized change on an
+      // unmoved page. A move is grouped by its distance instead.
+      if (!shift) result.fingerprint = fingerprint(before, after, cropRegion);
       let expanded = expandRegion(
         cropRegion,
         { width, height },

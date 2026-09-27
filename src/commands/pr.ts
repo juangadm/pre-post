@@ -15,9 +15,9 @@ import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } f
 import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, groupChanges, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
-import { CaptureTask, routeSlug, runTasks } from '../run.js';
+import { CaptureTask, routeSlug, runTasks, throwIfBlocked } from '../run.js';
 import { joinUrl } from '../url.js';
-import { Comparison, describeComparison, resolveComparison, sideLabel } from '../comparison.js';
+import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
 import { driftNotes } from '../drift.js';
 import { buildSheet } from '../sheet.js';
@@ -161,10 +161,42 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     };
   }
 
-  // --- Start the slow, independent things now; they overlap route detection ----
-  // Only after the --require-pr answer: a fresh runner would otherwise
-  // download and launch Chromium for a run that is about to do nothing.
-  const browserReady = timings.time('browser', ensureBrowser(), { background: true });
+  // Local detection runs regardless: it is cheap, and it is the fallback when
+  // the PR has no preview deployment.
+  const explicitAfter = afterFor(opts, config);
+  const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
+
+  // A skill copy or a pinned range from another release is why an agent
+  // follows instructions for a CLI that no longer exists. Say so up front.
+  for (const note of driftNotes({ version: opts.version, repoRoot: root })) log(`Note: ${note}`);
+
+  // Detection is synchronous git + fs work, so run it while the PR lookup is in
+  // flight rather than after it.
+  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
+  timings.add('detect', detection.durationMs);
+  const appPrefix = path.relative(root, detection.appRoot) || undefined;
+
+  // --- Routes --------------------------------------------------------------------
+  // Settled before anything slow starts: a branch whose only affected page
+  // still needs a sample URL gets that answer in a second, not after a browser
+  // and two dev servers have started for nothing.
+  const explicitRoutes = Boolean(opts.routes?.length);
+  const routes = explicitRoutes ? opts.routes! : detection.routes.map(r => r.path);
+  const skippedDynamic = explicitRoutes ? [] : detection.skippedDynamic;
+  const omitted = !explicitRoutes && detection.omitted.length
+    ? { routes: detection.omitted.map(r => r.path), cap: settings.maxRoutes }
+    : undefined;
+  if (!explicitRoutes) {
+    log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
+    for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
+    if (omitted) log(`  ${capNotice(omitted.routes, omitted.cap)}`);
+    if (!routes.length) log(`Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`);
+  }
+
+  // --- Start the slow, independent things now; they overlap resolution -------
+  // Only after the --require-pr answer and only with a page to capture: a
+  // fresh runner would otherwise download and launch Chromium for nothing.
+  const browserReady = routes.length ? timings.time('browser', ensureBrowser(), { background: true }) : Promise.resolve();
   /**
    * Everything this run started, in a form every early exit can call.
    *
@@ -183,20 +215,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       cleanupComparison(),
     ]);
   };
-  // Local detection runs regardless: it is cheap, and it is the fallback when
-  // the PR has no preview deployment.
-  const explicitAfter = afterFor(opts, config);
-  const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
 
-  // A skill copy or a pinned range from another release is why an agent
-  // follows instructions for a CLI that no longer exists. Say so up front.
-  for (const note of driftNotes({ version: opts.version, repoRoot: root })) log(`Note: ${note}`);
-
-  // Detection is synchronous git + fs work, so run it while the PR lookup is in
-  // flight rather than after it.
-  const detection = detectRoutesForRepo({ cwd: root, config, maxRoutes: settings.maxRoutes, framework: opts.framework, diffTarget: opts.base, log });
-  timings.add('detect', detection.durationMs);
-  const appPrefix = path.relative(root, detection.appRoot) || undefined;
   const pr = await timings.time('github', prLookup);
   // Whatever refused the lookup refuses every later read too: resolution would
   // only spend time asking GitHub for deployments it cannot see.
@@ -219,144 +238,150 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     log('GitHub will not accept this run\'s screenshots; capturing anyway, nothing will be published.');
   }
 
-  // --- Routes (sync: git + import graph) ----------------------------------------
-  const samples = config.samples || {};
-  let routes: string[];
-  let skippedDynamic: string[] = [];
-  let omittedRoutes: string[] = [];
-  if (opts.routes?.length) {
-    routes = opts.routes;
-  } else {
-    routes = detection.routes.map(r => r.path);
-    skippedDynamic = detection.skippedDynamic;
-    omittedRoutes = detection.omitted.map(r => r.path);
-    log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
-    for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
-    if (omittedRoutes.length) log(`  ${capNotice(detection.omitted, settings.maxRoutes)}`);
-    // Only when nothing at all was affected is `/` a sensible smoke check.
-    // A branch that changed a dynamic template affected that template, not
-    // the home page: capturing `/` there compared a page the branch never
-    // touched and reported it as the result.
-    if (routes.length === 0 && skippedDynamic.length === 0) {
-      routes = ['/'];
-      log('No routes detected from the diff; capturing / only.');
-    } else if (routes.length === 0) {
-      log(`Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`);
-    }
-  }
-
-  // Everything from here to the screenshots costs real time — dev servers, a
-  // baseline install, a browser — so it runs only when there is a page to
-  // capture. A branch whose only affected page still needs a sample URL gets
-  // that answer in seconds, not after two servers have booted for nothing.
   const now = new Date();
   const id = runId(now);
-  const captureAll = async () => {
-    // --- What are we comparing? ---------------------------------------------------
-    const headers = headersFor(config, opts);
-    // Resolution can throw (no baseline, an install that failed): the browser was
-    // launched before this and nothing else would close it, so its teardown has
-    // to cover the throw as well as the happy path.
-    const comparison: Comparison = await timings.time('resolve', resolveComparison({
-      gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
-      // Detection already established this; the baseline must be built from the
-      // same commit, or Pre and the route list disagree about what changed.
-      baseSha: detection.base?.sha,
-      // --base is a constraint on the baseline, not just on the route list.
-      baseExplicit: detection.base?.source === 'explicit',
-      // So a preview can be found for a branch that has been pushed but has no
-      // PR open yet — the host builds on push, not on PR.
-      headSha: head ?? undefined,
-      before: opts.before, after: explicitAfter,
-      devServer, probe: url => probeUrl(url, headers),
-      allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
-    }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
-    cleanupComparison = comparison.stop;
-    for (const line of describeComparison(comparison)) log(line);
 
-    const before = comparison.before.url;
-    const after = comparison.after.url;
-    if (opts.before && config.before !== before) {
-      updateConfig(root, { before });
-      log('Saved production URL to .pre-post.json');
-    }
-
-    // --- Reachability ---------------------------------------------------------------
-    // Resolution already probed whatever it chose; this catches a side that died
-    // in between, and names which one so the message is actionable.
-    const fail = async (message: string): Promise<never> => {
-      await stopEverything();
-      throw new NeedsHumanError(message);
+  /** Assemble the result from whatever was captured, write it to the PR, and time it. */
+  const finish = async (captured: Pick<PrRunResult, 'outcomes' | 'beforeBase' | 'afterBase' | 'beforeLabel' | 'afterLabel' | 'outputDir' | 'sheetPath' | 'verdict'>): Promise<PrRunResult> => {
+    const result: PrRunResult = {
+      repo: ownerRepo,
+      prNumber: pr?.number,
+      ...captured,
+      skippedDynamic,
+      omitted,
+      durationMs: Date.now() - started,
+      markdown: '',
+      timings: timings.toJSON(),
+      delivery: opts.dryRun ? { status: 'dry-run' } : skipReason ? { status: 'skipped', hint: skipReason } : { status: 'published' },
     };
-    const [probe, afterProbe] = await Promise.all([
-      comparison.before.probe ?? probeUrl(before, headers),
-      comparison.after.probe ?? probeUrl(after, headers),
-    ]);
-    if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
-    if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
-    if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
-    if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
+    result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: result.outputDir });
 
-    const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
-
-    // --- Capture -------------------------------------------------------------------
-    const outputDir = opts.output || path.join(os.tmpdir(), 'pre-post', ownerRepo.replace('/', '__'), id);
-    const viewports = settings.viewports.map(parseViewport);
-    const tasks: CaptureTask[] = [];
-    for (const route of routes) {
-      const resolved = resolveSample(route, samples);
-      for (const vp of viewports) {
-        tasks.push({ route, resolvedRoute: resolved, viewport: vp.label, size: vp.size, beforeUrl: joinUrl(before, resolved), afterUrl: joinUrl(after, resolved) });
+    if (writeGh && (opts.comment ?? true)) await timings.time('describe', async () => {
+      if (pr) {
+        // The description is what a reviewer reads first, so put the images there
+        // and fall back to a comment only when the PR cannot be edited.
+        const described = await upsertPrDescription(writeGh, ownerRepo, pr.number, result.markdown, 'pre-post');
+        if (described.updated) {
+          result.commentUrl = described.html_url;
+          result.commentKind = 'description';
+          log(`Updated PR description: ${described.html_url}`);
+        } else {
+          const comment = await upsertStickyComment(writeGh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
+          result.commentUrl = comment.html_url;
+          result.commentKind = 'comment';
+          log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
+        }
+      } else {
+        log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
       }
-    }
-    log(`Capturing ${tasks.length * 2} screenshots (${routes.length} route(s) × ${viewports.length} viewport(s)) ...`);
-
-    await browserReady;
-    let run;
-    let sheetPath: string | undefined;
-    try {
-      run = await timings.time('capture', runTasks(tasks, {
-        outputDir, ...settings, wait: opts.wait, auth, log,
-        // So the verdict can name how Pre was chosen, not just where it points.
-        sides: { before: comparison.before, after: comparison.after },
-      }));
-      // Drawn while the browser is still open. A convenience, so a failure to
-      // draw it is logged and never costs the run its result.
-      if (!run.verdict) {
-        sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
-          .then(p => p ?? undefined)
-          .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
-      }
-    } finally {
-      // Timed on its own: deleting the baseline worktree, node_modules and all,
-      // is real wall clock that used to show up under no step at all.
-      await timings.time('cleanup', stopEverything());
-    }
-    return { run, sheetPath, before, after, outputDir, labels: { before: sideLabel(comparison.before), after: sideLabel(comparison.after) } };
+    });
+    // Measured again after the description update, so the summary's total and
+    // the Timings line below describe the same span. The markdown above keeps
+    // the earlier figure: it had to be written before this step could run.
+    result.durationMs = Date.now() - started;
+    result.timings = timings.toJSON();
+    const [first, ...rest] = timings.summary(result.durationMs);
+    log(`Timings: ${first}`);
+    for (const line of rest) log(line);
+    return result;
   };
-  const captured = routes.length
-    ? await captureAll()
-    : (await stopEverything(), { run: { outcomes: [], verdict: null }, sheetPath: undefined, before: '', after: '', outputDir: '', labels: undefined });
-  const { run, sheetPath, before, after, outputDir, labels } = captured;
-  const { outcomes } = run;
 
-  // The pipeline judges whether it compared the two sites or something standing
-  // in front of them — a sign-in wall, or a baseline that is a different site
-  // altogether. Either way there is no honest result to publish, so stop with
-  // the one thing a human has to do.
-  //
-  // A broken page is the other kind of verdict: not a setup problem but a
-  // finding about the code, and the reviewer is the person who needs it. So it
-  // is not thrown. The PR still gets its block, saying so in one sentence, and
-  // nothing else: no image of an error page is ever published.
-  const broken = isBrokenVerdict(run.verdict);
-  if (run.verdict && !broken) throw new NeedsHumanError(run.verdict.hint);
+  if (!routes.length) return finish({ outcomes: [], beforeBase: '', afterBase: '', outputDir: '' });
+
+  // --- What are we comparing? ---------------------------------------------------
+  const headers = headersFor(config, opts);
+  // Resolution can throw (no baseline, an install that failed): the browser was
+  // launched before this and nothing else would close it, so its teardown has
+  // to cover the throw as well as the happy path.
+  const comparison: Comparison = await timings.time('resolve', resolveComparison({
+    gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+    // Detection already established this; the baseline must be built from the
+    // same commit, or Pre and the route list disagree about what changed.
+    baseSha: detection.base?.sha,
+    // --base is a constraint on the baseline, not just on the route list.
+    baseExplicit: detection.base?.source === 'explicit',
+    // So a preview can be found for a branch that has been pushed but has no
+    // PR open yet — the host builds on push, not on PR.
+    headSha: head ?? undefined,
+    before: opts.before, after: explicitAfter,
+    devServer, probe: url => probeUrl(url, headers),
+    allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
+  }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
+  cleanupComparison = comparison.stop;
+  for (const line of describeComparison(comparison)) log(line);
+
+  const before = comparison.before.url;
+  const after = comparison.after.url;
+  if (opts.before && config.before !== before) {
+    updateConfig(root, { before });
+    log('Saved production URL to .pre-post.json');
+  }
+
+  // --- Reachability ---------------------------------------------------------------
+  // Resolution already probed whatever it chose; this catches a side that died
+  // in between, and names which one so the message is actionable.
+  const fail = async (message: string): Promise<never> => {
+    await stopEverything();
+    throw new NeedsHumanError(message);
+  };
+  const [probe, afterProbe] = await Promise.all([
+    comparison.before.probe ?? probeUrl(before, headers),
+    comparison.after.probe ?? probeUrl(after, headers),
+  ]);
+  if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
+  if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
+  if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
+  if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
+
+  const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
+
+  // --- Capture -------------------------------------------------------------------
+  const outputDir = opts.output || path.join(os.tmpdir(), 'pre-post', ownerRepo.replace('/', '__'), id);
+  const viewports = settings.viewports.map(parseViewport);
+  const samples = config.samples || {};
+  const tasks: CaptureTask[] = [];
+  for (const route of routes) {
+    const resolved = resolveSample(route, samples);
+    for (const vp of viewports) {
+      tasks.push({ route, resolvedRoute: resolved, viewport: vp.label, size: vp.size, beforeUrl: joinUrl(before, resolved), afterUrl: joinUrl(after, resolved) });
+    }
+  }
+  log(`Capturing ${tasks.length * 2} screenshots (${routes.length} route(s) × ${viewports.length} viewport(s)) ...`);
+
+  await browserReady;
+  let run;
+  let sheetPath: string | undefined;
+  try {
+    run = await timings.time('capture', runTasks(tasks, {
+      outputDir, ...settings, wait: opts.wait, auth, log,
+      // So the verdict can name how Pre was chosen, not just where it points.
+      sides: { before: comparison.before, after: comparison.after },
+    }));
+    // Drawn while the browser is still open. A convenience, so a failure to
+    // draw it is logged and never costs the run its result.
+    if (!run.verdict) {
+      sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
+        .then(p => p ?? undefined)
+        .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+    }
+  } finally {
+    // Timed on its own: stopping the servers and the browser is real wall
+    // clock that used to show up under no step at all.
+    await timings.time('cleanup', stopEverything());
+  }
+  const { outcomes, verdict } = run;
+
+  // A wall or a wrong baseline means there is no honest result to publish, so
+  // stop with the one thing a human has to do. A broken page is not thrown: it
+  // is a finding about the code, and the PR says so in one sentence with no
+  // images — no picture of an error page is ever published.
+  throwIfBlocked(verdict);
 
   // --- Publish -------------------------------------------------------------------
   // A change shown on several routes is published once, for the route that
   // leads its group in the PR; the rest would be images nothing links to.
-  const leads = new Set(groupChanges(outcomes.filter(o => o.status === 'changed' && o.files)).map(g => g.lead));
-  const changed = broken ? [] : outcomes.filter(o => (leads.has(o) || o.status === 'added' || o.status === 'removed') && o.files);
+  const leads = new Set(groupChanges(outcomes).map(g => g.lead));
+  const changed = isBrokenVerdict(verdict) ? [] : outcomes.filter(o => (leads.has(o) || o.status === 'added' || o.status === 'removed') && o.files);
   if (writeGh && changed.length) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;
@@ -376,53 +401,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     }
   }
 
-  const result: PrRunResult = {
-    repo: ownerRepo,
-    prNumber: pr?.number,
-    beforeBase: before,
-    afterBase: after,
-    beforeLabel: labels?.before,
-    afterLabel: labels?.after,
-    outcomes,
-    skippedDynamic,
-    omittedRoutes,
-    maxRoutes: settings.maxRoutes,
-    durationMs: Date.now() - started,
-    markdown: '',
-    outputDir,
-    sheetPath,
-    timings: timings.toJSON(),
-    delivery: opts.dryRun ? { status: 'dry-run' } : skipReason ? { status: 'skipped', hint: skipReason } : { status: 'published' },
-    verdict: run.verdict ?? undefined,
-  };
-  result.markdown = buildComment(result, { version: opts.version, headSha: head, now, filesDir: outputDir });
-
-  if (writeGh && (opts.comment ?? true)) await timings.time('describe', async () => {
-    if (pr) {
-      // The description is what a reviewer reads first, so put the images there
-      // and fall back to a comment only when the PR cannot be edited.
-      const described = await upsertPrDescription(writeGh, ownerRepo, pr.number, result.markdown, 'pre-post');
-      if (described.updated) {
-        result.commentUrl = described.html_url;
-        result.commentKind = 'description';
-        log(`Updated PR description: ${described.html_url}`);
-      } else {
-        const comment = await upsertStickyComment(writeGh, ownerRepo, pr.number, result.markdown, STICKY_MARKER);
-        result.commentUrl = comment.html_url;
-        result.commentKind = 'comment';
-        log(`Cannot edit the PR description; ${comment.created ? 'posted' : 'updated'} a comment instead: ${comment.html_url}`);
-      }
-    } else {
-      log(`No open PR for branch "${branch}". Open one and re-run, or paste the markdown below.`);
-    }
+  return finish({
+    outcomes, beforeBase: before, afterBase: after,
+    beforeLabel: comparison.before.label, afterLabel: comparison.after.label,
+    outputDir, sheetPath, verdict: verdict ?? undefined,
   });
-  // Measured again after the description update, so the summary's total and
-  // the Timings line below describe the same span. The markdown above keeps
-  // the earlier figure: it had to be written before this step could run.
-  result.durationMs = Date.now() - started;
-  result.timings = timings.toJSON();
-  const [first, ...rest] = timings.summary(result.durationMs);
-  log(`Timings: ${first}`);
-  for (const line of rest) log(line);
-  return result;
 }

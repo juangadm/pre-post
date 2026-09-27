@@ -303,12 +303,15 @@ export interface BlockedSide {
 }
 
 export interface BrokenSide {
-  /** Which side failed; `both` when Pre and Post each did. */
-  side: 'before' | 'after' | 'both';
-  /** HTTP status of the failing side's document, when it had one. */
-  status?: number;
-  /** What the failing side (Post, when both did) reported. */
+  /** Which side failed. Post when both did: it is what the PR is about. */
+  side: 'before' | 'after';
+  /** What that side reported. */
   error: PageError;
+}
+
+/** What the report calls a side. */
+export function sideName(side: 'before' | 'after'): 'Pre' | 'Post' {
+  return side === 'before' ? 'Pre' : 'Post';
 }
 
 /**
@@ -329,7 +332,7 @@ export interface RunVerdict {
 }
 
 /** Verdicts that are a finding about the code, reported rather than thrown. */
-export function isBrokenVerdict(v: RunVerdict | null | undefined): boolean {
+export function isBrokenVerdict(v: RunVerdict | null | undefined): v is RunVerdict & { kind: 'post-broken' | 'baseline-broken' } {
   return v?.kind === 'post-broken' || v?.kind === 'baseline-broken';
 }
 
@@ -355,10 +358,8 @@ export interface PrRunResult {
   afterLabel?: string;
   outcomes: RouteCaptureOutcome[];
   skippedDynamic: string[];
-  /** Routes the branch affects that the `maxRoutes` cap left out */
-  omittedRoutes?: string[];
-  /** The cap that left them out, so a reader knows what to raise */
-  maxRoutes?: number;
+  /** Routes the branch affects that the `maxRoutes` cap left out, and that cap */
+  omitted?: { routes: string[]; cap: number };
   durationMs: number;
   markdown: string;
   /** Local directory holding every captured file */

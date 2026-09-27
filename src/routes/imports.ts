@@ -227,9 +227,12 @@ export function findAffectedEntries(
   changed: string[],
   isEntry: (file: string) => boolean,
   maxDepth = 8,
+  /** Filled with every changed file that reached at least one entry. */
+  reached?: Set<string>,
 ): Map<string, AffectedEntry> {
   const result = new Map<string, AffectedEntry>();
   const record = (entry: string, via: string, depth: number) => {
+    reached?.add(via);
     const existing = result.get(entry);
     if (!existing || depth < existing.depth) result.set(entry, { via, depth });
   };

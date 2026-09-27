@@ -138,10 +138,12 @@ export interface ProbeResult {
 export async function probeUrl(
   url: string,
   headers: Record<string, string> = {},
-  options: { timeoutMs?: number; redirect?: RequestRedirect } = {},
+  /** `drain` reads the whole body, so a dev server has finished rendering when this resolves. */
+  options: { timeoutMs?: number; redirect?: RequestRedirect; drain?: boolean } = {},
 ): Promise<ProbeResult> {
   try {
     const res = await fetch(url, { method: 'GET', headers, redirect: options.redirect ?? 'follow', signal: AbortSignal.timeout(options.timeoutMs ?? 10_000) });
+    if (options.drain) await res.arrayBuffer();
     const contentType = res.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
     return { status: res.status, vercel: isVercelResponse(res.headers), contentType: contentType || undefined };
   } catch {

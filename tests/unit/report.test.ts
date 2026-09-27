@@ -104,9 +104,9 @@ describe('buildComment', () => {
   });
 
   it('names the affected routes the cap left out', () => {
-    const result = { ...base, omittedRoutes: ['/writing'], maxRoutes: 6 };
+    const result = { ...base, omitted: { routes: ['/writing'], cap: 6 } };
     expect(buildComment(result)).toContain('**Also affected, not captured (over the 6-page limit):** `/writing`');
-    expect(buildSummary(result)).toContain('not captured (over the 6-route cap): /writing (raise with --max-routes)');
+    expect(buildSummary(result)).toContain('Not captured (over the 6-route cap): /writing. Raise it with --max-routes.');
   });
 
   it('falls back to local files when nothing was published', () => {

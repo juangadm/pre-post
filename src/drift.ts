@@ -22,24 +22,11 @@ export const PACKAGE_NAME = '@juangadm/pre-post';
 
 /** The version of this CLI. */
 export function ownVersion(): string {
-  return (require('../package.json') as { version: string }).version;
-}
-
-export interface SkillCopy {
-  path: string;
-  /** The release it was written for, or null when it does not say. */
-  version: string | null;
-  /** A command file, which takes precedence over the skill of the same name. */
-  command: boolean;
-}
-
-/** Where Claude Code looks for a pre-post skill or command, user-wide and per project. */
-export function skillLocations(home: string, repoRoot?: string): Array<{ path: string; command: boolean }> {
-  const bases = [path.join(home, '.claude'), ...(repoRoot ? [path.join(repoRoot, '.claude')] : [])];
-  return bases.flatMap(base => [
-    { path: path.join(base, 'skills', 'pre-post', 'SKILL.md'), command: false },
-    { path: path.join(base, 'commands', 'pre-post.md'), command: true },
-  ]);
+  try {
+    return (require('../package.json') as { version: string }).version;
+  } catch {
+    return '0.0.0';
+  }
 }
 
 /** The release a skill file was written for: its `version:` field, else the version its npx lines pin. */
@@ -50,18 +37,24 @@ export function skillVersion(text: string): string | null {
   return pins.length && pins.every(p => p === pins[0]) && pins[0] !== 'latest' ? pins[0] : null;
 }
 
-export function installedSkills(home = os.homedir(), repoRoot?: string): SkillCopy[] {
-  const found: SkillCopy[] = [];
-  for (const loc of skillLocations(home, repoRoot)) {
-    let text: string;
+/**
+ * Every pre-post skill or command file Claude Code would load, user-wide and
+ * for this project, with the release each was written for. A command file
+ * takes precedence over the skill of the same name.
+ */
+function installedSkills(home: string, repoRoot?: string): Array<{ path: string; version: string | null; command: boolean }> {
+  const bases = [path.join(home, '.claude'), ...(repoRoot ? [path.join(repoRoot, '.claude')] : [])];
+  const locations = bases.flatMap(base => [
+    { path: path.join(base, 'skills', 'pre-post', 'SKILL.md'), command: false },
+    { path: path.join(base, 'commands', 'pre-post.md'), command: true },
+  ]);
+  return locations.flatMap(loc => {
     try {
-      text = fs.readFileSync(loc.path, 'utf8');
+      return [{ ...loc, version: skillVersion(fs.readFileSync(loc.path, 'utf8')) }];
     } catch {
-      continue;
+      return [];
     }
-    found.push({ path: loc.path, version: skillVersion(text), command: loc.command });
-  }
-  return found;
+  });
 }
 
 /**
@@ -90,7 +83,7 @@ export function satisfies(version: string, range: string): boolean {
 export function driftNotes(opts: { version?: string; home?: string; repoRoot?: string } = {}): string[] {
   const version = opts.version ?? ownVersion();
   const notes: string[] = [];
-  const copies = installedSkills(opts.home, opts.repoRoot);
+  const copies = installedSkills(opts.home ?? os.homedir(), opts.repoRoot);
   for (const copy of copies) {
     if (copy.version === version) continue;
     notes.push(`${copy.path} was written for ${copy.version ? `pre-post ${copy.version}` : 'an unversioned pre-post'}, not ${version}; update or delete it.`);

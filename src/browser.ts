@@ -565,10 +565,12 @@ async function advanceTimeline(page: Page, ms: number): Promise<void> {
 async function advanceUntilIdle(page: Page): Promise<void> {
   const frames = () => page.evaluate('window.__prePostFrames || 0').catch(() => 0) as Promise<number>;
   await advanceTimeline(page, TIMELINE_BUDGET_MS);
+  let seen = await frames();
   for (let spent = TIMELINE_BUDGET_MS; spent < TIMELINE_MAX_MS; spent += IDLE_CHECK_MS) {
-    const before = await frames();
     await advanceTimeline(page, IDLE_CHECK_MS);
-    if (await frames() === before) return;
+    const now = await frames();
+    if (now === seen) return;
+    seen = now;
   }
 }
 
@@ -795,11 +797,5 @@ export async function closeBrowser(): Promise<void> {
   launching = null;
   activePages = 0;
   pageQueue.length = 0;
-  if (!b) return;
-  let timer: NodeJS.Timeout | undefined;
-  await Promise.race([
-    b.close().catch(() => undefined),
-    new Promise<void>(resolve => { timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS); timer.unref(); }),
-  ]);
-  clearTimeout(timer);
+  if (b) await withDeadline(b.close(), BROWSER_CLOSE_TIMEOUT_MS);
 }

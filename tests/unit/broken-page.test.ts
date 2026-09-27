@@ -43,7 +43,7 @@ describe('brokenSide', () => {
     expect(brokenSide(capture({}), capture({ status: 500 }))?.side).toBe('after');
     expect(brokenSide(capture({ status: 500 }), capture({}))?.side).toBe('before');
     const both = brokenSide(capture({ status: 500 }), capture({ pageError: buildError }));
-    expect(both?.side).toBe('both');
+    expect(both?.side).toBe('after');
     expect(both?.error).toEqual(buildError);
   });
 });
@@ -139,21 +139,21 @@ describe('warmUp', () => {
     const statuses = [500, 500, 200];
     const fetch = vi.fn(async () => new Response('', { status: statuses.shift() }));
     vi.stubGlobal('fetch', fetch);
-    await warmUp(['http://localhost:3000/work'], {}, { pauseMs: 1 });
+    await Promise.all(warmUp(['http://localhost:3000/work'], {}, { pauseMs: 1 }).values());
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it('gives up after the last attempt without throwing', async () => {
     const fetch = vi.fn(async () => new Response('', { status: 500 }));
     vi.stubGlobal('fetch', fetch);
-    await warmUp(['http://localhost:3000/work'], {}, { attempts: 2, pauseMs: 1 });
+    await Promise.all(warmUp(['http://localhost:3000/work'], {}, { attempts: 2, pauseMs: 1 }).values());
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('leaves deployments and duplicates alone', async () => {
     const fetch = vi.fn(async () => new Response('', { status: 200 }));
     vi.stubGlobal('fetch', fetch);
-    await warmUp(['https://acme.com/', 'http://localhost:3000/', 'http://localhost:3000/'], {}, { pauseMs: 1 });
+    await Promise.all(warmUp(['https://acme.com/', 'http://localhost:3000/', 'http://localhost:3000/'], {}, { pauseMs: 1 }).values());
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

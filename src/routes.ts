@@ -65,8 +65,7 @@ function styleTooling(appRoot: string, files: string[], entries: Map<string, str
  */
 function nextContainers(appRoot: string, files: string[], entries: Map<string, string>, dirName: 'app' | 'pages'): Map<string, string[]> {
   const out = styleTooling(appRoot, files, entries);
-  const base = fs.existsSync(path.join(appRoot, 'src', dirName)) ? path.join(appRoot, 'src') : appRoot;
-  const routerDir = path.join(base, dirName);
+  const routerDir = path.join(routerBase(appRoot, dirName), dirName);
   const wrapper = dirName === 'app' ? /^(layout|template)\.(tsx|ts|jsx|js|mdx)$/ : /^_(app|document)\.(tsx|ts|jsx|js)$/;
   const pages = [...entries.keys()];
   for (const file of files) {
@@ -114,10 +113,15 @@ function pagesDir(root: string): string | null {
   return null;
 }
 
+/** Where a Next.js router directory lives: under `src/` when the app puts it there. */
+function routerBase(appRoot: string, dirName: 'app' | 'pages'): string {
+  return fs.existsSync(path.join(appRoot, 'src', dirName)) ? path.join(appRoot, 'src') : appRoot;
+}
+
 /** Entry files under a Next.js router directory, mapped by a regex-first filter. */
 function nextEntries(appRoot: string, files: string[], dirName: 'app' | 'pages', pattern: RegExp, rule: (files: string[]) => DetectedRoute[]): Map<string, string> {
   const entries = new Map<string, string>();
-  const base = fs.existsSync(path.join(appRoot, 'src', dirName)) ? path.join(appRoot, 'src') : appRoot;
+  const base = routerBase(appRoot, dirName);
   const prefix = path.join(base, dirName) + path.sep;
   for (const file of files) {
     if (!file.startsWith(prefix)) continue;
@@ -283,7 +287,10 @@ export function selectRoutes(routes: DetectedRoute[], maxRoutes: number): { sele
   // second route of any.
   const rankInCause = new Map<DetectedRoute, number>();
   const causes = new Map<string, DetectedRoute[]>();
-  for (const r of unique) causes.set(r.sourceFile, [...(causes.get(r.sourceFile) ?? []), r]);
+  for (const r of unique) {
+    const group = causes.get(r.sourceFile);
+    if (group) group.push(r); else causes.set(r.sourceFile, [r]);
+  }
   for (const group of causes.values()) group.sort(byPath).forEach((r, i) => rankInCause.set(r, i));
   const ordered = [...unique].sort((a, b) =>
     CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence]
@@ -294,13 +301,13 @@ export function selectRoutes(routes: DetectedRoute[], maxRoutes: number): { sele
 
 function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn?: (msg: string) => void): DetectedRoute[] {
   const { selected, omitted } = selectRoutes(routes, maxRoutes);
-  if (omitted.length) warn?.(capNotice(omitted, maxRoutes));
+  if (omitted.length) warn?.(capNotice(omitted.map(r => r.path), maxRoutes));
   return selected;
 }
 
 /** "Not captured (over the 6-route cap): /writing. Raise it with --max-routes." */
-export function capNotice(omitted: Array<{ path: string }>, maxRoutes: number): string {
-  return `Not captured (over the ${maxRoutes}-route cap): ${omitted.map(r => r.path).join(', ')}. Raise it with --max-routes.`;
+export function capNotice(routes: string[], cap: number): string {
+  return `Not captured (over the ${cap}-route cap): ${routes.join(', ')}. Raise it with --max-routes.`;
 }
 
 export function isDynamicRoute(route: string): boolean {
@@ -453,10 +460,12 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     routes.push({ path: r, sourceFile: '.pre-post.json', confidence: 'high', reason: 'Configured route' });
   }
 
-  // Direct framework rules.
-  routes.push(...adapter.directRoutes(appRel.map(adapter.normalize)));
-
-  // Import graph: changed files → pages that import them. One walk serves both.
+  // The import graph places what it can: changed files → the pages that use
+  // them. The framework's own file rules only see what it could not place — a
+  // file outside the graph, or one no page reaches — so the two never answer
+  // the same question differently.
+  let unplaced = appRel;
+  let known: string[] = [];
   if (appRel.length) {
     const files = walkSourceFiles(appRoot);
     const aliases = readAliases(appRoot);
@@ -466,7 +475,10 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
       const graph = buildImportGraph(appRoot, { files, aliases });
       addContainment(graph, adapter.containers(appRoot, files, entries));
       const changedAbs = appRel.map(f => path.join(appRoot, f)).filter(f => graph.files.has(f));
-      const affected = findAffectedEntries(graph, changedAbs, f => entries.has(f));
+      const reached = new Set<string>();
+      const affected = findAffectedEntries(graph, changedAbs, f => entries.has(f), undefined, reached);
+      unplaced = appRel.filter(f => !reached.has(path.join(appRoot, f)));
+      known = Array.from(new Set(entries.values())).sort((a, b) => a.length - b.length);
       for (const [entry, { via, depth }] of affected) {
         const viaRel = toPosix(path.relative(appRoot, via));
         const entryRel = toPosix(path.relative(appRoot, entry));
@@ -477,22 +489,13 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
           reason: depth === 0 ? 'Page file changed' : `${entryRel} uses ${viaRel}${depth > 1 ? ' indirectly' : ''}`,
         });
       }
-
-      // Layout/special-file routes may not have a page of their own; snap them to the nearest page.
-      const known = Array.from(new Set(entries.values())).sort((a, b) => a.length - b.length);
-      const knownSet = new Set(known);
-      for (const r of routes) {
-        if (!knownSet.has(r.path)) {
-          const snapped = nearestPageRoute(r.path, known);
-          if (snapped) r.path = snapped;
-        }
-      }
     }
   }
 
-  // Fallback: something changed in the app but nothing mapped → home page, low confidence.
-  if (routes.length === 0 && appRel.length > 0) {
-    routes.push({ path: '/', sourceFile: appRel[0], confidence: 'low', reason: 'No route mapping found; defaulting to /' });
+  // A rule can name a folder with no page of its own (a loading or error
+  // file); snap it to the nearest page beneath.
+  for (const r of adapter.directRoutes(unplaced.map(adapter.normalize))) {
+    routes.push(known.includes(r.path) ? r : { ...r, path: nearestPageRoute(r.path, known) ?? r.path });
   }
 
   // Dynamic routes: use samples or skip.
@@ -503,6 +506,13 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     if (!isDynamicRoute(r.path)) resolved.push(r);
     else if (samples[r.path]) resolved.push({ ...r, reason: `${r.reason} (sample: ${samples[r.path]})` });
     else skippedDynamic.add(r.path);
+  }
+
+  // Nothing mapped to any page: `/` is captured as a check. Not when the only
+  // pages affected are dynamic ones waiting for a sample — those were found,
+  // and `/` is a page the branch never touched.
+  if (!resolved.length && !skippedDynamic.size) {
+    resolved.push({ path: '/', sourceFile: appRel[0] ?? '', confidence: 'low', reason: 'No page mapped from the diff; capturing / as a check' });
   }
 
   // Reported by the caller, beside the routes it did pick, rather than warned

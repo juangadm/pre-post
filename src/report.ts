@@ -4,9 +4,10 @@
  */
 
 import path from 'path';
-import { ArtifactSet, isBrokenVerdict, PrRunResult, RouteCaptureOutcome } from './types.js';
+import { ArtifactSet, isBrokenVerdict, PrRunResult, RouteCaptureOutcome, sideName } from './types.js';
 import { describePageError, describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
+import { capNotice } from './routes.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
 
@@ -44,7 +45,9 @@ export interface ChangeGroup {
 export function groupChanges(outcomes: RouteCaptureOutcome[]): ChangeGroup[] {
   const groups: ChangeGroup[] = [];
   const byKey = new Map<string, ChangeGroup>();
-  for (const o of outcomes) {
+  // Filtered here, not by callers: `pr` groups to choose what to upload and
+  // the report groups to render, and both must pick the same lead.
+  for (const o of outcomes.filter(o => o.status === 'changed' && (o.urls || o.files))) {
     const key = o.shift
       ? (o.shift.otherChange ? null : `${o.viewport}:move:${Math.round(o.shift.px)}`)
       : o.fingerprint ? `${o.viewport}:${o.fingerprint}` : null;
@@ -58,6 +61,11 @@ export function groupChanges(outcomes: RouteCaptureOutcome[]): ChangeGroup[] {
     if (key) byKey.set(key, group);
   }
   return groups;
+}
+
+/** A reviewer's name for a side: its label, else the host a deployment answers on. */
+export function sideLabel(url: string, label: string | undefined, localName: string): string {
+  return label ?? (isLocalUrl(url) ? localName : hostOf(url));
 }
 
 export interface CommentOptions {
@@ -103,8 +111,8 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // assuming Post is the reader's own checkout.
   // Named for the reviewer. A local side is served on a throwaway port, so its
   // URL named nothing and changed on every run; the label says what it is.
-  const preLabel = result.beforeLabel ?? hostOf(result.beforeBase);
-  const postLabel = result.afterLabel ?? (isLocalUrl(result.afterBase) ? 'this branch' : hostOf(result.afterBase));
+  const preLabel = sideLabel(result.beforeBase, result.beforeLabel, 'a local server');
+  const postLabel = sideLabel(result.afterBase, result.afterLabel, 'this branch');
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
   // Only a quick run earns a mention: the number is there to show the tool is
   // cheap to run, and a slow one would say the opposite.
@@ -119,7 +127,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // where it happened; no screenshots, because a picture of an error panel in a
   // Pre/Post table reads as a design, and that is how it used to ship.
   if (isBrokenVerdict(result.verdict)) {
-    lines.push(`**${result.verdict!.hint}**`, '');
+    lines.push(`**${result.verdict.hint}**`, '');
     for (const o of result.outcomes.filter(o => o.broken)) {
       lines.push(`- ${code(o.route)} ${viewportLabel(o.viewport)}: ${describePageError(o.broken!.error)}`);
     }
@@ -142,10 +150,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     lines.push('No visual changes.', '');
   }
 
-  // In run order, as `pr` groups them when choosing what to publish, so the
-  // route that leads a group here is the one whose images were uploaded.
-  const shown = result.outcomes.filter(o => o.status === 'changed' && (o.urls || o.files));
-  for (const { lead: o, others } of groupChanges(shown)) {
+  for (const { lead: o, others } of groupChanges(result.outcomes)) {
     const u = images(o);
     if (others.length) {
       const all = [o, ...others].map(r => code(r.route)).join(', ');
@@ -214,9 +219,8 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
 
   // A route list that silently stops at the cap reads as "these are all the
   // pages this branch touches". Name the rest.
-  if (result.omittedRoutes?.length) {
-    const cap = result.maxRoutes ? ` (over the ${result.maxRoutes}-page limit)` : '';
-    lines.push(`**Also affected, not captured${cap}:** ${result.omittedRoutes.map(code).join(', ')}`, '');
+  if (result.omitted) {
+    lines.push(`**Also affected, not captured (over the ${result.omitted.cap}-page limit):** ${result.omitted.routes.map(code).join(', ')}`, '');
   }
 
   return lines.join('\n');
@@ -245,7 +249,7 @@ export function buildSummary(result: PrRunResult): string {
       : o.status === 'removed' ? 'removed'
       : 'no change',
     o.status === 'error' ? (o.error ?? '')
-      : o.broken ? `${o.broken.side === 'before' ? 'Pre' : o.broken.side === 'both' ? 'Pre and Post' : 'Post'}: ${describePageError(o.broken.error)}`
+      : o.broken ? `${sideName(o.broken.side)}: ${describePageError(o.broken.error)}`
       : (o.note || ''),
   ]);
   const widths = [0, 1, 2].map(i => Math.max(...rows.map(r => r[i].length), 0));
@@ -255,9 +259,7 @@ export function buildSummary(result: PrRunResult): string {
   if (result.skippedDynamic.length) {
     lines.push(`  needs sample URL: ${result.skippedDynamic.join(', ')} (add to .pre-post.json "samples")`);
   }
-  if (result.omittedRoutes?.length) {
-    lines.push(`  not captured (over the ${result.maxRoutes ?? '?'}-route cap): ${result.omittedRoutes.join(', ')} (raise with --max-routes)`);
-  }
+  if (result.omitted) lines.push(`  ${capNotice(result.omitted.routes, result.omitted.cap)}`);
   // Named for what actually happened. The images normally go in the PR
   // description and only fall back to a comment, so "Comment:" sent a reader
   // looking for a comment that a run with zero comments had never created.

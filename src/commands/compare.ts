@@ -6,15 +6,14 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { isBrokenVerdict, PrRunResult, RouteCaptureOutcome, RunVerdict } from '../types.js';
+import { PrRunResult, RouteCaptureOutcome, RunVerdict } from '../types.js';
 import { resolveSettings, Settings } from '../config.js';
 import { closeBrowser } from '../browser.js';
 import { ensureBrowser } from '../doctor.js';
 import { diffImages } from '../diff.js';
 import { parseViewport } from '../viewport.js';
 import { resolveAuth } from '../sessions.js';
-import { CaptureTask, isChanged, runTasks } from '../run.js';
-import { NeedsHumanError } from '../errors.js';
+import { CaptureTask, isChanged, runTasks, throwIfBlocked } from '../run.js';
 import { joinUrl, normalizeUrl } from '../url.js';
 
 export interface CompareOptions extends Partial<Settings> {
@@ -87,8 +86,7 @@ export async function runCompare(opts: CompareOptions): Promise<PrRunResult> {
     // sign-in wall or two different sites, and a percentage printed for either
     // is the confident-and-wrong answer. This mode used to have no such check
     // at all, because both lived in `pr`.
-    // A broken page is a finding, not a setup problem: reported, not thrown.
-    if (run.verdict && !isBrokenVerdict(run.verdict)) throw new NeedsHumanError(run.verdict.hint);
+    throwIfBlocked(run.verdict);
     outcomes = run.outcomes;
     verdict = run.verdict ?? undefined;
   }
