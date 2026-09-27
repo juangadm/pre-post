@@ -55,37 +55,19 @@ land somewhere they can see. Add `--routes /a,/b` when the user names pages expl
 
 ## Video: Moments
 
-Screenshots cannot show motion. When the diff changes something that **moves or reacts** —
-a menu, dialog or drawer opening, a hover or focus state, a transition or animation, form
-feedback, a toast, tabs — also record it as a **Moment**: one short interaction, played on
-Pre and Post side by side in one synced clip. Static changes (copy, colour, spacing) need no
-Moment; the screenshots cover them.
-
-Write the Moments to a file outside the repo (the scratchpad, or `/tmp`) and pass it:
-
-```bash
-npx -y @juangadm/pre-post@1.5.0 pr --moments /tmp/moments.json
-```
+When the change **moves or reacts** (a menu or dialog opening, a hover or focus state, a
+transition, form feedback), also record it: write Moments to a file outside the repo and
+add `--moments <file>`. Static changes need none; screenshots cover them.
 
 ```json
-{ "moments": [
-  { "name": "Open the account menu", "route": "/settings",
-    "steps": [{ "hover": "Account" }, { "click": "Account" }, { "wait": 400 }] }
-] }
+{ "moments": [{ "name": "Open the account menu", "route": "/settings",
+  "steps": [{ "hover": "Account" }, { "click": "Account" }] }] }
 ```
 
-- **Steps**: `click`, `hover`, `press` (a key), `type` (`["Email", "ada@example.com"]`),
-  `scroll` (text to scroll to, or pixels), `wait` (ms). Name targets by the text a person
-  sees — the button label, the field label — taken from the code you changed. Only if plain
-  words cannot say it, use `css=<selector>`. Add `"viewport": "mobile"` for mobile-only UI.
-- **One interaction per Moment, under 15 seconds.** A reviewer should get it on first play.
-  A flow is several Moments ("Open the menu", "Pick a plan"), not one long one.
-- **Most important first; three at most** are recorded: new interactions, then changed
-  ones, then pure motion. The rest are listed in the PR as not recorded.
-- A step Pre cannot do is expected for a new feature: that pane says "Not in the old
-  version" and the clip still ships. A step **Post** cannot do means the target text is
-  wrong — check the exact label in the code, fix that Moment, and re-run once.
-- Do not add Moments to `.pre-post.json` unless the user asks for them to run every time.
+Steps are `click`, `hover`, `press`, `type` (`["Email", "a@b.co"]`), `scroll` and `wait` (ms),
+naming targets by the text on screen. One interaction per Moment, under 15s, most important
+first; three at most are recorded. "Couldn't find … on Post" means the target text is wrong:
+fix it from the code and re-run once. Guide: https://github.com/juangadm/pre-post/blob/main/docs/video.md
 
 ## What it posts
 
@@ -93,9 +75,7 @@ The visual changes go at the **top of the PR description**, in a delimited block
 re-runs replace in place — the author's own text is never touched. If the PR cannot be
 edited (a fork, a read-only token) it falls back to a single sticky comment.
 
-Moments come first, one clip each: they play inline when `gh` is 2.99 or newer and signed in
-as a person; otherwise the PR shows the clip's last frame linking to it, with one line saying
-how to make it play. Relay that line.
+Moments come first, one clip each. If they could not play inline, the PR says why; relay that line.
 
 Each changed route shows **Pre beside Post**, per viewport, full pages in a `<details>`. No
 overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written. A pure move
@@ -136,8 +116,6 @@ is printed as `Video: <path>`; send those too.
 | `--viewport-only` | First screen only instead of full page |
 | `--pr <n>` | The branch has several PRs or the lookup fails |
 | `--dry-run` | Preview locally, post nothing |
-| `--moments <file>` | The change moves or reacts (see Video: Moments) |
-| `--no-video` | Skip the Moments in `.pre-post.json` this once |
 | `--header k=v` / `--cookie k=v` | The site needs auth headers or cookies |
 
 To run on every PR without anyone invoking it, point the user to the GitHub Action guide
