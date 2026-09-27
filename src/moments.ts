@@ -15,7 +15,8 @@
 import fs from 'fs';
 import path from 'path';
 
-export type StepVerb = 'click' | 'hover' | 'type' | 'press' | 'scroll' | 'wait';
+const VERBS = ['click', 'hover', 'type', 'press', 'scroll', 'wait'] as const;
+export type StepVerb = typeof VERBS[number];
 
 export type Step =
   | { verb: 'click' | 'hover'; target: string }
@@ -56,12 +57,10 @@ export const MAX_MOMENTS = 3;
 export const LONG_CLIP_MS = 30_000;
 
 /** What a clip should aim for; used in the nudge. */
-export const TARGET_CLIP_S = 15;
+const TARGET_CLIP_S = 15;
 
 /** A `wait` longer than this is almost certainly a mistake (ms, not s). */
 const MAX_WAIT_MS = 10_000;
-
-const VERBS: StepVerb[] = ['click', 'hover', 'type', 'press', 'scroll', 'wait'];
 
 export class MomentError extends Error {}
 
@@ -74,7 +73,7 @@ function parseStep(raw: unknown, where: string): Step {
     fail(where, `expected a step like { "click": "Save" }, got ${JSON.stringify(raw)}`);
   }
   const keys = Object.keys(raw);
-  if (keys.length !== 1 || !VERBS.includes(keys[0] as StepVerb)) {
+  if (keys.length !== 1 || !(VERBS as readonly string[]).includes(keys[0])) {
     fail(where, `a step has exactly one of ${VERBS.join(', ')} (got ${keys.join(', ') || 'nothing'})`);
   }
   const verb = keys[0] as StepVerb;
@@ -157,11 +156,12 @@ export function loadMomentsFile(file: string, cwd = process.cwd()): Moment[] {
 }
 
 /** The Moments that run, in priority order, and the names of the rest. */
-export function selectMoments(moments: Moment[], max = MAX_MOMENTS): { run: Moment[]; skipped: string[] } {
-  return { run: moments.slice(0, max), skipped: moments.slice(max).map(m => m.name) };
+export function selectMoments(moments: Moment[]): { run: Moment[]; skipped: string[] } {
+  return { run: moments.slice(0, MAX_MOMENTS), skipped: moments.slice(MAX_MOMENTS).map(m => m.name) };
 }
 
-function quote(s: string): string {
+/** A name as a reviewer reads it: “Open the account menu”. */
+export function quote(s: string): string {
   return `“${s}”`;
 }
 
@@ -177,11 +177,6 @@ export function describeStep(step: Step): string {
   }
 }
 
-/** What a step looks for, when it looks for anything — for "couldn't find" sentences. */
-export function stepTarget(step: Step): string | undefined {
-  return 'target' in step ? step.target : undefined;
-}
-
 /** One line for a clip that ran long, or null. */
 export function longClipNote(name: string, durationMs: number): string | null {
   if (durationMs <= LONG_CLIP_MS) return null;
@@ -189,7 +184,7 @@ export function longClipNote(name: string, durationMs: number): string | null {
 }
 
 /** One line naming the Moments over the limit, or null. */
-export function skippedNote(skipped: string[], max = MAX_MOMENTS): string | null {
+export function skippedNote(skipped: string[]): string | null {
   if (!skipped.length) return null;
-  return `Recorded the first ${max} Moments; also listed, not recorded: ${skipped.map(quote).join(', ')}.`;
+  return `Recorded the first ${MAX_MOMENTS} Moments; also listed, not recorded: ${skipped.map(quote).join(', ')}.`;
 }
