@@ -454,7 +454,13 @@ const INIT_SCRIPT = `
  * paused instant — and keeps storage and caches from leaking between the two
  * sides of a comparison.
  */
-async function createContext(viewport: ViewportSize, scale: number, auth?: AuthOptions, motion = false): Promise<BrowserContext> {
+interface ContextOptions {
+  auth?: AuthOptions;
+  /** Real time and the page's own motion preferences, for recording; frozen for screenshots. */
+  motion?: boolean;
+}
+
+async function createContext(viewport: ViewportSize, scale: number, { auth, motion = false }: ContextOptions = {}): Promise<BrowserContext> {
   const b = await getBrowser();
   const ctx = await b.newContext({
     viewport,
@@ -505,7 +511,7 @@ async function createContext(viewport: ViewportSize, scale: number, auth?: AuthO
  * frozen throughout, so waiting longer here — on a slow host, a cold cache, a
  * busy machine — never advances an animation. Bounded by `timeout` ms.
  */
-async function settlePage(page: Page, timeout: number, options: { network?: boolean } = {}): Promise<void> {
+export async function settlePage(page: Page, timeout: number, options: { network?: boolean } = {}): Promise<void> {
   const deadline = Date.now() + timeout;
   const left = () => Math.max(0, deadline - Date.now());
 
@@ -678,7 +684,7 @@ export async function withMotionPage<T>(
   await acquireSlot();
   let ctx: BrowserContext | undefined;
   try {
-    ctx = await createContext(viewport, 1, auth, true);
+    ctx = await createContext(viewport, 1, { auth, motion: true });
     const page = await ctx.newPage();
     trackRequests(page);
     return await fn(page, ctx);
@@ -686,11 +692,6 @@ export async function withMotionPage<T>(
     await ctx?.close().catch(() => undefined);
     releaseSlot();
   }
-}
-
-/** Fonts, images, network and layout settled, bounded by `timeout` ms. */
-export function settle(page: Page, timeout: number): Promise<void> {
-  return settlePage(page, timeout);
 }
 
 // ============================================================
@@ -715,15 +716,10 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
   let ctx: BrowserContext | undefined;
   let page: Page | undefined;
   try {
-    ctx = await createContext(options.viewport, scale, options.auth);
+    ctx = await createContext(options.viewport, scale, { auth: options.auth });
     page = await ctx.newPage();
     trackRequests(page);
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => {
-      throw new NavigationError(classifyNavigationError(err), url, err);
-    });
-    const status = response?.status();
-    const vercel = response ? isVercelResponse({ get: n => response.headers()[n] ?? null }) : false;
-    if (status === 401 || status === 403) throw new HttpStatusError(status, url, vercel);
+    const { status, vercel } = await gotoChecked(page, url);
 
     await settlePage(page, settleTimeout);
 
@@ -808,6 +804,21 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
     await ctx?.close().catch(() => undefined);
     releaseSlot();
   }
+}
+
+/**
+ * Load `url`. Throws NavigationError when no document arrives and
+ * HttpStatusError for 401/403 (auth required); any other status is returned
+ * for the caller to judge — a 404 on Pre is a legitimately new page.
+ */
+export async function gotoChecked(page: Page, url: string): Promise<{ status?: number; vercel: boolean }> {
+  const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(err => {
+    throw new NavigationError(classifyNavigationError(err), url, err);
+  });
+  const status = response?.status();
+  const vercel = response ? isVercelResponse({ get: n => response.headers()[n] ?? null }) : false;
+  if (status === 401 || status === 403) throw new HttpStatusError(status, url, vercel);
+  return { status, vercel };
 }
 
 function classifyNavigationError(err: Error): NavigationError['kind'] {

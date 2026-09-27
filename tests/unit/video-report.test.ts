@@ -4,7 +4,6 @@ import { captionFor, layoutFor, pointersFor } from '../../src/compose';
 import { buildComment, buildSummary, momentLines } from '../../src/report';
 import { MomentOutcome, PrRunResult } from '../../src/types';
 import { Step } from '../../src/moments';
-import { SideRecording } from '../../src/record';
 
 describe('gh version gate', () => {
   it('reads gh --version and requires 2.99 for --attach', () => {
@@ -43,7 +42,6 @@ describe('layoutFor', () => {
 describe('captions and pointers', () => {
   const steps: Step[] = [{ verb: 'click', target: 'Account' }, { verb: 'wait', ms: 500 }, { verb: 'hover', target: 'Theme' }];
   const tick = (step: number, sinceStep = 0) => ({ a: 0, b: 0, aMissing: false, bMissing: false, step, sinceStep });
-  const rec = (pointers: SideRecording['pointers']): SideRecording => ({ start: 0, end: 1, marks: [], viewport: { width: 1280, height: 800 }, frames: [], pointers });
 
   it('names the step in progress, and keeps naming it through a wait', () => {
     expect(captionFor(tick(-1), steps)).toBe('');
@@ -53,8 +51,8 @@ describe('captions and pointers', () => {
   });
 
   it('draws a click marker that fades, a hover marker that stays, and none on a missing side', () => {
-    const pre = rec([{ step: 0, x: 10, y: 20 }, { step: 2, x: 5, y: 5 }]);
-    const post = rec([{ step: 0, x: 30, y: 40 }]);
+    const pre = [{ step: 0, x: 10, y: 20 }, { step: 2, x: 5, y: 5 }];
+    const post = [{ step: 0, x: 30, y: 40 }];
     expect(pointersFor(tick(0, 0), steps, pre, post)).toEqual([
       { side: 'a', x: 10, y: 20, kind: 'click', p: 0 },
       { side: 'b', x: 30, y: 40, kind: 'click', p: 0 },

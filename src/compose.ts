@@ -18,7 +18,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getBrowser } from './browser.js';
 import { describeStep, Step } from './moments.js';
-import { SideRecording } from './record.js';
+import type { PointerMark, SideRecording } from './record.js';
 import { alignTimeline, frameAt, SideTiming, Tick, timelineDuration } from './timeline.js';
 import { ensureFfmpeg, fitSize, startEncoder } from './ffmpeg.js';
 
@@ -60,6 +60,8 @@ function labelUri(name: 'pre' | 'post'): string | null {
   }
 }
 
+let labels: { pre: string | null; post: string | null } | undefined;
+
 /** A card drawn over one pane: why that side shows nothing, or stopped. */
 export interface Card {
   title: string;
@@ -76,13 +78,13 @@ interface PointerDraw {
 }
 
 /** What to draw for a tick's pointer marks, if anything. */
-export function pointersFor(tick: Tick, steps: Step[], pre: SideRecording | null, post: SideRecording): PointerDraw[] {
+export function pointersFor(tick: Tick, steps: Step[], pre: PointerMark[], post: PointerMark[]): PointerDraw[] {
   if (tick.step < 0) return [];
   const step = steps[tick.step];
   if (!step || (step.verb !== 'click' && step.verb !== 'hover' && step.verb !== 'type')) return [];
   const out: PointerDraw[] = [];
-  const add = (side: 'a' | 'b', rec: SideRecording | null, missing: boolean) => {
-    const mark = !missing && rec?.pointers.find(m => m.step === tick.step);
+  const add = (side: 'a' | 'b', marks: PointerMark[], missing: boolean) => {
+    const mark = !missing && marks.find(m => m.step === tick.step);
     if (!mark) return;
     if (step.verb === 'hover') out.push({ side, x: mark.x, y: mark.y, kind: 'hover', p: 0 });
     else if (tick.sinceStep < CLICK_MARK_MS) out.push({ side, x: mark.x, y: mark.y, kind: 'click', p: tick.sinceStep / CLICK_MARK_MS });
@@ -107,7 +109,9 @@ const PAGE_SCRIPT = `
 const cfg = window.__cfg;
 const c = document.getElementById('c');
 const g = c.getContext('2d');
-const imgs = { a: new Map(), b: new Map() };
+// One decoded frame per side: ticks only move forward, so the frame being
+// replaced is never needed again.
+const shown = { a: null, b: null };
 const labels = {};
 const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
 window.init = async () => {
@@ -171,17 +175,15 @@ function drawPointer(pt) {
   }
   g.restore();
 }
-async function frame(side, f) {
-  if (!f) return null;
-  const cache = imgs[side];
-  if (f.data) cache.set(f.i, await load('data:image/jpeg;base64,' + f.data));
-  return cache.get(f.i) || null;
+async function frame(side, data) {
+  if (data) shown[side] = await load('data:image/jpeg;base64,' + data);
+  return shown[side];
 }
 window.draw = async t => {
   const [a, b] = await Promise.all([frame('a', t.a), frame('b', t.b)]);
   g.fillStyle = '#f5f5f5'; g.fillRect(0, 0, c.width, c.height);
   drawLabel('a'); drawLabel('b');
-  drawPane('a', a, t.aCard); drawPane('b', b, t.bCard);
+  drawPane('a', a, t.aCard); drawPane('b', b, null);
   for (const pt of t.pointers) drawPointer(pt);
   const fy = cfg.header + cfg.paneHeight + cfg.footer / 2 + 5;
   g.fillStyle = '#262626'; g.font = '600 15px system-ui, sans-serif';
@@ -202,7 +204,7 @@ export interface ComposeInput {
   pre: SideRecording | null;
   post: SideRecording;
   /** Shown over Pre once it has run out of steps, or throughout when `pre` is null. */
-  preCard: Card;
+  preCard?: Card;
   /** The clip, `.webm`. */
   out: string;
   /** Its last frame, `.jpg`: the result of the interaction, for places video cannot play. */
@@ -232,33 +234,32 @@ export async function composeMoment(input: ComposeInput): Promise<ComposeResult>
     const cfg = {
       pad: PAD, header: HEADER, footer: FOOTER, name: input.name,
       paneWidth: layout.paneWidth, paneHeight: layout.paneHeight, scale: layout.scale,
-      labels: { pre: labelUri('pre'), post: labelUri('post') },
+      labels: labels ??= { pre: labelUri('pre'), post: labelUri('post') },
     };
     await page.setContent(`<!doctype html><body style="margin:0"><canvas id="c" width="${layout.width}" height="${layout.height}"></canvas>`
       + `<script>window.__cfg = ${JSON.stringify(cfg)};${PAGE_SCRIPT}</script>`);
     await page.evaluate('window.init()');
 
-    const sentA = new Set<number>();
-    const sentB = new Set<number>();
+    let sentA = -1;
+    let sentB = -1;
     let lastKey = '';
     for (const tick of ticks) {
       const ia = pre ? frameAt(timesA, tick.a) : -1;
       const ib = frameAt(timesB, tick.b);
-      const aCard = !pre || tick.aMissing ? input.preCard : null;
-      const pointers = pointersFor(tick, steps, pre, post);
+      const aCard = (!pre || tick.aMissing) && input.preCard ? input.preCard : null;
+      const pointers = pointersFor(tick, steps, pre?.pointers ?? [], post.pointers);
       const caption = captionFor(tick, steps);
       // An unchanged picture is the same JPEG: most of a clip is a page
       // holding still between steps, and those ticks cost nothing to draw.
       const key = `${ia}|${ib}|${aCard ? 1 : 0}|${caption}|${pointers.map(p => `${p.side}${Math.round(p.p * 20)}`).join()}`;
       if (key !== lastKey || !last) {
-        const ref = (i: number, sent: Set<number>, rec: SideRecording | null) => {
-          if (i < 0 || !rec) return null;
-          const first = !sent.has(i);
-          sent.add(i);
-          return { i, data: first ? rec.frames[i].data.toString('base64') : undefined };
-        };
+        // Only a frame the page is not already showing crosses over.
+        const a = ia >= 0 && ia !== sentA ? pre!.frames[ia].data.toString('base64') : null;
+        const b = ib >= 0 && ib !== sentB ? post.frames[ib].data.toString('base64') : null;
+        sentA = ia;
+        sentB = ib;
         const jpeg = await page.evaluate(t => (window as unknown as { draw: (t: unknown) => Promise<string> }).draw(t), {
-          a: ref(ia, sentA, pre), b: ref(ib, sentB, post), aCard, bCard: null, pointers, caption,
+          a, b, aCard, pointers, caption,
         });
         last = Buffer.from(jpeg, 'base64');
         lastKey = key;
