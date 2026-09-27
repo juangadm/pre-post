@@ -76,13 +76,40 @@ describe('momentLines', () => {
     expect(lines).toContain('https://github.com/user-attachments/assets/abc');
   });
 
-  it('links the poster to the clip when it cannot play inline, and says what would fix it', () => {
+  /** Every link target in the lines: none may be a GitHub address that downloads a video. */
+  const downloads = (lines: string[]) => [...lines.join('\n').matchAll(/\]\(([^)]+)\)/g)]
+    .map(m => m[1])
+    .filter(u => /github\.com\/[^/]+\/[^/]+\/(blob|raw)\/|raw\.githubusercontent\.com/.test(u) && /\.(webm|mp4|mov)(\?|$)/.test(u));
+  const posterUrl = 'https://github.com/a/b/blob/s/v.jpg?raw=true';
+  const hint = 'Update GitHub CLI to 2.99 or newer.';
+
+  it('with gh: the attachment alone, which GitHub plays inline', () => {
+    const lines = momentLines({ moments: [clip({ videoUrl: 'https://github.com/user-attachments/assets/abc', inline: true })], momentsHint: hint });
+    expect(lines).toContain('https://github.com/user-attachments/assets/abc');
+    expect(lines.join('\n')).not.toContain(hint);
+    expect(downloads(lines)).toEqual([]);
+  });
+
+  it('without gh on a public repo: the poster links to the clip on jsDelivr, and says what would fix it', () => {
     const lines = momentLines({
-      moments: [clip({ videoUrl: 'https://github.com/a/b/blob/s/v.webm?raw=true', posterUrl: 'https://github.com/a/b/blob/s/v.jpg?raw=true' })],
-      momentsHint: 'Update GitHub CLI to 2.99 or newer.',
+      moments: [clip({ videoUrl: 'https://cdn.jsdelivr.net/gh/a/b@s/v.webm', posterUrl })],
+      momentsHint: hint,
     });
-    expect(lines).toContain('[![Open the account menu — open the video](https://github.com/a/b/blob/s/v.jpg?raw=true)](https://github.com/a/b/blob/s/v.webm?raw=true)');
-    expect(lines).toContain('<sub>Update GitHub CLI to 2.99 or newer.</sub>');
+    expect(lines).toContain(`[![Open the account menu — open the video](${posterUrl})](https://cdn.jsdelivr.net/gh/a/b@s/v.webm)`);
+    expect(lines).toContain(`<sub>${hint}</sub>`);
+    expect(downloads(lines)).toEqual([]);
+  });
+
+  it('without gh on a private repo: the poster alone, never a link to the local file', () => {
+    const lines = momentLines({ moments: [clip({ posterUrl })], momentsHint: hint });
+    expect(lines).toContain(`![Open the account menu](${posterUrl})`);
+    expect(lines.join('\n')).not.toContain('.webm');
+    expect(lines).toContain(`<sub>${hint}</sub>`);
+    expect(downloads(lines)).toEqual([]);
+  });
+
+  it('the guard catches a blob link to a video', () => {
+    expect(downloads(momentLines({ moments: [clip({ videoUrl: 'https://github.com/a/b/blob/s/v.webm?raw=true', posterUrl })] }))).toHaveLength(1);
   });
 
   it('lists what could not be recorded, the Pre note, the long-clip nudge and the Moments over the limit', () => {
