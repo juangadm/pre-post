@@ -112,7 +112,7 @@ is printed as `Video: <path>`; send those too.
 | Flag | Use when |
 |------|----------|
 | `--routes /a,/b` | The user names the pages |
-| `-r`, `--responsive` | Desktop and mobile (default is desktop only) |
+| `--mobile` | Add mobile to desktop (default is desktop only) |
 | `--viewport-only` | First screen only instead of full page |
 | `--pr <n>` | The branch has several PRs or the lookup fails |
 | `--dry-run` | Preview locally, post nothing |
