@@ -107,6 +107,26 @@ describe('resolveComparison', () => {
     expect(c.strategy).toBe('local');
   });
 
+  it('falls back to local when the preview redirects to a Vercel sign-in page', async () => {
+    const lines: string[] = [];
+    const c = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+      }),
+      config: { before: 'https://prod.com' },
+      // Deployment Protection: 302 -> vercel.com/sso-api -> vercel.com/login, which answers 200.
+      probe: async url => url.includes('preview')
+        ? { status: 200, vercel: true, signIn: 'https://vercel.com/login?next=%2Fsso-api' }
+        : { status: 200, vercel: false },
+      devServer: Promise.resolve('http://localhost:3000'),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => undefined }),
+      log: line => lines.push(line),
+    }));
+    expect(c.strategy).toBe('local');
+    expect(lines.join('\n')).toContain('Preview deployment https://preview.app is not reachable');
+  });
+
   it('ignores a bot comment with no successful deployment for the head commit', async () => {
     const c = await resolveComparison(ctx({
       gh: gh({
@@ -253,6 +273,23 @@ describe('resolveComparison', () => {
     expect(failure.message).toContain('401');
     // Pinning --before to the same protected URL would fail the same way.
     expect(failure.message).not.toContain('--before');
+  });
+
+  it('says the baseline is behind access control when it redirects to a sign-in page', async () => {
+    const failure = await resolveComparison(ctx({
+      gh: gh({
+        '/deployments?sha=head': [{ id: 1, environment: 'Preview' }],
+        '/deployments/1/statuses': [{ state: 'success', environment_url: 'https://preview.app' }],
+      }),
+      config: { before: 'https://prod.com' },
+      probe: async url => url.includes('prod')
+        ? { status: 200, vercel: true, signIn: 'https://vercel.com/login?next=%2Fsso-api' }
+        : { status: 200, vercel: false },
+    })).catch(e => e);
+    expect(failure).toBeInstanceOf(NoDeployedBaselineError);
+    expect(failure.message).toContain('https://prod.com');
+    expect(failure.message).toContain('sign-in page');
+    expect(failure.message).toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
   });
 
   it('finds the preview for a commit before a PR is opened', async () => {
