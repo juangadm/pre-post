@@ -100,17 +100,22 @@ export function playwrightCoreDir(): string {
   return path.dirname(require.resolve('playwright-core/package.json'));
 }
 
-/**
- * Scan Playwright's browser cache for installed Chromium executables.
- */
-function findCachedChromium(): string[] {
+/** Where Playwright keeps the browsers (and the ffmpeg) it installs. */
+export function playwrightCacheDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || '';
-  const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH
+  return process.env.PLAYWRIGHT_BROWSERS_PATH
     || (process.platform === 'darwin'
       ? path.join(home, 'Library', 'Caches', 'ms-playwright')
       : process.platform === 'win32'
         ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'ms-playwright')
         : path.join(home, '.cache', 'ms-playwright'));
+}
+
+/**
+ * Scan Playwright's browser cache for installed Chromium executables.
+ */
+function findCachedChromium(): string[] {
+  const cacheDir = playwrightCacheDir();
 
   let entries: string[];
   try {
@@ -243,7 +248,9 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<Browser> 
   throw new BrowserNotFoundError(lastError);
 }
 
-export type BrowserKind = 'chromium-headless-shell' | 'chromium';
+export type BrowserKind = 'chromium-headless-shell' | 'chromium' | 'ffmpeg';
+
+const INSTALL_SIZE_MB: Record<BrowserKind, number> = { 'chromium-headless-shell': 80, chromium: 170, ffmpeg: 2 };
 
 /**
  * Install a browser through playwright-core's CLI. Resolves true on success.
@@ -253,7 +260,7 @@ export type BrowserKind = 'chromium-headless-shell' | 'chromium';
  */
 export function installBrowser(kind: BrowserKind): Promise<boolean> {
   const cli = path.join(playwrightCoreDir(), 'cli.js');
-  console.error(`Installing ${kind} (one-time, ~${kind === 'chromium' ? '170' : '80'} MB)...`);
+  console.error(`Installing ${kind} (one-time, ~${INSTALL_SIZE_MB[kind]} MB)...`);
   return new Promise(resolve => {
     const child = spawn(process.execPath, [cli, 'install', kind], { stdio: ['ignore', 'inherit', 'inherit'] });
     child.on('error', () => resolve(false));
