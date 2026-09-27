@@ -6,6 +6,7 @@
 
 import { getBrowser, launchBrowserOrInstall } from './browser.js';
 import { hostOf } from './url.js';
+import { checkLanding } from './landing.js';
 import { BrowserNotFoundError, HttpStatusError, NeedsHumanError, isVercelResponse } from './errors.js';
 export { NeedsHumanError } from './errors.js';
 
@@ -130,6 +131,12 @@ export interface ProbeResult {
   vercel: boolean;
   /** Response Content-Type, lowercased and without parameters. */
   contentType?: string;
+  /**
+   * Where a redirect took the probe when it ended on a sign-in page, e.g.
+   * Vercel Deployment Protection's `302 -> vercel.com/sso-api -> vercel.com/login`.
+   * The status is then the login page's 200, so this is the only sign of the wall.
+   */
+  signIn?: string;
 }
 
 /**
@@ -145,7 +152,9 @@ export async function probeUrl(
     const res = await fetch(url, { method: 'GET', headers, redirect: options.redirect ?? 'follow', signal: AbortSignal.timeout(options.timeoutMs ?? 10_000) });
     if (options.drain) await res.arrayBuffer();
     const contentType = res.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
-    return { status: res.status, vercel: isVercelResponse(res.headers), contentType: contentType || undefined };
+    const result: ProbeResult = { status: res.status, vercel: isVercelResponse(res.headers), contentType: contentType || undefined };
+    if (res.redirected && res.url && checkLanding(url, res.url).blocked) result.signIn = res.url;
+    return result;
   } catch {
     return { status: null, vercel: false };
   }
