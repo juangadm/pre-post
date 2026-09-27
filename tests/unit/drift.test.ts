@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { driftNotes, satisfies, skillVersion } from '../../src/drift';
+import { driftNotes, ownVersion, satisfies, skillVersion } from '../../src/drift';
 
 let home: string;
 let repo: string;
@@ -71,5 +71,24 @@ describe('driftNotes', () => {
     expect(notes[1]).toContain('commands/pre-post.md was written for an unversioned pre-post');
     expect(notes[2]).toContain('commands/pre-post.md overrides the pre-post skill');
     expect(notes[3]).toContain('package.json pins @juangadm/pre-post ^0.1.1, but this run is 1.3.0');
+  });
+});
+
+/**
+ * The skill ships in the package, so it must describe and invoke the release
+ * it ships with. Bumping package.json without it fails here.
+ */
+describe('the bundled skill', () => {
+  const skill = fs.readFileSync(path.resolve(__dirname, '../../skill/SKILL.md'), 'utf8');
+
+  it('is stamped with the package version and pins every npx line to it', () => {
+    expect(skillVersion(skill)).toBe(ownVersion());
+    const pins = [...skill.matchAll(/@juangadm\/pre-post@([\w.+-]+)/g)].map(m => m[1]);
+    expect(pins.length).toBeGreaterThan(0);
+    expect(new Set(pins)).toEqual(new Set([ownVersion()]));
+  });
+
+  it('describes the PR description, not a comment, as where results go', () => {
+    expect(skill).not.toMatch(/comment on the (open )?PR|PR comment is the deliverable/i);
   });
 });

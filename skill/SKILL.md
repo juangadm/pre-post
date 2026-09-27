@@ -1,8 +1,9 @@
 ---
 name: pre-post
 description: Before/after screenshots for the current PR. Use when the user says "take before and after", "pre-post", "screenshot comparison", "visual diff", "PR screenshots", or after making visual UI changes.
+version: 1.3.0
 allowed-tools:
-  - Bash(npx -y @juangadm/pre-post@latest *)
+  - Bash(npx -y @juangadm/pre-post@1.3.0 *)
   - Bash(npx pre-post *)
   - Bash(pre-post *)
 ---
@@ -39,8 +40,12 @@ the Post side. Pass `--no-local-baseline` to turn it off.
 ## Run
 
 ```bash
-npx -y @juangadm/pre-post@latest pr
+npx -y @juangadm/pre-post@1.3.0 pr
 ```
+
+The version is pinned on purpose: this file describes that release. If the run starts with
+`Note:` lines about another version, relay them; they mean a copy of these instructions is
+out of date.
 
 If you have a folder the user can open from wherever they are following you (a scratchpad
 or workspace directory in a hosted session), add `-o <that folder>/pre-post` so the images
@@ -66,11 +71,15 @@ updated. Someone following you from a phone sees it there before they open GitHu
 
 ## Rules
 
-- Run the command once. Do not open, read, or describe the screenshot files. The PR
-  description is the deliverable, and the sheet is the one image you pass along. Report the
-  summary the command prints, plus the PR link.
+- Run the command once. Do not open, read, or describe the screenshot files. The block in
+  the PR description is the deliverable, and the sheet is the one image you pass along. Tell
+  the user what the summary says, plus the PR link. Never paste the terminal output into the
+  PR: ports, timings and percentages there are for you, not for a reviewer.
 - Do not switch branches, start dev servers, or use a browser tool yourself. The command
   handles all three.
+- Exit code 4 means a page rendered an error (a build error, a 500) instead of itself. No
+  screenshots were published and the PR says so in one sentence. Relay that sentence; the
+  branch needs fixing before a visual comparison means anything.
 - Exit code 3 means a human must do one thing (set a token, start the dev server, pass
   `--before`). Relay that one sentence verbatim and stop. If GitHub refused the token, the
   screenshots were still taken: send the sheet first, then relay the sentence. Never ask the
@@ -93,5 +102,5 @@ updated. Someone following you from a phone sees it there before they open GitHu
 To run on every PR without anyone invoking it, point the user to the GitHub Action guide
 (https://github.com/juangadm/pre-post/blob/main/docs/github-action.md). It posts with GitHub's own token, which also covers work done in cloud sessions.
 
-Login-protected sites: `npx -y @juangadm/pre-post@latest login https://site` opens a browser
+Login-protected sites: `npx -y @juangadm/pre-post@1.3.0 login https://site` opens a browser
 once; the saved session is reused automatically.
