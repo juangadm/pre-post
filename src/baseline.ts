@@ -644,6 +644,39 @@ export async function reuseInstall(repoRoot: string, worktree: string, dirs: str
   return false;
 }
 
+/** Signal a detached child's whole process group; false when it is already gone. */
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals | 0): boolean {
+  if (!child.pid) return false;
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** How long a dev server gets to exit on SIGTERM before it is killed. */
+export const SERVER_STOP_TIMEOUT_MS = 5_000;
+
+/**
+ * SIGTERM the server's process group and wait until the group is gone.
+ *
+ * The group, not the child: the child is the package manager, and the server
+ * it started (`next-server`, `vite`) can outlive it. A group that ignores
+ * SIGTERM is SIGKILLed after `SERVER_STOP_TIMEOUT_MS`.
+ */
+export async function stopGroup(child: ChildProcess, timeoutMs = SERVER_STOP_TIMEOUT_MS): Promise<void> {
+  if (!signalGroup(child, 'SIGTERM')) return;
+  const deadline = Date.now() + timeoutMs;
+  while (signalGroup(child, 0)) {
+    if (Date.now() >= deadline) {
+      signalGroup(child, 'SIGKILL');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -731,29 +764,49 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
   let stopped = false;
 
   // A detached dev server survives Ctrl-C and keeps its port, so tear it down
-  // on the signals that end the run as well as on the normal path.
-  const onSignal = () => { void cleanup(); };
+  // on the signals that end the run as well as on the normal path. Those
+  // paths cannot wait for anything — an 'exit' handler runs no more event
+  // loop — so they get the synchronous teardown.
+  const onSignal = () => { cleanupNow(); };
   const untrap = () => {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
     process.off('exit', onSignal);
   };
+  // Guard on the thing that actually matters: only a throwaway worktree may be
+  // removed. Checking `opts.sha` instead would let any future caller that
+  // points `worktree` at a real checkout delete uncommitted work.
+  const throwaway = worktree !== opts.repoRoot;
 
-  const cleanup = async (): Promise<void> => {
+  /** The process is gone, a best-effort worktree removal, no waiting. */
+  const cleanupNow = (): void => {
     if (stopped) return;
     stopped = true;
     untrap();
-    if (child && child.exitCode === null) {
-      try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
-    }
-    // Guard on the thing that actually matters: only a throwaway worktree may be
-    // removed. Checking `opts.sha` instead would let any future caller that
-    // points `worktree` at a real checkout delete uncommitted work.
-    if (worktree === opts.repoRoot) return;
+    if (child) signalGroup(child, 'SIGKILL');
+    if (!throwaway) return;
     try {
       execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: opts.repoRoot, stdio: 'ignore' });
     } catch {
       fs.rmSync(worktree, { recursive: true, force: true });
+    }
+  };
+
+  /**
+   * Stop the server, and only once it has exited, remove its worktree.
+   *
+   * The order is the point. Removing the tree under a dev server that is
+   * still shutting down races its last writes into `.next`, and the removal
+   * blocked the event loop while it walked the copied node_modules.
+   */
+  const cleanup = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
+    untrap();
+    if (child) await stopGroup(child);
+    if (!throwaway) return;
+    if (await gitAsync(['worktree', 'remove', '--force', worktree], opts.repoRoot) === null) {
+      await fs.promises.rm(worktree, { recursive: true, force: true });
     }
   };
 
