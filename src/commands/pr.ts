@@ -12,7 +12,7 @@ import { capNotice, detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
-import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
+import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, isPublicRepo, jsdelivrUrl, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, groupChanges, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks, throwIfBlocked } from '../run.js';
@@ -425,21 +425,26 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
     // One list for everything this run publishes: where it goes, what it
     // is, and where its URL lands once GitHub has it.
-    const uploads: Array<{ path: string; local: string; assign: (url: string | undefined) => void }> = [];
+    const uploads: Array<{ path: string; local: string; assign: (url: string | undefined, sha: string) => void }> = [];
     for (const o of changed) {
       for (const kind of PUBLISHED_KINDS) {
         const local = o.files![kind];
         if (local) uploads.push({ path: `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`, local, assign: url => { o.urls = { ...o.urls, [kind]: url } as ArtifactSet; } });
       }
     }
+    // A clip at a blob URL downloads instead of playing, so it is linked
+    // through jsDelivr, which only public repos can use. A private repo
+    // gets the poster alone.
+    const playable = placed.linked.length > 0 && await isPublicRepo(writeGh, ownerRepo);
     for (const m of placed.linked) {
-      uploads.push({ path: `${folder}/${path.basename(m.file!)}`, local: m.file!, assign: url => { m.videoUrl = url; } });
+      const clipPath = `${folder}/${path.basename(m.file!)}`;
+      if (playable) uploads.push({ path: clipPath, local: m.file!, assign: (_, sha) => { m.videoUrl = jsdelivrUrl(ownerRepo, sha, clipPath); } });
       uploads.push({ path: `${folder}/${path.basename(m.poster!)}`, local: m.poster!, assign: url => { m.posterUrl = url; } });
     }
     const files: AssetFile[] = uploads.map(u => ({ path: u.path, content: fs.readFileSync(u.local) }));
     log(`Publishing ${files.length} file(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
     const published = await timings.time('publish', () => publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`));
-    for (const u of uploads) u.assign(published.urls.get(u.path));
+    for (const u of uploads) u.assign(published.urls.get(u.path), published.sha);
   }
 
   return finish({

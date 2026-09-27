@@ -2,8 +2,9 @@
  * Put clips where GitHub will play them.
  *
  * A video plays inline in a PR only from GitHub's own attachment storage
- * (`github.com/user-attachments/assets/…`); a file on the assets branch is a
- * download link at best. Since 2026-09-01 `gh` uploads there with `--attach`
+ * (`github.com/user-attachments/assets/…`); a clip on the assets branch is
+ * only a link that plays it in the browser, from a public repo (see
+ * `jsdelivrUrl`). Since 2026-09-01 `gh` uploads there with `--attach`
  * (gh 2.99+, a person's login or a classic PAT — the Actions GITHUB_TOKEN is
  * refused), rewriting a local reference in the text it posts into the
  * attachment URL.
