@@ -15,7 +15,7 @@ export default function CommandsPage() {
     <>
       <PageHeader title="Commands">You&apos;ll mostly just need the first one.</PageHeader>
 
-      <Section id="commands" title="Commands">
+      <div className="space-y-3">
         <RefTable
           head={["Command", "What it does"]}
           rows={[
@@ -30,7 +30,7 @@ export default function CommandsPage() {
           Your agent runs these for you. To run one yourself, start it with{" "}
           <InlineCode>npx -y @juangadm/pre-post@latest</InlineCode>.
         </p>
-      </Section>
+      </div>
 
       <Section id="options" title="Options">
         <RefTable
