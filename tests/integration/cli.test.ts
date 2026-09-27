@@ -69,6 +69,9 @@ describe('CLI', () => {
     try {
       execFileSync('git', ['init', '-q'], { cwd: root });
       execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+      // One changed file, so there is a page to capture and the run gets as
+      // far as choosing its two sides.
+      fs.writeFileSync(path.join(root, 'index.html'), '<h1>hi</h1>');
       const { exitCode, stderr } = await runCli(['pr', '--dry-run'], root);
       expect(exitCode).toBe(3);
       // With no deployment and no dev server there is no "Post" side at all, so
@@ -86,10 +89,27 @@ describe('CLI', () => {
     try {
       execFileSync('git', ['init', '-q'], { cwd: root });
       execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+      fs.writeFileSync(path.join(root, 'index.html'), '<h1>hi</h1>');
       // --after supplies Post; nothing supplies Pre, and there is no PR to build one from.
       const { exitCode, stderr } = await runCli(['pr', '--dry-run', '--after', 'http://localhost:9', '--no-local-baseline'], root);
       expect(exitCode).toBe(3);
       expect(stderr).toContain('--before');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A branch that changed nothing affects no page: nothing is served, nothing
+  // is captured, and the run says so instead of comparing the home page.
+  it('pr --dry-run on an unchanged branch captures nothing and says so', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-cli-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
+      const { exitCode, stdout, stderr } = await runCli(['pr', '--dry-run'], root);
+      expect(exitCode).toBe(0);
+      expect(stderr).toContain('nothing to capture');
+      expect(stdout).toContain('**No pages affected**');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
