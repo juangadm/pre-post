@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { ArtifactKind, ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, isBrokenVerdict, PrePostConfig, PrRunResult } from '../types.js';
+import { ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, isBrokenVerdict, PrePostConfig, PrRunResult } from '../types.js';
 import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { capNotice, detectRoutesForRepo, resolveSample } from '../routes.js';
@@ -23,7 +23,7 @@ import { driftNotes } from '../drift.js';
 import { buildSheet } from '../sheet.js';
 import { Moment, parseMoments, selectMoments, skippedNote } from '../moments.js';
 import { recordMoments } from '../video.js';
-import { ghAttachSupport, uploadAttachments } from '../attach.js';
+import { attachClips } from '../attach.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
   cwd?: string;
@@ -192,28 +192,28 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // still needs a sample URL gets that answer in a second, not after a browser
   // and two dev servers have started for nothing.
   const explicitRoutes = Boolean(opts.routes?.length);
-  let routes = explicitRoutes ? opts.routes! : detection.routes.map(r => r.path);
+  // A Moment names its page, so a branch whose changes detection cannot place
+  // (a shared component, a style) still has something to capture.
+  const momentRoutes = [...new Set(moments.map(m => m.route))];
+  const detected = detection.routes.map(r => r.path);
+  const routes = explicitRoutes ? opts.routes! : detected.length ? detected : momentRoutes;
   const skippedDynamic = explicitRoutes ? [] : detection.skippedDynamic;
   const omitted = !explicitRoutes && detection.omitted.length
     ? { routes: detection.omitted.map(r => r.path), cap: settings.maxRoutes }
     : undefined;
   if (!explicitRoutes) {
-    log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
+    log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${detected.length ? detected.join(', ') : 'none detected'}`);
     for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
     if (omitted) log(`  ${capNotice(omitted.routes, omitted.cap)}`);
-    if (!routes.length) {
+    if (!detected.length && routes.length) {
+      log(`Capturing the pages the Moments use: ${routes.join(', ')}`);
+    } else if (!routes.length) {
       log(skippedDynamic.length
         ? `Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`
         : 'Nothing this branch changed renders on a page; nothing to capture.');
     }
   }
 
-  // A Moment names its page, so a branch whose changes detection cannot place
-  // (a shared component, a style) still has something to capture.
-  if (!routes.length && moments.length) {
-    routes = [...new Set(moments.map(m => m.route))];
-    log(`Capturing the pages the Moments use: ${routes.join(', ')}`);
-  }
   const momentsSkippedNote = skippedNote(momentsSkipped);
   if (momentsSkippedNote) log(momentsSkippedNote);
 
@@ -416,63 +416,36 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const leads = new Set(groupChanges(outcomes).map(g => g.lead));
   const changed = isBrokenVerdict(verdict) ? [] : outcomes.filter(o => (leads.has(o) || o.status === 'added' || o.status === 'removed') && o.files);
 
-  // Clips go up as PR attachments, the only place GitHub plays video inline.
-  // Where that cannot happen (old gh, no PR yet, a token --attach refuses)
-  // they go on the assets branch beside the screenshots, poster first, and the
-  // PR says what would make them play.
-  const clips = (momentOutcomes ?? []).filter(m => m.status === 'recorded' && m.file);
-  let momentsHint: string | undefined;
-  if (writeGh && clips.length) {
-    const support = pr ? ghAttachSupport() : { ok: false as const, reason: 'Open the PR and re-run to play the videos inline.' };
-    if (support.ok) {
-      try {
-        const urls = await timings.time('attach', uploadAttachments(writeGh, ownerRepo, pr!.number, clips.map(m => m.file!), found?.token));
-        for (const m of clips) { m.videoUrl = urls.get(m.file!); m.inline = true; }
-        log(`Attached ${clips.length} video(s) to PR #${pr!.number}.`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        momentsHint = `GitHub did not take the videos as attachments (${message}); they are linked instead. Inline video needs gh signed in as a person or with a classic token, not the Actions GITHUB_TOKEN.`;
-        log(momentsHint);
-      }
-    } else {
-      momentsHint = support.reason;
-      log(`Videos will be linked, not inline: ${support.reason}`);
-    }
-  }
-  const linkedClips = clips.filter(m => !m.inline);
+  const clips = (momentOutcomes ?? []).filter(m => m.status === 'recorded');
+  const placed = writeGh && clips.length
+    ? await timings.time('attach', attachClips(clips, { gh: writeGh, ownerRepo, pr: pr?.number, token: found?.token, log }))
+    : { linked: [] };
 
-  if (writeGh && (changed.length || linkedClips.length)) {
+  if (writeGh && (changed.length || placed.linked.length)) {
     const folder = pr ? `pr-${pr.number}/${id}` : `branch/${routeSlug(branch || 'detached')}/${id}`;
-    const keyFor = (o: typeof changed[number], kind: ArtifactKind) => `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`;
-    const files: AssetFile[] = [];
+    // One list for everything this run publishes: where it goes, what it
+    // is, and where its URL lands once GitHub has it.
+    const uploads: Array<{ path: string; local: string; assign: (url: string | undefined) => void }> = [];
     for (const o of changed) {
       for (const kind of PUBLISHED_KINDS) {
         const local = o.files![kind];
-        if (local) files.push({ path: keyFor(o, kind), content: fs.readFileSync(local) });
+        if (local) uploads.push({ path: `${folder}/${routeSlug(o.route)}-${o.viewport}-${artifactSuffix(kind)}.png`, local, assign: url => { o.urls = { ...o.urls, [kind]: url } as ArtifactSet; } });
       }
     }
-    for (const m of linkedClips) {
-      for (const local of [m.file!, m.poster!]) {
-        if (local && fs.existsSync(local)) files.push({ path: `${folder}/${path.basename(local)}`, content: fs.readFileSync(local) });
-      }
+    for (const m of placed.linked) {
+      uploads.push({ path: `${folder}/${path.basename(m.file!)}`, local: m.file!, assign: url => { m.videoUrl = url; } });
+      uploads.push({ path: `${folder}/${path.basename(m.poster!)}`, local: m.poster!, assign: url => { m.posterUrl = url; } });
     }
+    const files: AssetFile[] = uploads.map(u => ({ path: u.path, content: fs.readFileSync(u.local) }));
     log(`Publishing ${files.length} file(s) to ${ownerRepo}@${settings.assetsBranch} ...`);
     const published = await timings.time('publish', () => publishAssets(writeGh, ownerRepo, settings.assetsBranch, files, pr ? `Screenshots for #${pr.number} (${id})` : `Screenshots for ${branch || 'detached'} (${id})`));
-    for (const o of changed) {
-      const urls: Partial<ArtifactSet> = {};
-      for (const kind of PUBLISHED_KINDS) if (o.files![kind]) urls[kind] = published.urls.get(keyFor(o, kind));
-      o.urls = urls as ArtifactSet;
-    }
-    for (const m of linkedClips) {
-      m.videoUrl = published.urls.get(`${folder}/${path.basename(m.file!)}`);
-      if (m.poster) m.posterUrl = published.urls.get(`${folder}/${path.basename(m.poster)}`);
-    }
+    for (const u of uploads) u.assign(published.urls.get(u.path));
   }
 
   return finish({
     outcomes, beforeBase: before, afterBase: after,
     beforeLabel: comparison.before.label, afterLabel: comparison.after.label,
     outputDir, sheetPath, verdict: verdict ?? undefined,
-    moments: momentOutcomes?.length ? momentOutcomes : undefined, momentsHint,
+    moments: momentOutcomes?.length ? momentOutcomes : undefined, momentsHint: placed.hint,
   });
 }
