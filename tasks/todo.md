@@ -1,3 +1,28 @@
+# Video Moments (1.5.0) — plan: ~/.claude/plans/zippy-purring-token.md
+
+- [x] Phase 0 spike: screencast fps, VP8 legibility, composite speed (docs/internal/video-spike.md)
+- [ ] Phase 0 spike: gh --attach on a live PR — blocked on gh 2.99+ locally (have 2.83.1)
+- [x] moments.ts: schema, validation, 3-Moment limit, long-clip nudge
+- [x] browser.ts: motion context option
+- [x] record.ts: screencast capture + step timestamps
+- [x] compose.ts: step-aligned timeline + canvas composite
+- [x] ffmpeg.ts: locate/auto-install bundled ffmpeg, encode, size budget
+- [x] Wire config / CLI / pr command / types
+- [x] report.ts: Moments section + failures
+- [x] attach.ts: gh --attach upload + branch fallback
+- [x] SKILL.md, doctor, docs, site copy, CI ffmpeg, version bump
+- [x] Verify locally: unit (504), browser + integration (48), real `pr --dry-run --moments`
+- [ ] Verify live: inline video on a real PR (needs gh 2.99+)
+
+## Review
+
+- One Moment: ~3.9s recording (3.25s is the clip itself) + ~1.1s composite/encode.
+  Three in parallel: 8.6s. Clips are 80–125 KB for 2–3.5s.
+- A step Pre cannot do costs up to 3s of searching (FIND_TIMEOUT_MS); coordinating the
+  sides would remove it (backlog).
+- Fallback path (no gh 2.99) links poster → clip on the assets branch; only this path has
+  run against real code, in dry-run. The attach path is unit-tested at its seams only.
+
 # Fix pass from the six-PR field test (juangadm/juangabriel, #60–65)
 
 Source: field report against @juangadm/pre-post 1.1.0. All six runs used the
