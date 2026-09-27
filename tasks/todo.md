@@ -17,6 +17,8 @@ are in git history: `git log -- tasks/todo.md`.
 
 ## Later
 
+- [ ] Landing page: sidebar docs shell + dual-audience copy. Plan: tasks/landing-page-plan.md
+
 - [ ] Persistent baseline worktree (~9s per run saved). An optimisation, not a fix.
 - Video follow-ups live in tasks/backlog.md.
 
