@@ -55,6 +55,8 @@ describe.skipIf(!playwrightAvailable)('recordMoments', () => {
       { name: 'Switch to dark theme', route: '/menu.html', steps: [{ click: 'Account' }, { click: 'Theme' }] },
       { name: 'Open settings', route: '/menu.html', steps: [{ click: 'Settings' }] },
       { name: 'New page', route: '/nope.html', viewport: 'mobile', steps: [] },
+      // Same name as the first: must not share its file.
+      { name: 'Open the account menu', route: '/menu.html', steps: [] },
     ], 'test');
     results = await recordMoments(moments, { before: urlOf(pre), after: urlOf(post), outputDir: out });
   }, 120_000);
@@ -89,6 +91,14 @@ describe.skipIf(!playwrightAvailable)('recordMoments', () => {
   it('gives no clip, only the sentence, when Post cannot do a step', () => {
     expect(results[2]).toMatchObject({ status: 'error', error: 'Couldn\'t find “Settings” on Post (step 1).' });
     expect(results[2].file).toBeUndefined();
+  });
+
+  it('records a load-only Moment from before navigation, into a file of its own', () => {
+    const m = results[4];
+    expect(m.status).toBe('recorded');
+    expect(m.durationMs).toBeGreaterThanOrEqual(3000);
+    expect(m.file).not.toBe(results[0].file);
+    expect(new Set(results.filter(r => r.file).map(r => r.file)).size).toBe(results.filter(r => r.file).length);
   });
 
   it('says so when the page is missing on Post', () => {
