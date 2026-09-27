@@ -10,7 +10,7 @@ inputs:
     description: Publishes the images and edits the PR. Needs contents and pull-requests write. A classic personal access token here also lets Moments (video) play inline in the PR.
     default: ${{ github.token }}
   args:
-    description: Extra flags for `pre-post pr`, such as --responsive or --routes /a,/b.
+    description: Extra flags for `pre-post pr`, such as --mobile or --routes /a,/b.
     default: ''
   cli:
     description: How pre-post is invoked. Leave empty to run the version this action revision ships; set it only to test an unreleased build.

@@ -32,7 +32,7 @@ Vercel's Deployment Protection never gets in the way.
 - **pnpm or yarn** comes from the `packageManager` field in package.json. Without one, set it
   up before the pre-post step (e.g. `pnpm/action-setup`), as any other job would.
 - **Fork PRs are skipped:** their token cannot write, so there is nowhere to post.
-- **Flags** go in `with: { args: '--responsive' }`.
+- **Flags** go in `with: { args: '--mobile' }`.
 - **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
   posting fails.
 - **Videos ([Moments](video.md))** are recorded when `.pre-post.json` has `"moments"`. With
