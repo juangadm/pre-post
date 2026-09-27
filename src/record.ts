@@ -199,24 +199,28 @@ export async function recordSide(url: string, moment: Moment, viewport: Viewport
     const cdp = await ctx.newCDPSession(page);
     const loadOnly = moment.steps.length === 0;
 
-    const { status } = await gotoChecked(page, url);
+    // A load-only Moment is about the load, so recording starts before the
+    // navigation: an entrance animation can run while the document is still
+    // parsing. Any other starts on a settled page, because how fast each side
+    // loaded is not the change.
+    let start = Date.now();
+    let stop = loadOnly ? await startScreencast(cdp, viewport, maxWidth, frames) : null;
+    const { status } = await gotoChecked(page, url).catch(async err => { await stop?.(); throw err; });
     if (status !== undefined && status >= 400) {
+      await stop?.();
       const now = Date.now();
-      return { viewport, frames, pointers, marks, start: now, end: now, status };
+      return { viewport, frames: [], pointers, marks, start: now, end: now, status };
     }
-
-    // A load-only Moment is about the load, so recording starts at once. Any
-    // other starts on a settled page: how fast each side loaded is not the change.
-    if (!loadOnly) {
+    if (!stop) {
       await settlePage(page, SETTLE_MS);
       await hideDevIndicator(page);
+      // The screencast sends nothing until something paints, and a settled
+      // page paints nothing. Seed the stream with what is on screen now.
+      start = Date.now();
+      const first = await page.screenshot({ type: 'jpeg', quality: 85, timeout: 10_000 }).catch(() => null);
+      if (first) frames.push({ t: start, data: first });
+      stop = await startScreencast(cdp, viewport, maxWidth, frames);
     }
-    // The screencast sends nothing until something paints, and a settled page
-    // paints nothing. Seed the stream with what is on screen now.
-    const start = Date.now();
-    const first = await page.screenshot({ type: 'jpeg', quality: 85, timeout: 10_000 }).catch(() => null);
-    if (first) frames.push({ t: start, data: first });
-    const stop = await startScreencast(cdp, viewport, maxWidth, frames);
 
     let failure: (SideRecording['failure'] & { at: number }) | undefined;
     await page.waitForTimeout(loadOnly ? LOAD_ONLY_MS : LEAD_IN_MS);
