@@ -73,6 +73,8 @@ describe('route coverage', () => {
 
   it('captures / as a check only when nothing mapped and nothing waits for a sample', () => {
     expect(detect(['README.md']).routes.map(r => [r.path, r.reason])).toEqual([['/', 'No page mapped from the diff; capturing / as a check']]);
+    // An empty diff changed nothing, so there is nothing to check.
+    expect(detect([]).routes).toEqual([]);
     const dynamicOnly = detect(['app/writing/[slug]/page.tsx']);
     expect(dynamicOnly.routes).toEqual([]);
     expect(dynamicOnly.skippedDynamic).toEqual(['/writing/[slug]']);

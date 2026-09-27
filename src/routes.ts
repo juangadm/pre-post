@@ -508,11 +508,12 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     else skippedDynamic.add(r.path);
   }
 
-  // Nothing mapped to any page: `/` is captured as a check. Not when the only
-  // pages affected are dynamic ones waiting for a sample — those were found,
-  // and `/` is a page the branch never touched.
-  if (!resolved.length && !skippedDynamic.size) {
-    resolved.push({ path: '/', sourceFile: appRel[0] ?? '', confidence: 'low', reason: 'No page mapped from the diff; capturing / as a check' });
+  // The app changed but nothing mapped to a page: `/` is captured as a check.
+  // Not for an empty diff — nothing changed, so there is nothing to check —
+  // and not when the only pages affected are dynamic ones waiting for a
+  // sample: those were found, and `/` is a page the branch never touched.
+  if (appRel.length && !resolved.length && !skippedDynamic.size) {
+    resolved.push({ path: '/', sourceFile: appRel[0], confidence: 'low', reason: 'No page mapped from the diff; capturing / as a check' });
   }
 
   // Reported by the caller, beside the routes it did pick, rather than warned

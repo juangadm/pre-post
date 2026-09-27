@@ -190,7 +190,11 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
     for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
     if (omitted) log(`  ${capNotice(omitted.routes, omitted.cap)}`);
-    if (!routes.length) log(`Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`);
+    if (!routes.length) {
+      log(skippedDynamic.length
+        ? `Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`
+        : 'Nothing this branch changed renders on a page; nothing to capture.');
+    }
   }
 
   // --- Start the slow, independent things now; they overlap resolution -------
