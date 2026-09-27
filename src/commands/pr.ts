@@ -17,7 +17,7 @@ import { buildComment, STICKY_MARKER } from '../report.js';
 import { resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
-import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
+import { Comparison, describeComparison, resolveComparison, sideLabel } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
 import { buildSheet } from '../sheet.js';
 
@@ -327,12 +327,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
       // is real wall clock that used to show up under no step at all.
       await timings.time('cleanup', stopEverything());
     }
-    return { run, sheetPath, before, after, outputDir };
+    return { run, sheetPath, before, after, outputDir, labels: { before: sideLabel(comparison.before), after: sideLabel(comparison.after) } };
   };
   const captured = routes.length
     ? await captureAll()
-    : (await stopEverything(), { run: { outcomes: [], verdict: null }, sheetPath: undefined, before: '', after: '', outputDir: '' });
-  const { run, sheetPath, before, after, outputDir } = captured;
+    : (await stopEverything(), { run: { outcomes: [], verdict: null }, sheetPath: undefined, before: '', after: '', outputDir: '', labels: undefined });
+  const { run, sheetPath, before, after, outputDir, labels } = captured;
   const { outcomes } = run;
 
   // The pipeline judges whether it compared the two sites or something standing
@@ -373,6 +373,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     prNumber: pr?.number,
     beforeBase: before,
     afterBase: after,
+    beforeLabel: labels?.before,
+    afterLabel: labels?.after,
     outcomes,
     skippedDynamic,
     omittedRoutes,

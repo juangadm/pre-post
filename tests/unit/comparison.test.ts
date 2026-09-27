@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
+import { resolveComparison, describeComparison, sideLabel, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
 const PR = { number: 7, head: { sha: 'head1234567' }, base: { sha: 'base7654321' } };
@@ -120,6 +120,18 @@ describe('resolveComparison', () => {
     }));
     expect(c.strategy).toBe('local');
     expect(c.after.url).not.toContain('stale-preview');
+  });
+
+  // The PR used to name Pre by its throwaway port, a different one every run.
+  it('names local sides for a reviewer, not by port', async () => {
+    const c = await resolveComparison(ctx({
+      gh: gh({ '/deployments?sha=head': [], [`/commits/${PR.head.sha}/status`]: vercelStatus('pending'), '/issues/7/comments': [], '/deployments?sha=base': [] }),
+      devServer: Promise.resolve('http://localhost:3000'),
+      serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => undefined }),
+    }));
+    expect(sideLabel(c.before)).toBe(`base \`${PR.base.sha.slice(0, 7)}\``);
+    expect(sideLabel(c.after)).toBe('this branch');
+    expect(sideLabel({ url: 'https://acme-git-main.vercel.app' })).toBe('acme-git-main.vercel.app');
   });
 
   it('uses the bot comment once the head commit has a green deployment', async () => {

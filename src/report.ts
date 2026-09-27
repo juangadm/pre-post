@@ -66,7 +66,10 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
 
   // Both sides can now be a deployment, so name the actual hosts rather than
   // assuming Post is the reader's own checkout.
-  const postLabel = isLocalUrl(result.afterBase) ? 'this branch (local)' : hostOf(result.afterBase);
+  // Named for the reviewer. A local side is served on a throwaway port, so its
+  // URL named nothing and changed on every run; the label says what it is.
+  const preLabel = result.beforeLabel ?? hostOf(result.beforeBase);
+  const postLabel = result.afterLabel ?? (isLocalUrl(result.afterBase) ? 'this branch' : hostOf(result.afterBase));
   const sha = options.headSha ? ` @ ${code(options.headSha.slice(0, 7))}` : '';
   // Only a quick run earns a mention: the number is there to show the tool is
   // cheap to run, and a slow one would say the opposite.
@@ -74,7 +77,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // No sides means nothing was served — a run that stopped before the dev
   // servers because no page could be captured. Naming empty sides says nothing.
   if (result.beforeBase || result.afterBase) {
-    lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
+    lines.push(`**Pre** = ${preLabel} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
   }
 
   // A side that renders an error page is the whole story. One sentence and
@@ -140,7 +143,7 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     const side = o.status === 'added' ? 'Post' : 'Pre';
     lines.push(`### ${code(o.route)} — ${viewportLabel(o.viewport)} · ${what}`, '');
     lines.push(o.status === 'added'
-      ? `This route has no baseline — ${hostOf(result.beforeBase)} returns 404 for it — so there is no "before" to show and no percentage to quote. ${side} only:`
+      ? `This route has no baseline — ${preLabel} returns 404 for it — so there is no "before" to show and no percentage to quote. ${side} only:`
       : `This route is gone on this branch, so there is no "after". ${side} only:`, '');
     lines.push(`![${side}](${image})`, '');
   }

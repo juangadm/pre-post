@@ -97,6 +97,12 @@ describe('buildComment', () => {
     expect(buildComment({ ...base, outcomes: [], beforeBase: '', afterBase: '' })).not.toContain('**Pre** =');
   });
 
+  it('names each side for a reviewer, never by a local port', () => {
+    const md = buildComment({ ...base, beforeBase: 'http://localhost:61497', beforeLabel: 'base `38d9f0b`', afterLabel: 'this branch' }, { headSha: 'abd0fe5aa' });
+    expect(md).toContain('**Pre** = base `38d9f0b` · **Post** = this branch @ `abd0fe5`');
+    expect(md).not.toContain('localhost:61497');
+  });
+
   it('names the affected routes the cap left out', () => {
     const result = { ...base, omittedRoutes: ['/writing'], maxRoutes: 6 };
     expect(buildComment(result)).toContain('**Also affected, not captured (over the 6-page limit):** `/writing`');
