@@ -44,6 +44,7 @@ npx skills add juangadm/pre-post -y
 - Desktop and mobile screenshots at 2x retina, captured concurrently
 - Pixel diff with change percentage, bounding box, highlight, and a tight crop
 - Deterministic captures — frozen clock, finished animations, settled fonts and layout
+- Moments — short interactions (menus, hovers, transitions) recorded on Pre and Post and played side by side in one synced clip, inline in the PR
 - One sticky PR comment, updated in place on every run
 - Images published to a `pre-post-assets` branch, so no CI is triggered and private repos render
 - Ad-hoc modes: compare two URLs, diff two PNGs, detect routes, sign in to protected sites

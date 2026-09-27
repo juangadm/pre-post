@@ -82,6 +82,7 @@ export default function Page() {
               <li>Pre-post diffs your branch against main, then follows the import graph to every route you touched</li>
               <li>It captures each route twice — production (Pre) and your dev server (Post), desktop and mobile</li>
               <li>It pixel-diffs each pair and crops the changed region</li>
+              <li>When a change moves — a menu opening, a hover, a transition — it records it too: Pre and Post side by side in one short, synced clip</li>
               <li>One sticky comment lands on the PR, updated in place on every run</li>
             </ol>
             <p className="text-sm text-neutral-400">
@@ -120,7 +121,9 @@ export default function Page() {
               </a>{" "}
               instead of Vercel&apos;s agent-browser. It freezes the clock, finishes
               animations, and waits for fonts, images, and layout to settle before
-              each capture, so a screenshot only changes when the page does.
+              each capture, so a screenshot only changes when the page does. For
+              the changes a still frame cannot show, it lets the clock run and
+              records the interaction instead, step for step on both sides.
             </p>
           </section>
 
