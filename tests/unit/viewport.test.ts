@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveViewport } from '../../src/viewport';
+import { resolveViewport, viewportsFromFlags } from '../../src/viewport';
 import { VIEWPORT_PRESETS } from '../../src/types';
 
 describe('resolveViewport', () => {
@@ -37,5 +37,23 @@ describe('resolveViewport', () => {
   it('returns desktop when undefined is passed explicitly', () => {
     const result = resolveViewport(undefined);
     expect(result).toEqual(VIEWPORT_PRESETS.desktop);
+  });
+});
+
+describe('viewportsFromFlags', () => {
+  it('is desktop only (undefined) with no flags', () => {
+    expect(viewportsFromFlags({})).toBeUndefined();
+  });
+
+  it('--mobile adds mobile on top of desktop', () => {
+    expect(viewportsFromFlags({ mobile: true })).toEqual(['desktop', 'mobile']);
+  });
+
+  it('-r / --responsive still adds mobile', () => {
+    expect(viewportsFromFlags({ responsive: true })).toEqual(['desktop', 'mobile']);
+  });
+
+  it('--viewports wins over --mobile', () => {
+    expect(viewportsFromFlags({ viewports: 'mobile', mobile: true })).toEqual(['mobile']);
   });
 });

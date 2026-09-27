@@ -44,6 +44,8 @@ describe('CLI', () => {
     expect(stdout).toContain('pre-post pr');
     expect(stdout).toContain('--dry-run');
     expect(stdout).toContain('pre-post login');
+    expect(stdout).toContain('--mobile');
+    expect(stdout).not.toContain('--responsive');
   });
 
   it('prints the version', async () => {
@@ -152,7 +154,7 @@ describe('CLI', () => {
     it.skipIf(!playwrightAvailable)('captures, diffs, and reports per route and viewport', async () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-url-'));
       try {
-        const { stdout, exitCode } = await runCli(['compare', '--before', before.url, '--after', after.url, '--routes', '/button-color,/identical,/missing', '--responsive', '--full', '--json', '-o', dir]);
+        const { stdout, exitCode } = await runCli(['compare', '--before', before.url, '--after', after.url, '--routes', '/button-color,/identical,/missing', '--mobile', '--full', '--json', '-o', dir]);
         expect(exitCode).toBe(0);
         const result = JSON.parse(stdout);
         const byKey = new Map(result.outcomes.map((o: any) => [`${o.route}|${o.viewport}`, o]));
@@ -162,6 +164,18 @@ describe('CLI', () => {
         expect(fs.existsSync(path.join(dir, 'button-color-desktop-before-crop.png'))).toBe(true);
         const png = PNG.sync.read(fs.readFileSync(path.join(dir, 'button-color-mobile-after.png')));
         expect(png.width).toBe(750); // 375 CSS px at 2x
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it.skipIf(!playwrightAvailable)('-r still adds the mobile viewport', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-url-'));
+      try {
+        const { stdout, exitCode } = await runCli(['compare', '--before', before.url, '--after', after.url, '--routes', '/identical', '-r', '--viewport-only', '--json', '-o', dir]);
+        expect(exitCode).toBe(0);
+        const viewports = JSON.parse(stdout).outcomes.map((o: any) => o.viewport).sort();
+        expect(viewports).toEqual(['desktop', 'mobile']);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
