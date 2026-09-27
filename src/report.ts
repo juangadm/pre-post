@@ -8,6 +8,7 @@ import { ArtifactSet, isBrokenVerdict, PrRunResult, RouteCaptureOutcome, sideNam
 import { describePageError, describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
 import { capNotice } from './routes.js';
+import { MAX_MOMENTS } from './moments.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
 
@@ -81,6 +82,40 @@ export interface CommentOptions {
   filesDir?: string;
 }
 
+/**
+ * The clips, above the screenshots: they show what screenshots cannot, and a
+ * reviewer who presses play once has seen the change.
+ *
+ * An attachment URL on its own line is what GitHub turns into a player. A
+ * clip on the assets branch cannot play there, so its last frame links to it,
+ * with the one thing that would make it play.
+ */
+export function momentLines(result: Pick<PrRunResult, 'moments' | 'momentsSkipped' | 'momentsHint'>, local: (f?: string) => string | undefined = f => f): string[] {
+  const lines: string[] = [];
+  const recorded = (result.moments ?? []).filter(m => m.status === 'recorded');
+  const failed = (result.moments ?? []).filter(m => m.status === 'error');
+  for (const m of recorded) {
+    const seconds = m.durationMs ? ` · ${(m.durationMs / 1000).toFixed(1)}s` : '';
+    lines.push(`### ▶ ${m.name} — ${viewportLabel(m.viewport)}`, '', `${code(m.route)}${seconds}${m.preNote ? ` · ${m.preNote}` : ''}`, '');
+    const video = m.videoUrl ?? local(m.file);
+    const poster = m.posterUrl ?? local(m.poster);
+    if (m.inline && m.videoUrl) lines.push(m.videoUrl, '');
+    else if (video && poster) lines.push(`[![${m.name} — open the video](${poster})](${video})`, '');
+    else if (video) lines.push(`[Open the video](${video})`, '');
+    if (m.note) lines.push(`<sub>${m.note}</sub>`, '');
+  }
+  if (recorded.some(m => !m.inline) && result.momentsHint) lines.push(`<sub>${result.momentsHint}</sub>`, '');
+  if (failed.length) {
+    lines.push('**Could not record:**');
+    for (const m of failed) lines.push(`- “${m.name}”: ${m.error}`);
+    lines.push('');
+  }
+  if (result.momentsSkipped?.length) {
+    lines.push(`**Also listed, not recorded (over the ${MAX_MOMENTS}-Moment limit):** ${result.momentsSkipped.map(n => `“${n}”`).join(', ')}`, '');
+  }
+  return lines;
+}
+
 /** A run shorter than this says how long it took in the PR description. */
 const FAST_RUN_MS = 30_000;
 
@@ -90,13 +125,15 @@ const FAST_RUN_MS = 30_000;
 export function buildComment(result: PrRunResult, options: CommentOptions = {}): string {
   const lines: string[] = [STICKY_MARKER, '## Visual changes', ''];
   /** Published URLs when there are any, else the local files. */
+  const dir = options.filesDir;
+  const local = (f?: string) => f && dir && path.isAbsolute(f) ? path.relative(dir, f).split(path.sep).join('/') : f;
   const images = (o: RouteCaptureOutcome): ArtifactSet => {
     if (o.urls) return o.urls;
-    const dir = options.filesDir;
     if (!dir || !o.files) return o.files ?? {};
-    const local = (f?: string) => f && (path.isAbsolute(f) ? path.relative(dir, f).split(path.sep).join('/') : f);
     return Object.fromEntries(Object.entries(o.files).map(([k, f]) => [k, local(f)])) as ArtifactSet;
   };
+  const clips = momentLines(result, local);
+  const hasClips = (result.moments ?? []).some(m => m.status === 'recorded');
   const changed = result.outcomes.filter(o => o.status === 'changed');
   const unchanged = result.outcomes.filter(o => o.status === 'unchanged');
   const errors = result.outcomes.filter(o => o.status === 'error');
@@ -149,8 +186,12 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
           ? '**Nothing was compared yet** — the only pages this branch affects need a sample URL. See below.'
           : '**No pages affected** — nothing this branch changed renders on a page.', '');
   } else if (changed.length === 0 && oneSided.length === 0) {
-    lines.push('No visual changes.', '');
+    // A clip can show a change no still frame does (a transition, a hover), so
+    // with clips the claim is only about the screenshots.
+    lines.push(hasClips ? 'No visual changes in the screenshots.' : 'No visual changes.', '');
   }
+
+  lines.push(...clips);
 
   for (const { lead: o, others } of groupChanges(result.outcomes)) {
     const u = images(o);
@@ -262,6 +303,12 @@ export function buildSummary(result: PrRunResult): string {
     lines.push(`  needs sample URL: ${result.skippedDynamic.join(', ')} (add to .pre-post.json "samples")`);
   }
   if (result.omitted) lines.push(`  ${capNotice(result.omitted.routes, result.omitted.cap)}`);
+  for (const m of result.moments ?? []) {
+    lines.push(m.status === 'recorded'
+      ? `  ▶ “${m.name}”  ${m.viewport}  ${(m.durationMs! / 1000).toFixed(1)}s${m.inline ? '  inline in PR' : ''}${m.preNote ? `  (${m.preNote})` : ''}`
+      : `  ▶ “${m.name}”  not recorded: ${m.error}`);
+  }
+  if (result.momentsSkipped?.length) lines.push(`  over the Moment limit, not recorded: ${result.momentsSkipped.map(n => `“${n}”`).join(', ')}`);
   // Named for what actually happened. The images normally go in the PR
   // description and only fall back to a comment, so "Comment:" sent a reader
   // looking for a comment that a run with zero comments had never created.
