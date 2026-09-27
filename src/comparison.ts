@@ -103,9 +103,14 @@ const side = (url: string, detail: string, probe?: ProbeResult, label?: string):
 const pair = (strategy: StrategyName, before: Side, after: Side, stop: () => Promise<void> = noop): Comparison =>
   ({ strategy, before, after, mixed: isLocalUrl(before.url) !== isLocalUrl(after.url), stop });
 
-/** Reachable and not sitting behind a login wall. */
+/**
+ * Reachable and not sitting behind a login wall.
+ *
+ * A wall is not always a 401/403: Vercel Deployment Protection redirects to
+ * vercel.com/sso-api and lands on a 200 login page, which `signIn` catches.
+ */
 function isUsable(result: ProbeResult): boolean {
-  return result.status !== null && result.status !== 401 && result.status !== 403;
+  return result.status !== null && result.status !== 401 && result.status !== 403 && !result.signIn;
 }
 
 /**
@@ -331,8 +336,9 @@ const PIN_HINT = 'Re-run with --before https://your-production-url (it is saved 
 function reasonFor(rejected?: { side: Side; probe: ProbeResult | null }): string {
   if (!rejected) return `no production deployment is recorded for this repository. ${PIN_HINT}`;
   const { side: baseline, probe } = rejected;
-  if (probe && (probe.status === 401 || probe.status === 403)) {
-    return `the baseline (${baseline.url} — ${baseline.detail}) returned ${probe.status}, so it is behind access control.${probe.vercel ? ' Set VERCEL_AUTOMATION_BYPASS_SECRET, or' : ''} run \`pre-post login ${baseline.url}\`, then re-run.`;
+  if (probe && (probe.status === 401 || probe.status === 403 || probe.signIn)) {
+    const answer = probe.signIn ? `redirected to a sign-in page (${probe.signIn})` : `returned ${probe.status}`;
+    return `the baseline (${baseline.url} — ${baseline.detail}) ${answer}, so it is behind access control.${probe.vercel ? ' Set VERCEL_AUTOMATION_BYPASS_SECRET, or' : ''} run \`pre-post login ${baseline.url}\`, then re-run.`;
   }
   return `the baseline (${baseline.url} — ${baseline.detail}) could not be reached. Check it is up, or ${PIN_HINT[0].toLowerCase()}${PIN_HINT.slice(1)}`;
 }
