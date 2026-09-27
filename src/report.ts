@@ -8,7 +8,7 @@ import { ArtifactSet, isBrokenVerdict, PrRunResult, RouteCaptureOutcome, sideNam
 import { describePageError, describeShift } from './run.js';
 import { hostOf, isLocalUrl } from './url.js';
 import { capNotice } from './routes.js';
-import { MAX_MOMENTS } from './moments.js';
+import { MAX_MOMENTS, quote, skippedNote } from './moments.js';
 
 export const STICKY_MARKER = '<!-- pre-post:visual-changes -->';
 
@@ -107,11 +107,11 @@ export function momentLines(result: Pick<PrRunResult, 'moments' | 'momentsSkippe
   if (recorded.some(m => !m.inline) && result.momentsHint) lines.push(`<sub>${result.momentsHint}</sub>`, '');
   if (failed.length) {
     lines.push('**Could not record:**');
-    for (const m of failed) lines.push(`- “${m.name}”: ${m.error}`);
+    for (const m of failed) lines.push(`- ${quote(m.name)}: ${m.error}`);
     lines.push('');
   }
   if (result.momentsSkipped?.length) {
-    lines.push(`**Also listed, not recorded (over the ${MAX_MOMENTS}-Moment limit):** ${result.momentsSkipped.map(n => `“${n}”`).join(', ')}`, '');
+    lines.push(`**Also listed, not recorded (over the ${MAX_MOMENTS}-Moment limit):** ${result.momentsSkipped.map(quote).join(', ')}`, '');
   }
   return lines;
 }
@@ -305,10 +305,11 @@ export function buildSummary(result: PrRunResult): string {
   if (result.omitted) lines.push(`  ${capNotice(result.omitted.routes, result.omitted.cap)}`);
   for (const m of result.moments ?? []) {
     lines.push(m.status === 'recorded'
-      ? `  ▶ “${m.name}”  ${m.viewport}  ${(m.durationMs! / 1000).toFixed(1)}s${m.inline ? '  inline in PR' : ''}${m.preNote ? `  (${m.preNote})` : ''}`
-      : `  ▶ “${m.name}”  not recorded: ${m.error}`);
+      ? `  ▶ ${quote(m.name)}  ${m.viewport}  ${(m.durationMs! / 1000).toFixed(1)}s${m.inline ? '  inline in PR' : ''}${m.preNote ? `  (${m.preNote})` : ''}`
+      : `  ▶ ${quote(m.name)}  not recorded: ${m.error}`);
   }
-  if (result.momentsSkipped?.length) lines.push(`  over the Moment limit, not recorded: ${result.momentsSkipped.map(n => `“${n}”`).join(', ')}`);
+  const skipped = skippedNote(result.momentsSkipped ?? []);
+  if (skipped) lines.push(`  ${skipped}`);
   // Named for what actually happened. The images normally go in the PR
   // description and only fall back to a comment, so "Comment:" sent a reader
   // looking for a comment that a run with zero comments had never created.
