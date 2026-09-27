@@ -206,10 +206,21 @@ describe('the same change on several pages', () => {
     expect(md).not.toContain('/about-pre-crop.png');
   });
 
+  // Scenario 12: one 8px move on six pages was six sections of full pages.
+  it('groups pages whose only change is the same move', () => {
+    const moved = (route: string, px: number): RouteCaptureOutcome =>
+      ({ ...nav(route), fingerprint: undefined, urls: { before: `https://u${route}-pre.png`, after: `https://u${route}-post.png` }, shift: { px, otherChange: false, residualRatio: 0 } });
+    const md = buildComment({ ...base, skippedDynamic: [], outcomes: [moved('/', 8), moved('/faq', 8), moved('/work', 12)] });
+    expect(md).toContain('### Same change on 2 pages — Desktop');
+    expect(md).toContain('Content shifted down 8px. Nothing else changed.');
+    expect(md).toContain('### `/work` — Desktop');
+    expect(md.match(/!\[Pre\]/g)).toHaveLength(2);
+  });
+
   it('keeps different changes, viewports and moves apart', () => {
     const groups = groupChanges([
       nav('/'), nav('/about'), nav('/work', 'other'), nav('/', 'nav', 'mobile'),
-      { ...nav('/faq'), shift: { px: 48, otherChange: false, residualRatio: 0 } },
+      { ...nav('/faq'), shift: { px: 48, otherChange: true, residualRatio: 0.01 } },
       { ...nav('/x'), fingerprint: undefined },
     ]);
     expect(groups.map(g => [g.lead.route, g.lead.viewport, g.others.map(o => o.route)])).toEqual([
