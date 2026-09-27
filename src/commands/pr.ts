@@ -175,9 +175,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
    * nothing, and the launch then resolves into an orphan.
    */
   const stopEverything = async (): Promise<void> => {
-    await browserReady.catch(() => undefined);
-    await closeBrowser();
-    await cleanupComparison();
+    // Independent, so side by side: the browser and the servers each take
+    // their own time to go, and neither needs the other gone first.
+    await Promise.all([
+      browserReady.catch(() => undefined).then(() => closeBrowser()),
+      cleanupComparison(),
+    ]);
   };
   // Local detection runs regardless: it is cheap, and it is the fallback when
   // the PR has no preview deployment.
