@@ -346,6 +346,9 @@ export interface PrRunResult {
   commentKind?: 'description' | 'comment';
   beforeBase: string;
   afterBase: string;
+  /** What a reviewer should call each side, e.g. "base `38d9f0b`" and "this branch" */
+  beforeLabel?: string;
+  afterLabel?: string;
   outcomes: RouteCaptureOutcome[];
   skippedDynamic: string[];
   /** Routes the branch affects that the `maxRoutes` cap left out */
