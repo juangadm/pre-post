@@ -97,11 +97,14 @@ export function momentLines(result: Pick<PrRunResult, 'moments' | 'momentsSkippe
   for (const m of recorded) {
     const seconds = m.durationMs ? ` · ${(m.durationMs / 1000).toFixed(1)}s` : '';
     lines.push(`### ▶ ${m.name} — ${viewportLabel(m.viewport)}`, '', `${code(m.route)}${seconds}${m.preNote ? ` · ${m.preNote}` : ''}`, '');
-    const video = m.videoUrl ?? local(m.file);
+    // A published poster with no published clip is a private repo, where no
+    // link would play: the poster stands alone rather than point at a local file.
+    const video = m.videoUrl ?? (m.posterUrl ? undefined : local(m.file));
     const poster = m.posterUrl ?? local(m.poster);
     if (m.inline && m.videoUrl) lines.push(m.videoUrl, '');
     else if (video && poster) lines.push(`[![${m.name} — open the video](${poster})](${video})`, '');
     else if (video) lines.push(`[Open the video](${video})`, '');
+    else if (poster) lines.push(`![${m.name}](${poster})`, '');
     if (m.note) lines.push(`<sub>${m.note}</sub>`, '');
   }
   if (recorded.some(m => !m.inline) && result.momentsHint) lines.push(`<sub>${result.momentsHint}</sub>`, '');
