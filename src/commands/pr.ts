@@ -8,7 +8,7 @@ import path from 'path';
 import { ArtifactKind, ARTIFACT_KINDS, ArtifactSet, artifactSuffix, Framework, isBrokenVerdict, PrePostConfig, PrRunResult } from '../types.js';
 import { loadConfig, resolveSettings, Settings, updateConfig } from '../config.js';
 import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
-import { detectRoutesForRepo, resolveSample } from '../routes.js';
+import { capNotice, detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
 import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
@@ -247,13 +247,16 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   const samples = config.samples || {};
   let routes: string[];
   let skippedDynamic: string[] = [];
+  let omittedRoutes: string[] = [];
   if (opts.routes?.length) {
     routes = opts.routes;
   } else {
     routes = detection.routes.map(r => r.path);
     skippedDynamic = detection.skippedDynamic;
+    omittedRoutes = detection.omitted.map(r => r.path);
     log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
     for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
+    if (omittedRoutes.length) log(`  ${capNotice(detection.omitted, settings.maxRoutes)}`);
     if (routes.length === 0) {
       routes = ['/'];
       log('No routes detected from the diff; capturing / only.');
@@ -355,6 +358,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     afterBase: after,
     outcomes,
     skippedDynamic,
+    omittedRoutes,
+    maxRoutes: settings.maxRoutes,
     durationMs: Date.now() - started,
     markdown: '',
     outputDir,
