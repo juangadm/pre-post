@@ -214,35 +214,6 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     log('GitHub will not accept this run\'s screenshots; capturing anyway, nothing will be published.');
   }
 
-  // --- What are we comparing? ---------------------------------------------------
-  const headers = headersFor(config, opts);
-  // Resolution can throw (no baseline, an install that failed): the browser was
-  // launched before this and nothing else would close it, so its teardown has
-  // to cover the throw as well as the happy path.
-  const comparison: Comparison = await timings.time('resolve', resolveComparison({
-    gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
-    // Detection already established this; the baseline must be built from the
-    // same commit, or Pre and the route list disagree about what changed.
-    baseSha: detection.base?.sha,
-    // --base is a constraint on the baseline, not just on the route list.
-    baseExplicit: detection.base?.source === 'explicit',
-    // So a preview can be found for a branch that has been pushed but has no
-    // PR open yet — the host builds on push, not on PR.
-    headSha: head ?? undefined,
-    before: opts.before, after: explicitAfter,
-    devServer, probe: url => probeUrl(url, headers),
-    allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
-  }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
-  cleanupComparison = comparison.stop;
-  for (const line of describeComparison(comparison)) log(line);
-
-  const before = comparison.before.url;
-  const after = comparison.after.url;
-  if (opts.before && config.before !== before) {
-    updateConfig(root, { before });
-    log('Saved production URL to .pre-post.json');
-  }
-
   // --- Routes (sync: git + import graph) ----------------------------------------
   const samples = config.samples || {};
   let routes: string[];
@@ -257,65 +228,111 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     log(`Routes (${detection.framework}, ${detection.durationMs}ms): ${routes.length ? routes.join(', ') : 'none detected'}`);
     for (const r of detection.routes) log(`  ${r.path.padEnd(28)} ${r.confidence.padEnd(6)} ${r.reason}`);
     if (omittedRoutes.length) log(`  ${capNotice(detection.omitted, settings.maxRoutes)}`);
-    if (routes.length === 0) {
+    // Only when nothing at all was affected is `/` a sensible smoke check.
+    // A branch that changed a dynamic template affected that template, not
+    // the home page: capturing `/` there compared a page the branch never
+    // touched and reported it as the result.
+    if (routes.length === 0 && skippedDynamic.length === 0) {
       routes = ['/'];
       log('No routes detected from the diff; capturing / only.');
+    } else if (routes.length === 0) {
+      log(`Nothing to capture until ${skippedDynamic.join(', ')} ${skippedDynamic.length === 1 ? 'has' : 'have'} a sample URL.`);
     }
   }
 
-  // --- Reachability ---------------------------------------------------------------
-  // Resolution already probed whatever it chose; this catches a side that died
-  // in between, and names which one so the message is actionable.
-  const fail = async (message: string): Promise<never> => {
-    await stopEverything();
-    throw new NeedsHumanError(message);
-  };
-  const [probe, afterProbe] = await Promise.all([
-    comparison.before.probe ?? probeUrl(before, headers),
-    comparison.after.probe ?? probeUrl(after, headers),
-  ]);
-  if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
-  if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
-  if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
-  if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
-
-  const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
-
-  // --- Capture -------------------------------------------------------------------
+  // Everything from here to the screenshots costs real time — dev servers, a
+  // baseline install, a browser — so it runs only when there is a page to
+  // capture. A branch whose only affected page still needs a sample URL gets
+  // that answer in seconds, not after two servers have booted for nothing.
   const now = new Date();
   const id = runId(now);
-  const outputDir = opts.output || path.join(os.tmpdir(), 'pre-post', ownerRepo.replace('/', '__'), id);
-  const viewports = settings.viewports.map(parseViewport);
-  const tasks: CaptureTask[] = [];
-  for (const route of routes) {
-    const resolved = resolveSample(route, samples);
-    for (const vp of viewports) {
-      tasks.push({ route, resolvedRoute: resolved, viewport: vp.label, size: vp.size, beforeUrl: joinUrl(before, resolved), afterUrl: joinUrl(after, resolved) });
-    }
-  }
-  log(`Capturing ${tasks.length * 2} screenshots (${routes.length} route(s) × ${viewports.length} viewport(s)) ...`);
+  const captureAll = async () => {
+    // --- What are we comparing? ---------------------------------------------------
+    const headers = headersFor(config, opts);
+    // Resolution can throw (no baseline, an install that failed): the browser was
+    // launched before this and nothing else would close it, so its teardown has
+    // to cover the throw as well as the happy path.
+    const comparison: Comparison = await timings.time('resolve', resolveComparison({
+      gh, ownerRepo, pr, repoRoot: root, appPrefix, config,
+      // Detection already established this; the baseline must be built from the
+      // same commit, or Pre and the route list disagree about what changed.
+      baseSha: detection.base?.sha,
+      // --base is a constraint on the baseline, not just on the route list.
+      baseExplicit: detection.base?.source === 'explicit',
+      // So a preview can be found for a branch that has been pushed but has no
+      // PR open yet — the host builds on push, not on PR.
+      headSha: head ?? undefined,
+      before: opts.before, after: explicitAfter,
+      devServer, probe: url => probeUrl(url, headers),
+      allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
+    }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
+    cleanupComparison = comparison.stop;
+    for (const line of describeComparison(comparison)) log(line);
 
-  await browserReady;
-  let run;
-  let sheetPath: string | undefined;
-  try {
-    run = await timings.time('capture', runTasks(tasks, {
-      outputDir, ...settings, wait: opts.wait, auth, log,
-      // So the verdict can name how Pre was chosen, not just where it points.
-      sides: { before: comparison.before, after: comparison.after },
-    }));
-    // Drawn while the browser is still open. A convenience, so a failure to
-    // draw it is logged and never costs the run its result.
-    if (!run.verdict) {
-      sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
-        .then(p => p ?? undefined)
-        .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+    const before = comparison.before.url;
+    const after = comparison.after.url;
+    if (opts.before && config.before !== before) {
+      updateConfig(root, { before });
+      log('Saved production URL to .pre-post.json');
     }
-  } finally {
-    // Timed on its own: deleting the baseline worktree, node_modules and all,
-    // is real wall clock that used to show up under no step at all.
-    await timings.time('cleanup', stopEverything());
-  }
+
+    // --- Reachability ---------------------------------------------------------------
+    // Resolution already probed whatever it chose; this catches a side that died
+    // in between, and names which one so the message is actionable.
+    const fail = async (message: string): Promise<never> => {
+      await stopEverything();
+      throw new NeedsHumanError(message);
+    };
+    const [probe, afterProbe] = await Promise.all([
+      comparison.before.probe ?? probeUrl(before, headers),
+      comparison.after.probe ?? probeUrl(after, headers),
+    ]);
+    if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
+    if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
+    if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
+    if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
+
+    const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
+
+    // --- Capture -------------------------------------------------------------------
+    const outputDir = opts.output || path.join(os.tmpdir(), 'pre-post', ownerRepo.replace('/', '__'), id);
+    const viewports = settings.viewports.map(parseViewport);
+    const tasks: CaptureTask[] = [];
+    for (const route of routes) {
+      const resolved = resolveSample(route, samples);
+      for (const vp of viewports) {
+        tasks.push({ route, resolvedRoute: resolved, viewport: vp.label, size: vp.size, beforeUrl: joinUrl(before, resolved), afterUrl: joinUrl(after, resolved) });
+      }
+    }
+    log(`Capturing ${tasks.length * 2} screenshots (${routes.length} route(s) × ${viewports.length} viewport(s)) ...`);
+
+    await browserReady;
+    let run;
+    let sheetPath: string | undefined;
+    try {
+      run = await timings.time('capture', runTasks(tasks, {
+        outputDir, ...settings, wait: opts.wait, auth, log,
+        // So the verdict can name how Pre was chosen, not just where it points.
+        sides: { before: comparison.before, after: comparison.after },
+      }));
+      // Drawn while the browser is still open. A convenience, so a failure to
+      // draw it is logged and never costs the run its result.
+      if (!run.verdict) {
+        sheetPath = await timings.time('sheet', buildSheet(run.outcomes, outputDir))
+          .then(p => p ?? undefined)
+          .catch(err => { log(`Could not draw the summary sheet (${err instanceof Error ? err.message : err}).`); return undefined; });
+      }
+    } finally {
+      // Timed on its own: deleting the baseline worktree, node_modules and all,
+      // is real wall clock that used to show up under no step at all.
+      await timings.time('cleanup', stopEverything());
+    }
+    return { run, sheetPath, before, after, outputDir };
+  };
+  const captured = routes.length
+    ? await captureAll()
+    : (await stopEverything(), { run: { outcomes: [], verdict: null }, sheetPath: undefined, before: '', after: '', outputDir: '' });
+  const { run, sheetPath, before, after, outputDir } = captured;
   const { outcomes } = run;
 
   // The pipeline judges whether it compared the two sites or something standing

@@ -57,6 +57,8 @@ describe('buildComment', () => {
   it('lists errors and dynamic routes needing samples', () => {
     expect(md).toContain('- `/pricing` mobile: timed out loading http://localhost:3000/pricing');
     expect(md).toContain('**Needs a sample URL:** `/blog/[slug]`');
+    // Nothing was served, so there are no sides to name.
+    expect(buildComment({ ...base, outcomes: [], beforeBase: '', afterBase: '' })).not.toContain('**Pre** =');
   });
 
   it('states how it was captured on one line, with no footer', () => {
@@ -84,7 +86,15 @@ describe('buildComment', () => {
   });
 
   it('still says nothing was compared when there were no captures at all', () => {
-    expect(buildComment({ ...base, outcomes: [] })).toContain('**Nothing was compared**');
+    expect(buildComment({ ...base, outcomes: [], skippedDynamic: [] })).toContain('**Nothing was compared**');
+  });
+
+  it('says why nothing was compared when the only affected pages need a sample', () => {
+    const md = buildComment({ ...base, outcomes: [] });
+    expect(md).toContain('**Nothing was compared yet** — the only pages this branch affects need a sample URL.');
+    expect(md).toContain('**Needs a sample URL:** `/blog/[slug]`');
+    // Nothing was served, so there are no sides to name.
+    expect(buildComment({ ...base, outcomes: [], beforeBase: '', afterBase: '' })).not.toContain('**Pre** =');
   });
 
   it('names the affected routes the cap left out', () => {
