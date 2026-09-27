@@ -202,7 +202,7 @@ describe('serveBaseCommit skip reasons', () => {
 describe('a dev server that crashes', () => {
   it('says it exited, not that it was slow', async () => {
     const own = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pre-post-crash-')));
-    fs.writeFileSync(path.join(own, 'package.json'), JSON.stringify({ name: 'app', scripts: { dev: 'node -e "process.exit(7)"' } }));
+    fs.writeFileSync(path.join(own, 'package.json'), JSON.stringify({ name: 'app', scripts: { dev: 'node -e "console.error(\'Module not found: x\'); process.exit(7)"' } }));
     // Already installed, so the run goes straight to the dev server.
     fs.mkdirSync(path.join(own, 'node_modules'));
     const logs: string[] = [];
@@ -212,6 +212,9 @@ describe('a dev server that crashes', () => {
     expect(logs.join('\n')).toMatch(/npm dev exited with code \d+ before serving/);
     expect(logs.join('\n')).not.toMatch(/within \d+s/);
     expect(Date.now() - started).toBeLessThan(30_000);
+    // The server's own words are kept, and the message says where.
+    const logFile = logs.join('\n').match(/its output is in (\S+)\.$/m)?.[1];
+    expect(logFile && fs.readFileSync(logFile, 'utf8')).toContain('Module not found: x');
     fs.rmSync(own, { recursive: true, force: true });
   });
 });

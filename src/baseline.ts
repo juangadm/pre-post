@@ -26,6 +26,21 @@ export interface LocalBaseline {
   url: string;
   /** Stop the dev server and delete the worktree. Safe to call twice. */
   stop: () => Promise<void>;
+  /** Everything the dev server printed, so a failure can be explained with its own words. */
+  logFile?: string;
+}
+
+/**
+ * Where a dev server's output goes: a file per server, never the terminal.
+ *
+ * It used to go nowhere (`stdio: 'ignore'`), so when a server answered 500
+ * there was no way to say why. A file rather than a pipe: the server is
+ * detached and must not stall when this process stops reading.
+ */
+export function serverLogFile(side: 'pre' | 'post', port: number): string {
+  const dir = path.join(os.tmpdir(), 'pre-post', 'servers');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${side}-${port}-${Date.now()}.log`);
 }
 
 
@@ -863,12 +878,15 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
       return skip(`\`${setup.label}\` failed.`);
     }
   }
+  const logFile = serverLogFile(side, port);
+  const out = fs.openSync(logFile, 'a');
   child = spawn(pm.bin, pm.run(script, ['--port', String(port)]), {
     cwd: appDir,
-    stdio: 'ignore',
+    stdio: ['ignore', out, out],
     detached: true,
     env: { ...process.env, PORT: String(port), BROWSER: 'none' },
   });
+  fs.closeSync(out);
   child.unref();
 
   const ready = await timed('boot', waitForServer(url, Math.max(1, deadline - Date.now()), () => !!child && child.exitCode === null && !opts.signal?.aborted));
@@ -880,12 +898,12 @@ async function serveLocally(opts: BaselineOptions): Promise<LocalBaseline | null
     const exitCode = child?.exitCode ?? null;
     await cleanup();
     if (exitCode !== null) {
-      return skip(`${pm.bin} ${script} exited with code ${exitCode} before serving; run it in ${appIn} to see why.`);
+      return skip(`${pm.bin} ${script} exited with code ${exitCode} before serving; its output is in ${logFile}.`);
     }
-    return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause).`);
+    return skip(`${pm.bin} ${script} did not start serving within ${Math.round(timeoutMs / 1000)}s (missing env vars are the usual cause); its output is in ${logFile}.`);
   }
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   process.once('exit', onSignal);
-  return { url, stop: cleanup };
+  return { url, stop: cleanup, logFile };
 }
