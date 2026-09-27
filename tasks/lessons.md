@@ -46,3 +46,35 @@ With context present it does not verify placement.
 prove it: materialise each staged tree in a scratch worktree and refuse the
 commit unless `tsc -p tsconfig.pkg.json` passes. Atomic commits are only worth
 splitting for if every one of them builds — otherwise `git bisect` is a lie.
+
+## A sleeping laptop is not a hung process
+
+Diagnosing the "font 500", two runs took 16 and 18 minutes and a dev server sat
+at "Starting..." for five. It looked like the bug. `pmset -g log` showed the
+machine had been asleep on battery; process ages of 44 minutes for servers
+started 3 minutes earlier gave it away.
+
+**Why:** I read wall-clock symptoms as program behaviour without checking the
+machine was running.
+
+**How to apply:** long local measurements run under `caffeinate -dimsu`. When a
+timing looks impossible, check `pmset -g log` before theorising.
+
+## Measure the failure before building the plan's fix
+
+The approved plan had a persistent baseline worktree (for a slow cleanup) and a
+capture-twice noise mask (for dither noise). Measuring first showed the cleanup
+was the browser's shutdown and that each side renders identically on its own —
+both planned fixes would have shipped complexity that solved nothing.
+
+**How to apply:** the plan names the invariant; the fix comes from a
+measurement of the actual failure. Say so when the evidence overrides the plan.
+
+## Scope to what the user will judge
+
+Mid-way the user said animations need not be perfect (video support is coming);
+screenshots and the report's errors are what matter. Stopped at a capped
+idle-settle instead of chasing the last 68px of animation residue.
+
+**How to apply:** when a sub-problem turns into a research project, check it
+against the user's stated goal before going deeper.
