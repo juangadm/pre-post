@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn, spawnSync } from 'child_process';
 import { installBrowser, playwrightCacheDir } from './browser.js';
+import { onPath } from './baseline.js';
 
 const BINARY = process.platform === 'darwin' ? 'ffmpeg-mac'
   : process.platform === 'win32' ? 'ffmpeg-win64.exe'
@@ -45,6 +46,7 @@ function findCached(): string | null {
 
 /** An ffmpeg on PATH that can encode VP8, the last resort. */
 function findSystem(): string | null {
+  if (!onPath('ffmpeg')) return null;
   const probe = spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf-8' });
   return probe.status === 0 && /libvpx/.test(probe.stdout) ? 'ffmpeg' : null;
 }
@@ -88,21 +90,27 @@ const VP8 = ['-c:v', 'libvpx', '-qmin', '0', '-qmax', '50', '-deadline', 'realti
  * dropdown clip, 1M and 3M came out within 15% of each other and both kept
  * 16px text readable in an 800px pane.
  */
-export function startEncoder(ffmpeg: string, out: string, fps: number): Encoder {
-  const child = spawn(ffmpeg, [
-    '-loglevel', 'error', '-y',
-    '-f', 'image2pipe', '-avioflags', 'direct', '-fpsprobesize', '0', '-probesize', '32', '-analyzeduration', '0',
-    '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
-    '-an', ...VP8, '-crf', '10', '-b:v', '2M', out,
-  ], { stdio: ['pipe', 'ignore', 'pipe'] });
+/** Run ffmpeg; `closed` resolves when it exits cleanly, rejects with its last error line. */
+function run(ffmpeg: string, args: string[], stdin: 'pipe' | 'ignore') {
+  const child = spawn(ffmpeg, ['-loglevel', 'error', '-y', ...args], { stdio: [stdin, 'ignore', 'pipe'] });
   let stderr = '';
-  child.stderr.on('data', d => { stderr += d; });
-  // stdin errors (EPIPE when ffmpeg dies early) surface through `closed`.
-  child.stdin.on('error', () => undefined);
+  child.stderr!.on('data', d => { stderr += d; });
   const closed = new Promise<void>((resolve, reject) => {
     child.on('error', reject);
     child.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg failed (exit ${code}): ${stderr.trim().split('\n').pop() ?? ''}`)));
   });
+  return { child, closed };
+}
+
+export function startEncoder(ffmpeg: string, out: string, fps: number): Encoder {
+  const { child, closed } = run(ffmpeg, [
+    '-f', 'image2pipe', '-avioflags', 'direct', '-fpsprobesize', '0', '-probesize', '32', '-analyzeduration', '0',
+    '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
+    '-an', ...VP8, '-crf', '10', '-b:v', '2M', out,
+  ], 'pipe');
+  const stdin = child.stdin!;
+  // stdin errors (EPIPE when ffmpeg dies early) surface through `closed`.
+  stdin.on('error', () => undefined);
   let exited = false;
   closed.catch(() => undefined).finally(() => { exited = true; });
   return {
@@ -110,12 +118,12 @@ export function startEncoder(ffmpeg: string, out: string, fps: number): Encoder 
       // A dead encoder never drains, so waiting on 'drain' alone would hang
       // the run forever; the spike did exactly that.
       if (exited) return closed;
-      if (!child.stdin.write(jpeg)) {
-        await Promise.race([new Promise<void>(r => child.stdin.once('drain', r)), closed]);
+      if (!stdin.write(jpeg)) {
+        await Promise.race([new Promise<void>(r => stdin.once('drain', r)), closed]);
       }
     },
     async finish() {
-      child.stdin.end();
+      stdin.end();
       await closed;
     },
   };
@@ -133,12 +141,13 @@ export async function fitSize(ffmpeg: string, file: string, durationMs: number, 
   // 90% of the budget, leaving room for the container.
   const kbps = Math.max(200, Math.floor((maxBytes * 8 * 0.9) / seconds / 1000));
   const tmp = file.replace(/\.webm$/, '.fit.webm');
-  const res = spawnSync(ffmpeg, [
-    '-loglevel', 'error', '-y', '-i', file,
+  // Asynchronous: the other Moments are still being drawn and encoded, and a
+  // re-encode takes seconds.
+  await run(ffmpeg, [
+    '-i', file,
     '-vf', 'scale=trunc(iw*0.75/2)*2:trunc(ih*0.75/2)*2',
     '-an', ...VP8, '-crf', '30', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`, tmp,
-  ], { encoding: 'utf-8' });
-  if (res.status !== 0) throw new Error(`Could not shrink the clip: ${(res.stderr || '').trim().split('\n').pop()}`);
+  ], 'ignore').closed.catch(err => { throw new Error(`Could not shrink the clip: ${err.message}`); });
   fs.renameSync(tmp, file);
   return fs.statSync(file).size;
 }
