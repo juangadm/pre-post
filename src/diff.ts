@@ -28,7 +28,34 @@ export interface DiffOptions {
    * Image mode still writes diff.png.
    */
   highlight?: boolean;
+  /**
+   * What counts as a change, in device pixels and share of the canvas — the
+   * same rule the verdict uses (`isChanged`). Default: any pixel.
+   *
+   * The crop used to be drawn around every differing pixel while the verdict
+   * applied this rule, so the two disagreed: a pure move left a few pixels of
+   * animation noise, the report said "nothing else changed", and the crop
+   * showed the noise. Now a crop is only drawn around change the rule counts.
+   */
+  rule?: ChangeRule;
+  /** Changed pixels closer than this (device px) belong to one patch. Default 48. */
+  clusterGap?: number;
 }
+
+export interface ChangeRule {
+  /** Smallest changed area that counts, in device pixels. */
+  minPixels: number;
+  /** Smallest changed share of the canvas that counts, 0..1. */
+  minRatio: number;
+}
+
+/** Does this many changed pixels, out of this canvas, count under the rule? */
+export function meetsRule(pixels: number, canvasArea: number, rule: ChangeRule): boolean {
+  if (pixels === 0) return false;
+  return pixels >= rule.minPixels || pixels / canvasArea >= rule.minRatio;
+}
+
+const ANY_PIXEL: ChangeRule = { minPixels: 1, minRatio: 0 };
 
 const DIFF_COLOR: [number, number, number] = [255, 0, 0];
 const AA_COLOR: [number, number, number] = [255, 200, 0];
@@ -66,6 +93,8 @@ const PAD_COLOR: [number, number, number] = [255, 255, 255];
 const PIXEL_THRESHOLD = 0.02;
 /** No crop when the change covers more than this fraction of the canvas. */
 const CROP_MAX_RATIO = 0.5;
+/** A crop at least this share of the page's width is widened to all of it. */
+const WIDE_SHARE = 0.6;
 /**
  * A shift is only worth reporting when putting the two sides back in register
  * accounts for most of the difference. This is the whole test: an offset that
@@ -145,6 +174,91 @@ function countChangedRows(diff: PNG, y0: number, y1: number): number {
     }
   }
   return count;
+}
+
+/** A patch of change: nearby changed pixels, merged. */
+export interface Cluster extends DiffRegion {
+  pixels: number;
+}
+
+/**
+ * Group changed pixels into patches, merging any closer than `gap`.
+ *
+ * One box around every changed pixel is what produced an 808x1356 crop for a
+ * header-link change: the link, plus a few pixels of an animated image far
+ * below it, made one box spanning both. As patches, the link is one and the
+ * specks are another, and each can be judged on its own.
+ *
+ * Works on a grid of `gap`-sized cells, joining neighbouring cells, so the
+ * cost is one pass over the pixels plus one over the occupied cells.
+ */
+export function findClusters(diff: PNG, gap: number): Cluster[] {
+  const { width, height, data } = diff;
+  const cell = Math.max(1, Math.round(gap));
+  const cols = Math.ceil(width / cell);
+  const rows = Math.ceil(height / cell);
+  const count = new Int32Array(cols * rows);
+  const minX = new Int32Array(cols * rows).fill(width);
+  const minY = new Int32Array(cols * rows).fill(height);
+  const maxX = new Int32Array(cols * rows).fill(-1);
+  const maxY = new Int32Array(cols * rows).fill(-1);
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
+    const cy = Math.floor(y / cell) * cols;
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4;
+      if (data[i] !== DIFF_COLOR[0] || data[i + 1] !== DIFF_COLOR[1] || data[i + 2] !== DIFF_COLOR[2]) continue;
+      const c = cy + Math.floor(x / cell);
+      count[c]++;
+      if (x < minX[c]) minX[c] = x;
+      if (x > maxX[c]) maxX[c] = x;
+      if (y < minY[c]) minY[c] = y;
+      if (y > maxY[c]) maxY[c] = y;
+    }
+  }
+  const seen = new Uint8Array(cols * rows);
+  const clusters: Cluster[] = [];
+  for (let start = 0; start < count.length; start++) {
+    if (!count[start] || seen[start]) continue;
+    let x0 = width, y0 = height, x1 = -1, y1 = -1, pixels = 0;
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const c = stack.pop()!;
+      pixels += count[c];
+      x0 = Math.min(x0, minX[c]); y0 = Math.min(y0, minY[c]);
+      x1 = Math.max(x1, maxX[c]); y1 = Math.max(y1, maxY[c]);
+      const cx = c % cols;
+      const cy = (c - cx) / cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          const n = ny * cols + nx;
+          if (count[n] && !seen[n]) { seen[n] = 1; stack.push(n); }
+        }
+      }
+    }
+    clusters.push({ x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1, pixels });
+  }
+  return clusters;
+}
+
+/**
+ * The part of the page a crop should show: every patch that counts on its own,
+ * or, when none does but together they do, all of them. The second case is
+ * several small real edits — five recoloured icons — which must still be shown.
+ */
+export function regionOfInterest(clusters: Cluster[], rule: ChangeRule): DiffRegion | null {
+  const own = clusters.filter(c => c.pixels >= rule.minPixels);
+  const chosen = own.length ? own : clusters;
+  if (!chosen.length) return null;
+  const x0 = Math.min(...chosen.map(c => c.x));
+  const y0 = Math.min(...chosen.map(c => c.y));
+  const x1 = Math.max(...chosen.map(c => c.x + c.width));
+  const y1 = Math.max(...chosen.map(c => c.y + c.height));
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
 /** Bounding box of pixels painted with the diff color. */
@@ -278,19 +392,29 @@ export function diffImages(beforePng: Buffer, afterPng: Buffer, options: DiffOpt
   };
 
   // With a shift, crop what is left once the move is undone; without one, crop
-  // the change itself. A pure shift leaves nothing over and gets no crop: the
-  // sentence is the report, and the full pages are already published.
+  // the change itself. A pure shift leaves nothing that counts and gets no
+  // crop: the sentence is the report, and the full pages are already
+  // published. "Counts" is the verdict's own rule, so the crop can never show
+  // something the report just called unchanged.
+  const rule = options.rule ?? ANY_PIXEL;
   const cropFrom = alignedBefore ?? before;
-  const cropRegion = alignedDiff ? boundingBox(alignedDiff) : region;
+  const leftOver = alignedDiff && shift ? shift.alignedChangedPixels : changedPixels;
+  const cropRegion = meetsRule(leftOver, width * height, rule)
+    ? regionOfInterest(findClusters(alignedDiff ?? diff, options.clusterGap ?? 48), rule)
+    : null;
   if (cropRegion) {
     const area = cropRegion.width * cropRegion.height;
     if (area / (width * height) <= CROP_MAX_RATIO) {
-      const expanded = expandRegion(
+      let expanded = expandRegion(
         cropRegion,
         { width, height },
         options.padding ?? 80,
         options.minCrop ?? { width: 800, height: 400 },
       );
+      // A change that spans most of the width is shown full width: cutting a
+      // row of content part way through, as a padded box did, reads as the
+      // page being clipped.
+      if (expanded.width >= width * WIDE_SHARE) expanded = { ...expanded, x: 0, width };
       // Only crop when it meaningfully zooms in.
       if (expanded.width * expanded.height < width * height * 0.8) {
         result.crop = {

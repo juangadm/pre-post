@@ -12,6 +12,7 @@ import { checkLanding, signInHint } from './landing.js';
 import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap } from './sameness.js';
 import { HttpStatusError, NavigationError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
+import type { ChangeRule } from './diff.js';
 import { authHint } from './doctor.js';
 import { hostOf, isLocalUrl } from './url.js';
 
@@ -94,8 +95,12 @@ export function isChanged(
   opts: { minChangedArea: number; threshold: number; scale: number },
 ): boolean {
   if (diff.changedPixels === 0) return false;
-  return diff.changedPixels / (opts.scale * opts.scale) >= opts.minChangedArea
-    || diff.changedRatio >= opts.threshold;
+  return diff.changedPixels >= changeRule(opts).minPixels || diff.changedRatio >= opts.threshold;
+}
+
+/** The same rule in device pixels, for the diff to draw its crop by. */
+export function changeRule(opts: { minChangedArea: number; threshold: number; scale: number }): ChangeRule {
+  return { minPixels: opts.minChangedArea * opts.scale * opts.scale, minRatio: opts.threshold };
 }
 
 /** "shifted down 48px" — the direction spelled out, because the sign is not. */
@@ -267,6 +272,8 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
       minCrop: { width: 400 * opts.scale, height: 200 * opts.scale },
       highlightDownscale: opts.scale >= 2 ? 2 : 1,
       highlight: false,
+      rule: changeRule(opts),
+      clusterGap: 24 * opts.scale,
     },
   });
 
