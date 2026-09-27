@@ -1,7 +1,7 @@
 {
   "name": "@juangadm/pre-post",
   "version": "1.4.0",
-  "description": "Before/after screenshots for pull requests: detect changed routes, capture, pixel-diff, and show the result in the PR description",
+  "description": "Before/after screenshots and interaction videos for pull requests: detect changed routes, capture, pixel-diff, and show the result in the PR description",
   "author": "Juan Gabriel Delgado (forked from James Clements)",
   "license": "MIT",
   "repository": {
@@ -20,6 +20,7 @@
     "pull-request",
     "playwright",
     "pixelmatch",
+    "video",
     "cli",
     "claude-code-skill"
   ],
