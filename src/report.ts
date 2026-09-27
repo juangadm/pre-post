@@ -71,7 +71,11 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
   // Only a quick run earns a mention: the number is there to show the tool is
   // cheap to run, and a slow one would say the opposite.
   const took = result.durationMs > 0 && result.durationMs < FAST_RUN_MS ? ` in ${Math.max(1, Math.round(result.durationMs / 1000))}s` : '';
-  lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
+  // No sides means nothing was served — a run that stopped before the dev
+  // servers because no page could be captured. Naming empty sides says nothing.
+  if (result.beforeBase || result.afterBase) {
+    lines.push(`**Pre** = ${hostOf(result.beforeBase)} · **Post** = ${postLabel}${sha} · <a href="https://github.com/juangadm/pre-post">pre-post</a>${took}`, '');
+  }
 
   // A side that renders an error page is the whole story. One sentence and
   // where it happened; no screenshots, because a picture of an error panel in a
@@ -93,7 +97,9 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     const failed = errors.length + notCompared.length;
     lines.push(failed
       ? `**Nothing was compared** — ${failed === 1 ? 'the only capture' : `all ${failed} captures`} failed. See below.`
-      : '**Nothing was compared** — no route produced a screenshot.', '');
+      : result.skippedDynamic.length && result.outcomes.length === 0
+        ? '**Nothing was compared yet** — the only pages this branch affects need a sample URL. See below.'
+        : '**Nothing was compared** — no route produced a screenshot.', '');
   } else if (changed.length === 0 && oneSided.length === 0) {
     lines.push('No visual changes.', '');
   }
