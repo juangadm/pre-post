@@ -35,6 +35,11 @@ Vercel's Deployment Protection never gets in the way.
 - **Flags** go in `with: { args: '--responsive' }`.
 - **The run's images**, including `sheet.png`, are kept as a workflow artifact even when
   posting fails.
+- **Videos ([Moments](video.md))** are recorded when `.pre-post.json` has `"moments"`. With
+  the job's own token they are linked from the PR, not played in it: GitHub only lets a
+  person's login or a classic personal access token attach video. To play them inline, store
+  a classic token with `repo` scope as a secret and pass it:
+  `with: { github-token: '${{ secrets.PRE_POST_TOKEN }}' }`.
 - **Pinned:** `@v1` runs the pre-post version released with that tag, never whatever npm
   calls `latest`.
 
