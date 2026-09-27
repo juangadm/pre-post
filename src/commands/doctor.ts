@@ -12,6 +12,8 @@ import { servableDir } from '../baseline.js';
 import { cannotPublishHint, checkWriteAccess, findToken, GitHub, loginHint } from '../github.js';
 import { closeBrowser } from '../browser.js';
 import { driftNotes, ownVersion } from '../drift.js';
+import { findFfmpeg } from '../ffmpeg.js';
+import { ghAttachSupport } from '../attach.js';
 
 export interface DoctorCheck {
   name: string;
@@ -93,6 +95,18 @@ async function githubCheck(cwd?: string): Promise<DoctorCheck> {
   return { name: 'github', ok: false, detail: `could not reach GitHub to check the token (${access.detail})` };
 }
 
+/**
+ * Advisory, like everything about video: a run with Moments still records
+ * without either (ffmpeg installs itself on first use), and a clip that cannot
+ * play inline is linked instead.
+ */
+export function videoCheck(): DoctorCheck {
+  const ffmpeg = findFfmpeg();
+  const attach = ghAttachSupport();
+  const parts = [ffmpeg ? 'ffmpeg ready' : 'ffmpeg installs on first recording (~2 MB)', attach.ok ? 'gh can attach videos inline' : attach.reason];
+  return { name: 'video', ok: attach.ok, detail: parts.join('; ') };
+}
+
 export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   try {
@@ -104,6 +118,7 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     await closeBrowser();
   }
   checks.push(await githubCheck(cwd));
+  checks.push(videoCheck());
   // Name the ports that answered but were passed over. "None found on the
   // usual ports" reads as a lie to anyone who knows something is listening on
   // one of them, and the usual something is a macOS system service on 5000.
