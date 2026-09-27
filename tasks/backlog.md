@@ -6,7 +6,7 @@ the import graph, Vite support, GitHub-native storage on `pre-post-assets`, stic
 comment, pixel diff with crops.
 
 ## Later
-- [ ] GIF/animated capture (parked; spec kept in git history)
+- [x] Video: Moments — short interactions recorded as synced Pre | Post clips (1.5.0, docs/video.md)
 - [x] GitHub Action mode on top of `pre-post pr` for zero-touch PRs (`action.yml`)
 - [x] `pre-post prune` on a schedule (workflow in docs/storage.md)
 
@@ -29,5 +29,11 @@ comment, pixel diff with crops.
       Worth revisiting: it would remove the assets branch, prune, and the
       "images live in git history forever" caveat entirely.
 
-The GIF/video spec that used to live here described files that no longer exist
-(src/video.ts, src/upload.ts). It is in the git history if it is ever wanted.
+## Video follow-ups
+
+- [ ] Verify `gh --attach` end to end on a live PR once gh is 2.99+ here (built from
+      vercel-labs' documented flow; the spike could not run it on gh 2.83.1).
+- [ ] Deterministic frame stepping (CDP virtual time) so clips are identical run to run.
+      CSS transitions follow the compositor clock, so the fake clock alone cannot do it.
+- [ ] MP4/H.264 when a system ffmpeg with libx264 is present, if Safari reports come in.
+- [ ] Coordinate the two sides: once Post has done a step, Pre need not search the full 3s.
