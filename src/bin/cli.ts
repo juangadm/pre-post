@@ -92,7 +92,7 @@ function printHelp(): void {
   console.log(`pre-post ${VERSION} — before/after screenshots for pull requests
 
 USAGE
-  pre-post pr [options]                 Detect routes, capture, diff, publish, comment on the PR
+  pre-post pr [options]                 Detect routes, capture, diff, publish to the PR description
   pre-post <before> <after> [options]   Compare two URLs (or two PNG files)
   pre-post detect                       Print the routes this branch affects (JSON)
   pre-post ... --base <ref>             Compare against <ref> instead of the detected fork point
@@ -121,8 +121,8 @@ OPTIONS
   --cookie name=value       Cookie for the production host (repeatable)
   -o, --output <dir>        Where to write images (default: temp dir)
   --no-local-baseline       Do not rebuild the baseline from the base commit
-  --dry-run                 Capture and diff only; no upload, no comment
-  --no-comment              Publish images but do not touch the PR
+  --dry-run                 Capture and diff only; publish nothing, leave the PR alone
+  --no-comment              Publish images but leave the PR description alone
   --require-pr              Do nothing, successfully, when no open PR is found
   --local                   Build both sides on this machine; ignore deployments
   --pr <number>             Target a specific PR
