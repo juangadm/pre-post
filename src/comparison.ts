@@ -269,7 +269,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   if (ctx.before) return pair('explicit', side(ctx.before, 'passed with --before'), after, stopPost);
   if (baseline) {
     const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`);
-    return pair('local', before, after, async () => { await baseline.stop(); await stopPost(); });
+    return pair('local', before, after, async () => { await Promise.all([baseline.stop(), stopPost()]); });
   }
 
   // Nothing local could be built; a configured URL beats no comparison at all,
