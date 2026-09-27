@@ -59,7 +59,7 @@ describe('detectRoutesForRepo', () => {
     expect(path.relative(root, result.appRoot)).toBe('apps/web');
     const paths = result.routes.map(r => r.path).sort();
     expect(paths).toEqual(['/', '/pricing']);
-    expect(result.routes.find(r => r.path === '/')?.reason).toMatch(/imports/);
+    expect(result.routes.find(r => r.path === '/')?.reason).toBe('src/app/page.tsx uses src/components/ui/button.tsx indirectly');
   });
 
   it('skips dynamic routes without a sample and uses one when configured', () => {
