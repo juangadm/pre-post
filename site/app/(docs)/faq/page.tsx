@@ -39,10 +39,6 @@ const faqJsonLd = {
 export default function FaqPage() {
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
-      />
       <PageHeader title="FAQ" />
       <dl className="space-y-6 text-[15px]">
         {faqs.map(({ q, a }) => (
@@ -52,6 +48,11 @@ export default function FaqPage() {
           </div>
         ))}
       </dl>
+      {/* Last, so the spacing between blocks skips it */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
     </>
   )
 }
