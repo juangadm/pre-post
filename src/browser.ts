@@ -31,6 +31,23 @@ export const FIXED_TIME = new Date('2026-01-15T12:00:00.000Z');
  */
 export const TIMELINE_BUDGET_MS = 600;
 
+/**
+ * How far past the budget the timeline may run while the page is still
+ * animating.
+ *
+ * A fixed budget lands a longer animation on whatever frame it reaches. The
+ * lab site's dithered image reveals over 1000ms, so at 600ms every capture
+ * was mid-reveal, and which frame each side reached depended on where on the
+ * page the image sat — a 48px move put Pre and Post on different frames and
+ * published the difference as a change. Running on until the page stops
+ * asking for frames lets a finite animation finish on both sides; the cap
+ * keeps a page that animates forever from holding the capture.
+ */
+export const TIMELINE_MAX_MS = 3000;
+
+/** Page time between checks for "still animating". */
+const IDLE_CHECK_MS = 100;
+
 /** One animation frame of that budget. */
 const FRAME_MS = 16;
 
@@ -399,6 +416,12 @@ export function pageErrorFrom(raw: { kind: string; message?: string; text?: stri
 
 const INIT_SCRIPT = `
   (() => {
+    // Count animation-frame requests, so the capture can tell a page that is
+    // still animating from one that has settled. Wraps whatever
+    // requestAnimationFrame is installed (the paused clock's, in practice).
+    window.__prePostFrames = 0;
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = callback => { window.__prePostFrames++; return raf(callback); };
     // Deterministic pseudo-random for pages that seed layout from Math.random().
     let seed = 42;
     Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -533,6 +556,23 @@ async function advanceTimeline(page: Page, ms: number): Promise<void> {
 }
 
 /**
+ * Run the timeline for the fixed budget, then on until the page stops asking
+ * for animation frames or `TIMELINE_MAX_MS` is reached.
+ *
+ * Both sides follow the same rule, so a finite animation ends on its last
+ * frame on each; one that never ends runs to the cap on each.
+ */
+async function advanceUntilIdle(page: Page): Promise<void> {
+  const frames = () => page.evaluate('window.__prePostFrames || 0').catch(() => 0) as Promise<number>;
+  await advanceTimeline(page, TIMELINE_BUDGET_MS);
+  for (let spent = TIMELINE_BUDGET_MS; spent < TIMELINE_MAX_MS; spent += IDLE_CHECK_MS) {
+    const before = await frames();
+    await advanceTimeline(page, IDLE_CHECK_MS);
+    if (await frames() === before) return;
+  }
+}
+
+/**
  * Resolve once no request has been in flight for `quietMs`, or after `cap` ms.
  * Cheaper than Playwright's networkidle (which insists on a 500 ms window)
  * and tolerant of dev servers that keep sockets open.
@@ -648,9 +688,10 @@ export async function captureScreenshot(url: string, options: ScreenshotOptions)
       await settlePage(page, Math.min(settleTimeout, 2000));
     }
 
-    // The page is loaded and quiet; now give its own timeline a fixed run so
-    // whatever it animates lands on the same frame here as on the other side.
-    await advanceTimeline(page, TIMELINE_BUDGET_MS);
+    // The page is loaded and quiet; now run its own timeline until it stops
+    // animating, so whatever it animates ends on the same frame here as on
+    // the other side.
+    await advanceUntilIdle(page);
     // Timers that just fired may have asked for more content; let it arrive.
     await settlePage(page, Math.min(settleTimeout, 2000));
 

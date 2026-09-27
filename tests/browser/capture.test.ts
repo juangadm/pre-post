@@ -214,6 +214,17 @@ describe('timer-driven animation', () => {
     expect(result.selector).toBe('.card');
   });
 
+  // The lab site's dithered images reveal over 1000ms; at the fixed 600ms
+  // budget every capture was mid-reveal. The timeline now runs on until the
+  // page stops asking for frames, so the capture is the finished state.
+  it.skipIf(!playwrightAvailable)('lets an animation longer than the budget finish', async () => {
+    const [animated, finished] = await Promise.all([
+      captureScreenshot({ url: fileUrl('long-reveal/page.html') }),
+      captureScreenshot({ url: fileUrl('long-reveal-done/page.html') }),
+    ]);
+    expect(diffImages(animated.image, finished.image).changedPixels).toBe(0);
+  });
+
   it.skipIf(!playwrightAvailable)('still moves the page forward when asked to wait', async () => {
     // Guards the test above against passing because the fixture stopped
     // animating: --wait runs the page's timeline on, so this must differ.
