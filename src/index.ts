@@ -22,3 +22,7 @@ export { runLogin } from './commands/login.js';
 export { runPrune } from './commands/prune.js';
 export { runDoctor } from './commands/doctor.js';
 export { runDetect } from './commands/detect.js';
+export { recordMoments } from './video.js';
+export type { RecordMomentsOptions } from './video.js';
+export { parseMoments, loadMomentsFile, MomentError, MAX_MOMENTS } from './moments.js';
+export type { Moment, Step } from './moments.js';
