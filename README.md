@@ -49,7 +49,7 @@ The first run downloads a small browser (~80 MB). Stuck? Run
 ```bash
 pre-post pr                              # screenshot this branch's PR
 pre-post pr --routes /pricing,/docs      # only these pages
-pre-post pr -r                           # desktop and mobile
+pre-post pr --mobile                     # add mobile to desktop
 pre-post pr --before https://acme.com    # set the "before" site (remembered)
 pre-post pr --dry-run                    # try it without posting
 pre-post login https://staging.acme.com  # sign in once for protected sites
