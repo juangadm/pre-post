@@ -8,6 +8,13 @@ import fs from 'fs';
 import path from 'path';
 
 export const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.astro', '.mdx', '.md'];
+/**
+ * Stylesheets are graph nodes too. Leaving them out made a changed
+ * `globals.css` invisible to the graph, so detection fell back to a rule that
+ * mapped it to `/` alone — "affects all pages", captured on one. As nodes,
+ * `import './globals.css'` and CSS `@import` are ordinary edges.
+ */
+export const STYLE_EXTENSIONS = ['.css', '.scss', '.sass', '.less'];
 const RESOLVE_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.astro', '.mdx', '.md', '.css', '.scss', '.json'];
 
 export const SKIP_DIRS = new Set([
@@ -141,7 +148,7 @@ export function walkSourceFiles(root: string, maxFiles = 8000): string[] {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) stack.push(path.join(dir, entry.name));
-      } else if (entry.isFile() && SOURCE_EXTENSIONS.includes(path.extname(entry.name))) {
+      } else if (entry.isFile() && (SOURCE_EXTENSIONS.includes(path.extname(entry.name)) || STYLE_EXTENSIONS.includes(path.extname(entry.name)))) {
         out.push(path.join(dir, entry.name));
       }
     }
@@ -184,6 +191,24 @@ export function buildImportGraph(appRoot: string, options: { files?: string[]; a
     }
   }
   return { files, importers };
+}
+
+/**
+ * Add edges the source never writes down: a file that renders around others
+ * without being imported by them.
+ *
+ * A Next.js page does not import its layout; the framework nests it inside
+ * one. Without these edges the walk from a changed layout (or from a nav or a
+ * stylesheet only the layout imports) stopped at the layout and reached no
+ * page at all. Recorded as "the page imports its container", so the ordinary
+ * walk carries a change through the layout to every page it wraps.
+ */
+export function addContainment(graph: ImportGraph, containers: Map<string, string[]>): void {
+  for (const [container, wrapped] of containers) {
+    let set = graph.importers.get(container);
+    if (!set) graph.importers.set(container, (set = new Set()));
+    for (const entry of wrapped) if (entry !== container) set.add(entry);
+  }
 }
 
 export interface AffectedEntry {

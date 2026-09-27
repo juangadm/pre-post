@@ -15,7 +15,7 @@ import path from 'path';
 import { DetectedRoute, Framework, PrePostConfig, RouteDetectionOptions } from './types.js';
 import { detectAppRouterRoutes, detectPagesRouterRoutes } from './routes/nextjs.js';
 import { detectGenericRoutes } from './routes/generic.js';
-import { Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
+import { addContainment, Alias, buildImportGraph, findAffectedEntries, readAliases, walkSourceFiles, toPosix, SKIP_DIRS } from './routes/imports.js';
 import { viteRouteEntries, isViteApp } from './routes/vite.js';
 import { BaseResolution, changedFiles as gitChangedFiles, repoRoot as gitRepoRoot, requireBase } from './git.js';
 import { devScript, hasDependency, readPackage } from './pkg.js';
@@ -37,6 +37,45 @@ interface FrameworkAdapter {
   directRoutes(files: string[]): DetectedRoute[];
   /** Absolute entry file → route path, for the import graph. */
   routeEntries(appRoot: string, files: string[], aliases: Alias[]): Map<string, string>;
+  /**
+   * Files that render around entries without being imported by them
+   * (a layout, an app wrapper), mapped to the entries they wrap.
+   */
+  containers(appRoot: string, files: string[], entries: Map<string, string>): Map<string, string[]>;
+}
+
+/**
+ * Build tooling every stylesheet passes through. A change here restyles the
+ * whole app, which no import edge records, so it wraps every entry.
+ */
+const STYLE_TOOLING = /^(tailwind|postcss)\.config\.(ts|js|mjs|cjs|mts|cts)$/;
+
+function styleTooling(appRoot: string, files: string[], entries: Map<string, string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const all = [...entries.keys()];
+  for (const file of files) {
+    if (path.dirname(file) === appRoot && STYLE_TOOLING.test(path.basename(file))) out.set(file, all);
+  }
+  return out;
+}
+
+/**
+ * Next.js nesting: an App Router `layout`/`template` wraps every page in its
+ * folder and below; a Pages Router `_app`/`_document` wraps every page.
+ */
+function nextContainers(appRoot: string, files: string[], entries: Map<string, string>, dirName: 'app' | 'pages'): Map<string, string[]> {
+  const out = styleTooling(appRoot, files, entries);
+  const base = fs.existsSync(path.join(appRoot, 'src', dirName)) ? path.join(appRoot, 'src') : appRoot;
+  const routerDir = path.join(base, dirName);
+  const wrapper = dirName === 'app' ? /^(layout|template)\.(tsx|ts|jsx|js|mdx)$/ : /^_(app|document)\.(tsx|ts|jsx|js)$/;
+  const pages = [...entries.keys()];
+  for (const file of files) {
+    if (!file.startsWith(routerDir + path.sep) || !wrapper.test(path.basename(file))) continue;
+    // Pages Router wrappers sit at the top of pages/ and wrap everything.
+    const scope = dirName === 'app' ? path.dirname(file) + path.sep : routerDir + path.sep;
+    out.set(file, pages.filter(p => p.startsWith(scope)));
+  }
+  return out;
 }
 
 const NEXT_APP_PAGE = /^app\/(.+\/)?page\.(tsx|ts|jsx|js|mdx|md)$/;
@@ -101,6 +140,7 @@ const FRAMEWORKS: FrameworkAdapter[] = [
     normalize: stripSrc,
     directRoutes: detectAppRouterRoutes,
     routeEntries: (appRoot, files) => nextEntries(appRoot, files, 'app', NEXT_APP_PAGE, detectAppRouterRoutes),
+    containers: (appRoot, files, entries) => nextContainers(appRoot, files, entries, 'app'),
   },
   {
     name: 'nextjs-pages',
@@ -112,6 +152,7 @@ const FRAMEWORKS: FrameworkAdapter[] = [
     normalize: stripSrc,
     directRoutes: detectPagesRouterRoutes,
     routeEntries: (appRoot, files) => nextEntries(appRoot, files, 'pages', NEXT_PAGES_HIGH, detectPagesRouterRoutes),
+    containers: (appRoot, files, entries) => nextContainers(appRoot, files, entries, 'pages'),
   },
   {
     name: 'vite',
@@ -119,6 +160,7 @@ const FRAMEWORKS: FrameworkAdapter[] = [
     normalize: rel => rel,
     directRoutes: detectGenericRoutes,
     routeEntries: viteRouteEntries,
+    containers: styleTooling,
   },
   {
     name: 'generic',
@@ -126,6 +168,7 @@ const FRAMEWORKS: FrameworkAdapter[] = [
     normalize: rel => rel,
     directRoutes: detectGenericRoutes,
     routeEntries: () => new Map(),
+    containers: () => new Map(),
   },
 ];
 
@@ -393,6 +436,7 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
 
     if (entries.size) {
       const graph = buildImportGraph(appRoot, { files, aliases });
+      addContainment(graph, adapter.containers(appRoot, files, entries));
       const changedAbs = appRel.map(f => path.join(appRoot, f)).filter(f => graph.files.has(f));
       const affected = findAffectedEntries(graph, changedAbs, f => entries.has(f));
       for (const [entry, { via, depth }] of affected) {
@@ -402,7 +446,7 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
           path: entries.get(entry)!,
           sourceFile: viaRel,
           confidence: depth === 0 ? 'high' : depth <= 2 ? 'medium' : 'low',
-          reason: depth === 0 ? 'Page file changed' : `${entryRel} imports ${viaRel}${depth > 1 ? ` (${depth} hops)` : ''}`,
+          reason: depth === 0 ? 'Page file changed' : `${entryRel} uses ${viaRel}${depth > 1 ? ' indirectly' : ''}`,
         });
       }
 
