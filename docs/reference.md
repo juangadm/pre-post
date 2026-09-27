@@ -8,6 +8,7 @@ pre-post pr --before https://acme.com        # pin the baseline (saved to .pre-p
 pre-post pr --local                          # build both sides locally; ignore deployments
 pre-post pr --no-local-baseline              # never build the base commit locally
 pre-post pr --routes /pricing,/docs          # explicit routes
+pre-post pr --mobile                         # add mobile to desktop
 pre-post pr --viewports desktop,1440x900     # custom viewports
 pre-post pr --require-pr                     # exit quietly when there is no open PR
 pre-post pr --dry-run                        # capture + diff locally, post nothing

@@ -43,7 +43,7 @@ deployments entirely and builds both sides this way.
    it loads, then run forward by a fixed budget, so a page that animates on a timer is
    photographed at the same frame on both sides. Reduced motion, animations finished, caret
    hidden, fonts and images settled, layout stable, lazy content primed. 2x device scale,
-   full page (capped at 2400 CSS px), desktop (add mobile with `-r`). All routes and
+   full page (capped at 2400 CSS px), desktop (add mobile with `--mobile`). All routes and
    viewports run concurrently.
 3. **Diff.** Pure-JS pixel comparison in worker threads. Reports the percentage changed, the
    bounding box, and a tight crop of the changed region. A route counts as changed when the
