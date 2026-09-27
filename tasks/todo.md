@@ -159,3 +159,59 @@ Source: a real run against a turborepo whose app is auth-gated. Six routes, six
 origin-mismatch problem, and the fix there cannot be a file rewrite — those env
 files belong to the reader. Its own change.
 
+
+# Fix pass from the 1.3.0 stress test (juangadm/pre-post-lab, #1–#15)
+
+Plan: docs/stress-test-1.3.0-plan.md. Every root cause was re-measured on the
+lab before fixing; where the measurement disagreed with the plan, the
+measurement won (noted below).
+
+## 1. Broken pages published as changes
+- [x] Read the framework error overlay during capture (Next 16.0.7 measured:
+      a build error is pushed to every page, so `/about` is a 200 *with* the
+      dialog; a client throw in an effect is also a 200).
+- [x] A 5xx or overlay makes the route `broken`: never diffed, never
+      published. Any broken Post page is a `post-broken` verdict: one sentence
+      in the PR, no images, exit 4. A baseline broken everywhere is
+      `baseline-broken`, worded so it does not blame the branch.
+- [x] Warm each local route before capture; retry a 5xx, so a first-compile
+      flake heals before it is judged.
+
+## 2. Local runs fail where the site works
+- [x] Server output goes to a log file per side (it was `stdio: 'ignore'`).
+- [x] **Measured, not assumed:** the next/font 500 did not reproduce in 3
+      awake runs; it is a Google Fonts fetch failure. Area 1 now reports it.
+- [x] **Measured:** the 12–31s (once 300s) `cleanup` was a full system Chrome
+      taking its time to exit, not the worktree (its removal is ~3s). Browser
+      close is capped at 5s; servers stop on SIGTERM, awaited, before their
+      worktree is removed, all side by side. Cleanup ~30s → 3–5s.
+- [ ] Persistent baseline worktree (~9s more per run). Deferred: the evidence
+      showed cleanup was the browser, so this is now an optimisation, not a fix.
+
+## 3. Route selection
+- [x] Stylesheets are graph nodes; layouts, templates, `_app`, tailwind/postcss
+      config wrap the pages beneath them. globals.css now reaches all 7 pages.
+- [x] The cap selects one route per cause first and reports the rest in the
+      route list, `detect --json` and the PR. (Correction: the cap *was*
+      printed, but above the dev-server output and nowhere else.)
+- [x] A dynamic-only change captures nothing instead of `/`, in ~1s.
+
+## 4. Changed vs noisy
+- [x] **Measured:** repeated captures of one side are pixel-identical, so the
+      planned capture-twice noise mask would have found nothing. The noise was
+      a 1000ms reveal caught at a 600ms budget.
+- [x] One change rule for verdict and crop; crops cover the patches that count.
+- [x] The timeline runs until the page stops requesting frames (cap 3s).
+- [x] **Correction:** the banner (scenario 5) re-wraps every paragraph below
+      it, so "5.42%, full pages" was honest; no insertion model added.
+
+## 5. PR for reviewers
+- [x] "Pre = base `38d9f0b` · Post = this branch", never a port.
+- [x] The same change on several pages is one section and one image pair.
+- [x] (Correction: timings, hops and "once aligned" were terminal-only; the
+      skill now says not to paste the terminal into the PR.)
+
+## 6. Stale copies
+- [x] doctor and pr report skill copies, a shadowing command file and a
+      devDependency range from another release.
+- [x] The skill carries its version and pins every npx line (test-enforced).
