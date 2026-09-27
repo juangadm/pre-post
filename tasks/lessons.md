@@ -106,3 +106,33 @@ that fixture URL into the repo's `.pre-post.json` — `--before` persists by des
 **How to apply:** after any exploratory CLI run inside this repo, run `git status` and
 revert config the run wrote. Prefer pointing test runs at a scratch repo, or pass the
 sides in a way that does not persist (`--after` alone, or `--local`).
+
+## Moments are part of the visual diff, not a separate pillar
+
+Sketching the landing-page IA, I gave Moments its own step and suggested a dedicated demo.
+The user corrected: pre-post is one visual diff, either static (screenshot) or dynamic
+(clip). Moments is a mode of that diff, not a headline feature.
+
+**Why:** I over-weighted the newest feature because it was freshest in the git log.
+
+**How to apply:** in copy, docs and IA, present capture as one thing with two modes —
+static and motion. Never lead with or break out a feature just because it shipped last.
+
+## Accessible means plain words, not audience callouts
+
+For the landing page I wrote "For developers, and everyone else" sections and a plain/technical
+two-layer structure. The user wanted neither: just write everything in plain, jargon-free
+language. Don't segment readers or name "non-developers".
+
+**How to apply:** when asked to make copy accessible, rewrite the words (pages, not routes;
+live site, not baseline) instead of adding sections or layers aimed at a type of reader.
+
+## Lead copy with the value, not the mechanism
+
+My landing copy described what pre-post does (detects, captures, posts). The user wanted it to
+lead with what you get: visual proof in every PR, agents that show their work, changes you can
+see and review right away, and speed (seconds, where agents driving a browser take minutes).
+Reviewers get half a line, so they want the rest of their team using it.
+
+**How to apply:** headline and first lines = user value, in the user's plain voice. Mechanism
+goes on How it works. Avoid tidy AI-sounding parallel lists; write it the way a person talks.
