@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PNG } from 'pngjs';
-import { diffImages, expandRegion, downscale } from '../../src/diff';
+import { diffImages, expandRegion, downscale, findClusters } from '../../src/diff';
 
 function solid(width: number, height: number, rgb: [number, number, number]): PNG {
   const png = new PNG({ width, height });
@@ -102,5 +102,81 @@ describe('downscale', () => {
     expect(out.width).toBe(1);
     expect(out.data[0]).toBe(127);
     expect(out.data[3]).toBe(255);
+  });
+});
+
+describe('crops follow the change rule', () => {
+  const RULE = { minPixels: 400, minRatio: 0.001 };
+
+  it('merges nearby changed pixels into one patch and keeps distant ones apart', () => {
+    const a = solid(1000, 1000, [255, 255, 255]);
+    const b = solid(1000, 1000, [255, 255, 255]);
+    paint(b, 100, 100, 10, 10, [0, 0, 0]);
+    paint(b, 130, 100, 10, 10, [0, 0, 0]); // 20px away: same patch
+    paint(b, 800, 800, 4, 4, [0, 0, 0]);   // far away: its own patch
+    const diff = new PNG({ width: 1000, height: 1000 });
+    // Paint the diff colour directly: findClusters reads the diff image.
+    for (const [x, y, w, h] of [[100, 100, 10, 10], [130, 100, 10, 10], [800, 800, 4, 4]]) paint(diff, x, y, w, h, [255, 0, 0]);
+    const clusters = findClusters(diff, 48);
+    expect(clusters).toHaveLength(2);
+    expect(clusters.map(c => c.pixels).sort((p, q) => p - q)).toEqual([16, 200]);
+  });
+
+  // Scenario 3: a header change plus specks of animation noise far below it
+  // made one crop spanning both.
+  it('leaves specks that do not count out of a crop around a real change', () => {
+    const a = solid(2000, 3000, [255, 255, 255]);
+    const b = solid(2000, 3000, [255, 255, 255]);
+    paint(b, 100, 40, 600, 40, [0, 0, 0]);    // the real change: 24000px
+    paint(b, 1500, 2600, 6, 6, [30, 30, 30]); // noise: 36px
+    const result = diffImages(encode(a), encode(b), { rule: RULE, padding: 10, minCrop: { width: 100, height: 80 } });
+    expect(result.crop).toBeDefined();
+    expect(result.crop!.region.y + result.crop!.region.height).toBeLessThan(200);
+  });
+
+  it('still crops several small edits that only count together', () => {
+    const a = solid(2000, 2000, [255, 255, 255]);
+    const b = solid(2000, 2000, [255, 255, 255]);
+    for (const x of [100, 400, 700, 1000, 1300]) paint(b, x, 100, 9, 9, [0, 0, 0]); // 81px each, 405 together
+    const result = diffImages(encode(a), encode(b), { rule: RULE, padding: 10, minCrop: { width: 100, height: 80 } });
+    expect(result.crop).toBeDefined();
+    expect(result.crop!.region.x).toBeLessThanOrEqual(100);
+    expect(result.crop!.region.x + result.crop!.region.width).toBeGreaterThanOrEqual(1309);
+  });
+
+  it('draws no crop when what changed does not count', () => {
+    const a = solid(2000, 2000, [255, 255, 255]);
+    const b = solid(2000, 2000, [255, 255, 255]);
+    paint(b, 500, 500, 5, 5, [0, 0, 0]);
+    expect(diffImages(encode(a), encode(b), { rule: RULE }).crop).toBeUndefined();
+    // Without a rule, any pixel still counts, as image mode expects.
+    expect(diffImages(encode(a), encode(b), { padding: 10, minCrop: { width: 100, height: 80 } }).crop).toBeDefined();
+  });
+
+  // Scenario 4: "Content shifted down 48px. Nothing else changed." shipped
+  // with a crop of animation noise the report had just called no change.
+  it('draws no crop for a pure move that leaves only noise behind', () => {
+    const stripes = (offset: number) => {
+      const png = solid(400, 600, [255, 255, 255]);
+      // Distinct rows, so the move has something to lock on to.
+      for (let y = 0; y < 400; y++) paint(png, 20, y + 100 + offset, 360, 1, [y % 256, (y * 7) % 256, (y * 13) % 256]);
+      return png;
+    };
+    const a = stripes(0);
+    const b = stripes(40);
+    paint(b, 300, 580, 3, 3, [0, 0, 0]); // 9px of noise, below the move
+    const result = diffImages(encode(a), encode(b), { rule: RULE, padding: 10, minCrop: { width: 100, height: 80 } });
+    expect(result.shift?.dy).toBe(40);
+    expect(result.shift!.alignedChangedPixels).toBeGreaterThan(0);
+    expect(result.crop).toBeUndefined();
+  });
+
+  it('widens a crop that spans most of the page to the full width', () => {
+    const a = solid(1000, 3000, [255, 255, 255]);
+    const b = solid(1000, 3000, [255, 255, 255]);
+    paint(b, 150, 100, 600, 50, [0, 0, 0]);
+    const result = diffImages(encode(a), encode(b), { rule: RULE, padding: 10, minCrop: { width: 100, height: 80 } });
+    expect(result.crop!.region.x).toBe(0);
+    expect(result.crop!.region.width).toBe(1000);
   });
 });
