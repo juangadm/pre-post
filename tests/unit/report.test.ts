@@ -87,6 +87,12 @@ describe('buildComment', () => {
     expect(buildComment({ ...base, outcomes: [] })).toContain('**Nothing was compared**');
   });
 
+  it('names the affected routes the cap left out', () => {
+    const result = { ...base, omittedRoutes: ['/writing'], maxRoutes: 6 };
+    expect(buildComment(result)).toContain('**Also affected, not captured (over the 6-page limit):** `/writing`');
+    expect(buildSummary(result)).toContain('not captured (over the 6-route cap): /writing (raise with --max-routes)');
+  });
+
   it('falls back to local files when nothing was published', () => {
     const local = buildComment({
       ...base,

@@ -348,6 +348,10 @@ export interface PrRunResult {
   afterBase: string;
   outcomes: RouteCaptureOutcome[];
   skippedDynamic: string[];
+  /** Routes the branch affects that the `maxRoutes` cap left out */
+  omittedRoutes?: string[];
+  /** The cap that left them out, so a reader knows what to raise */
+  maxRoutes?: number;
   durationMs: number;
   markdown: string;
   /** Local directory holding every captured file */

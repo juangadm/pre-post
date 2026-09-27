@@ -3,7 +3,8 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { detectRoutesForRepo } from '../../src/routes';
+import { detectRoutesForRepo, selectRoutes } from '../../src/routes';
+import { DetectedRoute } from '../../src/types';
 
 /**
  * The lab site's shape: seven static pages and one dynamic one, a root layout
@@ -68,5 +69,35 @@ describe('route coverage', () => {
 
   it('treats style tooling config as affecting every page', () => {
     expect(detect(['tailwind.config.ts'], 20).routes).toHaveLength(STATIC.length);
+  });
+
+  // Scenarios 3 and 12: the seventh page was dropped with nothing recorded.
+  it('reports the routes the cap leaves out', () => {
+    const result = detect(['app/globals.css']);
+    expect(result.routes).toHaveLength(6);
+    // Shortest paths first, so the last of the 9-character tie is the one left out.
+    expect(result.omitted.map(r => r.path)).toEqual(['/projects']);
+    expect([...result.routes, ...result.omitted].map(r => r.path).sort()).toEqual([...STATIC].sort());
+  });
+});
+
+describe('selectRoutes', () => {
+  const route = (p: string, sourceFile: string, confidence: DetectedRoute['confidence'] = 'medium'): DetectedRoute =>
+    ({ path: p, sourceFile, confidence, reason: '' });
+
+  it('gives every cause a route before any cause gets a second', () => {
+    const shared = ['/a', '/b', '/c', '/d'].map(p => route(p, 'components/Nav.tsx'));
+    const { selected, omitted } = selectRoutes([...shared, route('/zzz', 'components/Footer.tsx')], 2);
+    expect(selected.map(r => r.path)).toEqual(['/a', '/zzz']);
+    expect(omitted.map(r => r.path)).toEqual(['/b', '/c', '/d']);
+  });
+
+  it('still puts higher confidence first', () => {
+    const { selected } = selectRoutes([route('/x', 'a.tsx', 'low'), route('/y', 'b.tsx', 'high')], 1);
+    expect(selected.map(r => r.path)).toEqual(['/y']);
+  });
+
+  it('omits nothing under the cap', () => {
+    expect(selectRoutes([route('/a', 'x'), route('/b', 'x')], 6).omitted).toEqual([]);
   });
 });

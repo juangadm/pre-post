@@ -266,15 +266,41 @@ export function deduplicateRoutes(routes: DetectedRoute[]): DetectedRoute[] {
   return Array.from(byPath.values());
 }
 
+/**
+ * Choose which routes to capture when there are more than the cap allows.
+ *
+ * Not a truncation of a sorted list. That sorted by confidence and then by
+ * name, so on a shared-nav change the same alphabetically-last page was cut
+ * on every run, and nothing recorded that it had been. Now each distinct
+ * cause (the changed file a route was reached from) gets a route before any
+ * cause gets a second, shallower paths first; and whatever does not fit is
+ * returned, so every renderer can say what was left out.
+ */
+export function selectRoutes(routes: DetectedRoute[], maxRoutes: number): { selected: DetectedRoute[]; omitted: DetectedRoute[] } {
+  const unique = deduplicateRoutes(routes);
+  const byPath = (a: DetectedRoute, b: DetectedRoute) => a.path.length - b.path.length || a.path.localeCompare(b.path);
+  // Rank within each cause, so the first route of every cause precedes the
+  // second route of any.
+  const rankInCause = new Map<DetectedRoute, number>();
+  const causes = new Map<string, DetectedRoute[]>();
+  for (const r of unique) causes.set(r.sourceFile, [...(causes.get(r.sourceFile) ?? []), r]);
+  for (const group of causes.values()) group.sort(byPath).forEach((r, i) => rankInCause.set(r, i));
+  const ordered = [...unique].sort((a, b) =>
+    CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence]
+    || rankInCause.get(a)! - rankInCause.get(b)!
+    || byPath(a, b));
+  return { selected: ordered.slice(0, maxRoutes), omitted: ordered.slice(maxRoutes) };
+}
+
 function rankAndCap(routes: DetectedRoute[], maxRoutes: number, warn?: (msg: string) => void): DetectedRoute[] {
-  let out = deduplicateRoutes(routes);
-  out.sort((a, b) => CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence] || a.path.localeCompare(b.path));
-  if (out.length > maxRoutes) {
-    const original = out.length;
-    out = out.slice(0, maxRoutes);
-    warn?.(`Detected ${original} routes, capping at ${maxRoutes}. Use --max-routes to increase.`);
-  }
-  return out;
+  const { selected, omitted } = selectRoutes(routes, maxRoutes);
+  if (omitted.length) warn?.(capNotice(omitted, maxRoutes));
+  return selected;
+}
+
+/** "Not captured (over the 6-route cap): /writing. Raise it with --max-routes." */
+export function capNotice(omitted: Array<{ path: string }>, maxRoutes: number): string {
+  return `Not captured (over the ${maxRoutes}-route cap): ${omitted.map(r => r.path).join(', ')}. Raise it with --max-routes.`;
 }
 
 export function isDynamicRoute(route: string): boolean {
@@ -317,6 +343,8 @@ export interface RepoRouteDetection {
   appRoot: string;
   changedFiles: string[];
   routes: DetectedRoute[];
+  /** Affected routes left out by the `maxRoutes` cap, in the order they would have come next */
+  omitted: DetectedRoute[];
   /** Dynamic routes with no sample URL configured */
   skippedDynamic: string[];
   /** What the working tree was compared with; null when files were supplied. */
@@ -477,11 +505,16 @@ export function detectRoutesForRepo(options: RepoDetectionOptions = {}): RepoRou
     else skippedDynamic.add(r.path);
   }
 
+  // Reported by the caller, beside the routes it did pick, rather than warned
+  // here: a warning printed before the dev servers' output was easy to miss,
+  // and `detect --json` never saw it at all.
+  const { selected, omitted } = selectRoutes(resolved, maxRoutes);
   return {
     framework: adapter.name,
     appRoot,
     changedFiles: allChanged,
-    routes: rankAndCap(resolved, maxRoutes, options.log),
+    routes: selected,
+    omitted,
     skippedDynamic: Array.from(skippedDynamic),
     base,
     durationMs: Date.now() - started,

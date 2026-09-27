@@ -19,6 +19,9 @@ export function runDetect(opts: { cwd?: string; maxRoutes?: number; framework?: 
     // cannot tell "nothing changed" from "compared against the wrong thing".
     base: detection.base && { sha: detection.base.sha.slice(0, 7), source: detection.base.source },
     routes: detection.routes.map(r => ({ path: r.path, confidence: r.confidence, reason: r.reason })),
+    // Affected but not captured: over the maxRoutes cap. Listed so that a
+    // short `routes` is never mistaken for everything the branch touches.
+    omitted: detection.omitted.map(r => ({ path: r.path, confidence: r.confidence, reason: r.reason })),
     skippedDynamic: detection.skippedDynamic,
   };
 }

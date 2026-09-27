@@ -164,6 +164,13 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     );
   }
 
+  // A route list that silently stops at the cap reads as "these are all the
+  // pages this branch touches". Name the rest.
+  if (result.omittedRoutes?.length) {
+    const cap = result.maxRoutes ? ` (over the ${result.maxRoutes}-page limit)` : '';
+    lines.push(`**Also affected, not captured${cap}:** ${result.omittedRoutes.map(code).join(', ')}`, '');
+  }
+
   return lines.join('\n');
 }
 
@@ -199,6 +206,9 @@ export function buildSummary(result: PrRunResult): string {
   }
   if (result.skippedDynamic.length) {
     lines.push(`  needs sample URL: ${result.skippedDynamic.join(', ')} (add to .pre-post.json "samples")`);
+  }
+  if (result.omittedRoutes?.length) {
+    lines.push(`  not captured (over the ${result.maxRoutes ?? '?'}-route cap): ${result.omittedRoutes.join(', ')} (raise with --max-routes)`);
   }
   // Named for what actually happened. The images normally go in the PR
   // description and only fall back to a comment, so "Comment:" sent a reader
