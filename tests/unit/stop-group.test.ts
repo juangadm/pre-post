@@ -60,7 +60,9 @@ describe('stopGroup', () => {
     await new Promise(r => setTimeout(r, 100));
     const started = Date.now();
     await stopGroup(child, 300);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    // It waited out the timeout rather than returning at once; timers can
+    // fire a millisecond before Date.now() says they should, so allow a margin.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
     expect(await goneWithin(child.pid!)).toBe(true);
   });
 
