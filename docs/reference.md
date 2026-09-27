@@ -11,6 +11,8 @@ pre-post pr --routes /pricing,/docs          # explicit routes
 pre-post pr --viewports desktop,1440x900     # custom viewports
 pre-post pr --require-pr                     # exit quietly when there is no open PR
 pre-post pr --dry-run                        # capture + diff locally, post nothing
+pre-post pr --moments moments.json           # also record interactions as Pre | Post clips
+pre-post pr --no-video                       # skip the Moments in .pre-post.json this run
 pre-post pr --json                           # machine-readable output
 
 pre-post https://acme.com http://localhost:3000 --routes /pricing   # ad-hoc comparison
@@ -29,7 +31,7 @@ pre-post doctor                              # browser, token, dev server, confi
 |---|---|
 | 0 | done; for `doctor`, `pre-post pr` can run |
 | 1 | the run failed — every capture errored, or an unexpected error; for `doctor`, a required check failed |
-| 2 | the arguments could not be parsed |
+| 2 | the arguments could not be parsed, or a Moment is invalid (the message names it and the step) |
 | 3 | something needs a human; the message says what (log in, start the dev server, pass `--before`) |
 
 Re-running after a code 3 picks up where it left off.
@@ -58,9 +60,13 @@ Optional, in the repo root. Every field is optional.
   "ignore": ["apps/docs"],
   "headers": {},
   "assetsBranch": "pre-post-assets",
-  "baselineSetup": "pnpm run build:packages"
+  "baselineSetup": "pnpm run build:packages",
+  "moments": [{ "name": "Open the account menu", "route": "/settings", "steps": [{ "click": "Account" }] }]
 }
 ```
+
+**`moments`** are short interactions recorded as Pre | Post clips on every run; see
+[Video: Moments](video.md).
 
 **`samples`** gives one example URL per dynamic route, so it can be captured.
 
@@ -87,6 +93,7 @@ alone.
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | Bypass Vercel Deployment Protection on preview and production URLs |
 | `PRE_POST_CONCURRENCY` | Parallel pages (default 6) |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use a specific Chromium binary |
+| `PRE_POST_FFMPEG` | Use a specific ffmpeg for Moments (needs the libvpx encoder) |
 | `GH_REPO` | `owner/repo` when the remote URL cannot be parsed |
 
 ## Library
