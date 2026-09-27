@@ -71,6 +71,13 @@ describe('route coverage', () => {
     expect(detect(['tailwind.config.ts'], 20).routes).toHaveLength(STATIC.length);
   });
 
+  it('captures / as a check only when nothing mapped and nothing waits for a sample', () => {
+    expect(detect(['README.md']).routes.map(r => [r.path, r.reason])).toEqual([['/', 'No page mapped from the diff; capturing / as a check']]);
+    const dynamicOnly = detect(['app/writing/[slug]/page.tsx']);
+    expect(dynamicOnly.routes).toEqual([]);
+    expect(dynamicOnly.skippedDynamic).toEqual(['/writing/[slug]']);
+  });
+
   // Scenarios 3 and 12: the seventh page was dropped with nothing recorded.
   it('reports the routes the cap leaves out', () => {
     const result = detect(['app/globals.css']);

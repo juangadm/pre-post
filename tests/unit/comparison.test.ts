@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveComparison, describeComparison, sideLabel, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
+import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
 const PR = { number: 7, head: { sha: 'head1234567' }, base: { sha: 'base7654321' } };
@@ -129,9 +129,8 @@ describe('resolveComparison', () => {
       devServer: Promise.resolve('http://localhost:3000'),
       serveBaseline: async () => ({ url: 'http://localhost:41111', stop: async () => undefined }),
     }));
-    expect(sideLabel(c.before)).toBe(`base \`${PR.base.sha.slice(0, 7)}\``);
-    expect(sideLabel(c.after)).toBe('this branch');
-    expect(sideLabel({ url: 'https://acme-git-main.vercel.app' })).toBe('acme-git-main.vercel.app');
+    expect(c.before.label).toBe(`base \`${PR.base.sha.slice(0, 7)}\``);
+    expect(c.after.label).toBe('this branch');
   });
 
   it('uses the bot comment once the head commit has a green deployment', async () => {

@@ -6,17 +6,15 @@
 import fs from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
-import { ArtifactKind, artifactSuffix, AuthOptions, BlockedSide, BrokenSide, CaptureResult, PageError, RouteCaptureOutcome, RouteShift, RunVerdict, ViewportSize } from './types.js';
+import { ArtifactKind, artifactSuffix, AuthOptions, BlockedSide, BrokenSide, CaptureResult, isBrokenVerdict, PageError, RouteCaptureOutcome, RouteShift, RunVerdict, sideName, ViewportSize } from './types.js';
 import { captureScreenshot } from './browser.js';
 import { checkLanding, signInHint } from './landing.js';
 import { differentSitesHint, looksLikeDifferentSites, textOverlap, titleOverlap } from './sameness.js';
-import { HttpStatusError, NavigationError } from './errors.js';
+import { HttpStatusError, NavigationError, NeedsHumanError } from './errors.js';
 import { DiffPool } from './diff-pool.js';
-import type { ChangeRule } from './diff.js';
-import { authHint } from './doctor.js';
+import { ChangeRule, meetsRule } from './diff.js';
+import { authHint, probeUrl } from './doctor.js';
 import { hostOf, isLocalUrl } from './url.js';
-
-export type { RunVerdict } from './types.js';
 
 export interface CaptureTask {
   route: string;
@@ -94,8 +92,7 @@ export function isChanged(
   diff: { changedRatio: number; changedPixels: number },
   opts: { minChangedArea: number; threshold: number; scale: number },
 ): boolean {
-  if (diff.changedPixels === 0) return false;
-  return diff.changedPixels >= changeRule(opts).minPixels || diff.changedRatio >= opts.threshold;
+  return meetsRule(diff.changedPixels, diff.changedRatio, changeRule(opts));
 }
 
 /** The same rule in device pixels, for the diff to draw its crop by. */
@@ -148,8 +145,8 @@ export function pageFailure(c: CaptureResult): PageError | null {
 export function brokenSide(before: CaptureResult, after: CaptureResult): BrokenSide | null {
   const pre = pageFailure(before);
   const post = pageFailure(after);
-  if (post) return { side: pre ? 'both' : 'after', status: after.status, error: post };
-  if (pre) return { side: 'before', status: before.status, error: pre };
+  if (post) return { side: 'after', error: post };
+  if (pre) return { side: 'before', error: pre };
   return null;
 }
 
@@ -190,7 +187,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   // walled.
   const blocked = blockedSide(task.beforeUrl, before, 'before') ?? blockedSide(task.afterUrl, after, 'after');
   if (blocked) {
-    const label = blocked.side === 'before' ? 'Pre' : 'Post';
+    const label = sideName(blocked.side);
     return {
       ...base,
       blocked,
@@ -212,8 +209,7 @@ async function runTask(task: CaptureTask, opts: PipelineOptions, pool: DiffPool)
   if (broken) {
     fs.writeFileSync(outputs.before, Buffer.from(before.image));
     fs.writeFileSync(outputs.after, Buffer.from(after.image));
-    const label = broken.side === 'before' ? 'Pre' : 'Post';
-    opts.log?.(`  broken   ${task.route} @ ${task.viewport} (${label}: ${describePageError(broken.error)}, ${Date.now() - started}ms)`);
+    opts.log?.(`  broken   ${task.route} @ ${task.viewport} (${sideName(broken.side)}: ${describePageError(broken.error)}, ${Date.now() - started}ms)`);
     return {
       ...base,
       status: 'broken',
@@ -423,9 +419,9 @@ export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): Ru
   // mid-rebuild. The base failing is different: it is not this branch's fault,
   // so it only stops the run when no route has a "before" at all; otherwise
   // those routes are reported as not compared and the rest stand.
-  const postBroken = outcomes.filter(o => o.broken && o.broken.side !== 'before');
+  const postBroken = outcomes.filter(o => o.broken?.side === 'after');
   if (postBroken.length) return { kind: 'post-broken', hint: brokenHint(postBroken, 'Post', sides) };
-  const preBroken = outcomes.filter(o => o.broken);
+  const preBroken = outcomes.filter(o => o.broken?.side === 'before');
   if (preBroken.length && preBroken.length === outcomes.length) {
     return { kind: 'baseline-broken', hint: brokenHint(preBroken, 'Pre', sides) };
   }
@@ -433,6 +429,15 @@ export function verdictFor(outcomes: RouteCaptureOutcome[], sides: RunSides): Ru
     return { kind: 'different-sites', hint: differentSitesHint(sides.before.url, sides.before.detail, sides.after.url, sides.fix) };
   }
   return null;
+}
+
+/**
+ * Stop on a verdict a human must act on before anything is published: a wall,
+ * or two different sites. A broken page passes through; it is a finding the
+ * report states, not a setup problem.
+ */
+export function throwIfBlocked(verdict: RunVerdict | null): void {
+  if (verdict && !isBrokenVerdict(verdict)) throw new NeedsHumanError(verdict.hint);
 }
 
 /** One sentence: which side, which page, what it said, and what now. */
@@ -456,31 +461,37 @@ function brokenHint(broken: RouteCaptureOutcome[], side: 'Pre' | 'Post', sides: 
  * after a pause, and only what the capture then sees counts. Deployments are
  * left alone — they are already built, and a production host is not ours to
  * load.
+ *
+ * Every page starts warming at once, and each capture waits only for its own
+ * two, so a slow route never holds back one that is ready.
  */
-export async function warmUp(
+export function warmUp(
   urls: string[],
   headers: Record<string, string> = {},
   { attempts = 3, pauseMs = 1500, timeoutMs = 60_000 } = {},
-): Promise<void> {
-  const local = [...new Set(urls)].filter(u => /^https?:/.test(u) && isLocalUrl(u));
-  await Promise.all(local.map(async url => {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      const status = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) })
-        .then(async res => { await res.arrayBuffer().catch(() => undefined); return res.status; })
-        .catch(() => null);
-      if (status !== null && status < 500) return;
-      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, pauseMs));
-    }
-  }));
+): Map<string, Promise<void>> {
+  const warming = new Map<string, Promise<void>>();
+  for (const url of urls) {
+    if (warming.has(url) || !/^https?:/.test(url) || !isLocalUrl(url)) continue;
+    warming.set(url, (async () => {
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const { status } = await probeUrl(url, headers, { timeoutMs, drain: true });
+        if (status !== null && status < 500) return;
+        if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, pauseMs));
+      }
+    })());
+  }
+  return warming;
 }
 
 export async function runTasks(tasks: CaptureTask[], opts: PipelineOptions): Promise<RunResult> {
   fs.mkdirSync(opts.outputDir, { recursive: true });
-  await warmUp(tasks.flatMap(t => [t.beforeUrl, t.afterUrl]), opts.auth?.headers);
+  const warming = warmUp(tasks.flatMap(t => [t.beforeUrl, t.afterUrl]), opts.auth?.headers);
+  const warmed = (t: CaptureTask) => Promise.all([warming.get(t.beforeUrl), warming.get(t.afterUrl)]);
   const pool = new DiffPool();
   let outcomes: RouteCaptureOutcome[];
   try {
-    outcomes = await Promise.all(tasks.map(t => runTask(t, opts, pool)));
+    outcomes = await Promise.all(tasks.map(t => warmed(t).then(() => runTask(t, opts, pool))));
   } finally {
     await pool.close();
   }

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { parseArgs } from 'node:util';
-import { createRequire } from 'module';
 import { Framework, isBrokenVerdict } from '../types.js';
 import { runPr } from '../commands/pr.js';
 import { runCompare } from '../commands/compare.js';
@@ -11,15 +10,9 @@ import { doctorExitCode, runDoctor } from '../commands/doctor.js';
 import { runDetect } from '../commands/detect.js';
 import { EXIT_BROKEN_PAGE, NeedsHumanError } from '../errors.js';
 import { buildSummary } from '../report.js';
+import { ownVersion } from '../drift.js';
 
-const require = createRequire(import.meta.url);
-const VERSION: string = (() => {
-  try {
-    return require('../../package.json').version;
-  } catch {
-    return '0.0.0';
-  }
-})();
+const VERSION = ownVersion();
 
 const SUBCOMMANDS = ['pr', 'detect', 'login', 'prune', 'doctor', 'compare'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
@@ -191,9 +184,9 @@ function output(result: Parameters<typeof buildSummary>[0]): void {
 }
 
 /** A side rendered an error page: say so on stderr, where a CI log shows it, and exit 4. */
-function exitForBrokenPage(result: Parameters<typeof buildSummary>[0]): boolean {
-  if (!isBrokenVerdict(result.verdict)) return false;
-  console.error(`\n${result.verdict!.hint}`);
+function exitForBrokenPage(result: Parameters<typeof buildSummary>[0]): void {
+  if (!isBrokenVerdict(result.verdict)) return;
+  console.error(`\n${result.verdict.hint}`);
   process.exit(EXIT_BROKEN_PAGE);
 }
 
@@ -253,7 +246,7 @@ async function main(): Promise<void> {
         return;
       }
       output(result);
-      if (exitForBrokenPage(result)) return;
+      exitForBrokenPage(result);
       if (result.outcomes.length && result.outcomes.every(o => o.status === 'error')) process.exit(1);
       // Printed after the result, not instead of it: the screenshots exist and
       // are worth looking at even though GitHub would not take them.

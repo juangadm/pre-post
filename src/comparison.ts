@@ -16,7 +16,7 @@ import { GitHub, PullRequestRef } from './github.js';
 import { deploymentUrlForSha, findPreviewForCommit, latestProductionDeployment } from './deployments.js';
 import { serveBaseCommit, serveWorkingTree } from './baseline.js';
 import { NeedsHumanError, ProbeResult } from './doctor.js';
-import { hostOf, isLocalUrl, normalizeUrl } from './url.js';
+import { isLocalUrl, normalizeUrl } from './url.js';
 import { PrePostConfig } from './types.js';
 import { mergeBase } from './git.js';
 import { Stopwatch } from './timings.js';
@@ -36,11 +36,6 @@ export interface Side {
   label?: string;
 }
 
-/** A reviewer's name for a side: its label, else the host a deployment answers on. */
-export function sideLabel(s: Pick<Side, 'url' | 'label'>): string {
-  if (s.label) return s.label;
-  return isLocalUrl(s.url) ? 'a local server' : hostOf(s.url);
-}
 
 export interface Comparison {
   strategy: StrategyName;
@@ -98,7 +93,7 @@ export interface ResolveContext {
 
 const noop = async (): Promise<void> => undefined;
 
-const side = (url: string, detail: string, probe?: ProbeResult): Side => ({ url: normalizeUrl(url), detail, probe });
+const side = (url: string, detail: string, probe?: ProbeResult, label?: string): Side => ({ url: normalizeUrl(url), detail, probe, label });
 
 /**
  * The one place a Comparison is built, so `mixed` is derived rather than
@@ -236,7 +231,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   const running = await ctx.devServer;
   let after: Side | null = ctx.after
     ? side(ctx.after, 'passed with --after')
-    : running ? { ...side(running, 'local dev server'), label: 'this branch' } : null;
+    : running ? side(running, 'local dev server', undefined, 'this branch') : null;
 
   // Nothing deployed and nothing running is not a reason to stop: this is the
   // command you hit on the way out of a PR, so it starts the dev server itself
@@ -270,7 +265,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
   // "try the next option" — but whatever the other side started has to come
   // down before the error escapes; nothing above this has a handle on it.
   if (postResult.status === 'rejected') { await stopPre(); throw postResult.reason; }
-  if (postServer) after = { ...side(postServer.url, 'working tree, served locally'), label: 'this branch' };
+  if (postServer) after = side(postServer.url, 'working tree, served locally', undefined, 'this branch');
   if (!after) {
     await stopPre();
     throw deployed.preview ? new NoDeployedBaselineError(deployed.preview.url, deployed.rejectedBaseline) : new NoPostError();
@@ -279,7 +274,7 @@ async function localPair(ctx: ResolveContext, deployed: DeployedAttempt): Promis
 
   if (ctx.before) return pair('explicit', side(ctx.before, 'passed with --before'), after, stopPost);
   if (baseline) {
-    const before = { ...side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`), label: `base \`${baseSha!.slice(0, 7)}\`` };
+    const before = side(baseline.url, `base commit ${baseSha!.slice(0, 7)}, served locally`, undefined, `base \`${baseSha!.slice(0, 7)}\``);
     return pair('local', before, after, async () => { await Promise.all([baseline.stop(), stopPost()]); });
   }
 
