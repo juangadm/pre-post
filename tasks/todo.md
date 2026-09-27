@@ -1,242 +1,26 @@
-# Video Moments (1.5.0) — plan: ~/.claude/plans/zippy-purring-token.md
+# TODO
 
-- [x] Phase 0 spike: screencast fps, VP8 legibility, composite speed (docs/internal/video-spike.md)
-- [ ] Phase 0 spike: gh --attach on a live PR — blocked on gh 2.99+ locally (have 2.83.1)
-- [x] moments.ts: schema, validation, 3-Moment limit, long-clip nudge
-- [x] browser.ts: motion context option
-- [x] record.ts: screencast capture + step timestamps
-- [x] compose.ts: step-aligned timeline + canvas composite
-- [x] ffmpeg.ts: locate/auto-install bundled ffmpeg, encode, size budget
-- [x] Wire config / CLI / pr command / types
-- [x] report.ts: Moments section + failures
-- [x] attach.ts: gh --attach upload + branch fallback
-- [x] SKILL.md, doctor, docs, site copy, CI ffmpeg, version bump
-- [x] Verify locally: unit (504), browser + integration (48), real `pr --dry-run --moments`
-- [ ] Verify live: inline video on a real PR (needs gh 2.99+)
+Updated 2026-09-27. Finished fix passes (1.1–1.4 field tests, stress tests, Codex rounds)
+are in git history: `git log -- tasks/todo.md`.
 
-## Review
+## Now: ship 1.5.0 (video Moments) — PR #46
 
-- One Moment: ~3.9s recording (3.25s is the clip itself) + ~1.1s composite/encode.
-  Three in parallel: 8.6s. Clips are 80–125 KB for 2–3.5s.
-- A step Pre cannot do costs up to 3s of searching (FIND_TIMEOUT_MS); coordinating the
-  sides would remove it (backlog).
-- Fallback path (no gh 2.99) links poster → clip on the assets branch; only this path has
-  run against real code, in dry-run. The attach path is unit-tested at its seams only.
+- [x] Build Moments: record, align, composite, encode, attach inline (plan:
+      ~/.claude/plans/zippy-purring-token.md, spike: docs/internal/video-spike.md)
+- [x] /simplify pass and Codex review fixes
+- [x] Live on PR #46: 3 clips attached with gh 2.101, all play inline (Chromium)
+- [ ] Check the clips play on an iPhone / Safari (open PR #46 on your phone)
+- [ ] Merge PR #46 with "Rebase and merge"
+- [ ] `npm publish` 1.5.0 (manual, browser 2FA), then `npm view @juangadm/pre-post version`
+- [ ] Reinstall the skill after publishing: `npx skills add juangadm/pre-post -y`
+      (old copies in ~/.claude/skills and ~/.claude/commands were moved to the Trash)
 
-# Fix pass from the six-PR field test (juangadm/juangabriel, #60–65)
+## Later
 
-Source: field report against @juangadm/pre-post 1.1.0. All six runs used the
-`local` strategy and were ~65s each; the failures below are correctness and
-honesty problems, not speed.
+- [ ] Persistent baseline worktree (~9s per run saved). An optimisation, not a fix.
+- Video follow-ups live in tasks/backlog.md.
 
-## P0 — the only real blocker
-- [x] Local baseline install dies on ERESOLVE. `npm install` is run bare, so a
-      React 19 repo with one unmigrated peer dep (vaul@0.9.9) never gets a
-      baseline. Catch ERESOLVE and retry once with `--legacy-peer-deps`.
+## Numbers from the Moments build
 
-## P1
-- [x] That failure is silent and misdirects: it returns a quiet null (no
-      comparison, clean exit) and says "Run it in <repo> to see why" when the
-      install actually ran in a throwaway worktree. Apply docs/internal/portability.md
-      §1's rule — never a clean exit for a run that compared nothing — and say
-      where it really ran, with the manager's own output.
-- [x] Stale installed skill at ~/.claude/commands/pre-post.md documents a CLI
-      that no longer exists and shadows skill/SKILL.md.
-
-## P2
-- [x] `--help` hides half the change rule: `--threshold` is only one arm, and
-      `minChangedArea` is absent entirely.
-- [x] The percentage printed beside "shifted down 80px" is uncompensated.
-      Report the residual after alignment instead.
-- [x] Next's dev badge ships in published images (both sides are dev servers on
-      the local path). Hide framework dev overlays at capture time.
-
-## P3
-- [x] Log says `Comment: <url>` for a run that edits the PR description.
-- [x] Local files are `-pre`/`-post`; published are `-before`/`-after`.
-
-## Do not regress
-crop-to-changed-region; shift detection; determinism; teardown on the error path.
-
-## Review
-
-**P0 — ERESOLVE.** `PackageManager` gained an optional `installLoosely` argv (npm only:
-pnpm, yarn and bun warn on an unsatisfiable peer instead of aborting). `installDeps` runs
-the declared install, and retries once with `--legacy-peer-deps` only when the output
-carries npm's own `ERESOLVE` code. Verified against a real tree — react@19.2.0 +
-vaul@0.9.9 — outside the test suite: bare `npm install` fails, the retry reports
-`added 504 packages`, `loosened: true`.
-
-**P1 — silent and misdirecting.** The install's stdout+stderr is captured now instead of
-`stdio: 'ignore'`, and a failure raises `BaselineInstallError extends NeedsHumanError`
-(exit 3) instead of returning a quiet null that fell through to "no baseline" — or, on a
-repo with a configured production URL, to comparing against that instead. The message
-carries npm's own last 24 lines, and says the install ran in a throwaway worktree rather
-than naming the reader's checkout as the place to reproduce it. `localPair` stops the Post
-dev server before the throw escapes, and `runPr` closes the browser when resolution throws.
-Verified end to end with a repo whose base commit depends on a nonexistent package:
-`BaselineInstallError`, real 404 output, no retry, no leftover worktree.
-
-**P1 — stale installed skill.** `~/.claude/commands/pre-post.md` (247 lines describing
-`pre-post compare --before-base` and `scripts/upload-and-copy.sh`, neither of which exists)
-replaced with the current `skill/SKILL.md`. Previous content kept at
-`~/.claude/commands/pre-post.md.stale-bak`.
-
-**P2 — hidden change rule.** `--threshold` is now described as one of two arms, and
-`--min-changed-area` is both documented and wired as a real flag (it was already a
-`Settings` field with no way to set it from the CLI). README already had both right.
-
-**P2 — shift percentage.** `RouteShift` carries `residualRatio`, and the per-route log
-line reads `shifted down 80px, 1.41% once aligned (19.86% raw)` instead of quoting the
-uncompensated number next to the move that caused it.
-
-**P2 — dev badge.** The capture init script now hides `nextjs-portal`,
-`#__next-build-watcher`, `[data-nextjs-toast]`, `next-route-announcer` and Vite's error
-overlay, so a `position: fixed` artefact of dev-server rendering stops shipping in
-published images and stops counting as residual after alignment.
-
-**P3.** `PrRunResult.commentKind` records whether the description or a comment was updated,
-and the summary line names it. Local files are `-before`/`-after`/`-before-crop`/
-`-after-crop`, matching the published assets and `ArtifactSet`.
-
-**Not touched, as scoped:** the `explicit` and `deployed` strategies (untested in the field
-run), and `mixed`, which is structurally unreachable without `--before`.
-
-**Verification.** 352 unit tests (16 new in `tests/unit/install.test.ts`), 28 browser tests,
-8 integration tests — all green. `tsc -p tsconfig.pkg.json` clean.
-
-## Cleanup pass
-
-- `artifactSuffix()` in `types.ts` is now the single kind→filename mapping, used by both
-  the capture and the publish. Renaming literals had only aligned three of five kinds:
-  crops were still `-before-crop` on disk and `-cropBefore` published. `PUBLISHED_KINDS`
-  derives from `ARTIFACT_KINDS` instead of restating it.
-- `PackageManager.installLoosely` became `retry: { argv, when }`, so the retry argv and the
-  predicate that selects it cannot drift apart; `BaselineInstallError` names the flag from
-  the argv that ran rather than a hardcoded copy.
-- `InstallResult.loosened` dropped — it was `ok && attempts.length > 1`.
-- Message assembly moved out of `super()` into `installFailureMessage`.
-- A successful install no longer splits its log to keep 24 lines nothing reads.
-- Dev overlay selectors lifted to a named `DEV_OVERLAY_SELECTORS`.
-- `residualRatio`'s nine-line comment cut to one; the log reads the value already in scope.
-- One test asserts the real manager table wires npm's retry up, not just that `installDeps`
-  branches on a fixture.
-
-**Skipped.** Folding `commentUrl`/`commentKind` into `published: { target, url }` — a
-breaking change to an existing public field, outside this diff. Making `serveLocally`'s
-failure channel uniform and moving the fallback policy into `localPair` — a real finding
-(the dev-server boot timeout at the end of `serveLocally` still returns null and can fall
-through to `config.before`, the same hole this pass closed for installs), but fixing it
-changes behaviour and belongs in its own change, not a cleanup pass.
-
-## Codex review round (PR #36)
-
-Four findings, all accepted.
-
-- **P1, one actionable sentence.** The install error carried three sentences plus 24 log
-  lines, against the `AGENTS.md` rule that a `NeedsHumanError` is one sentence. Output
-  moved to `log()`; the error is the remedy only. `90a4b76`
-- **P1, error overlays.** Hiding `vite-error-overlay` would have published the blank page
-  under a failed transform on a still-200 document. The same hazard was in the Next path
-  and I had missed it: measured against 16.0.10, the badge and the build-error dialog share
-  one `nextjs-portal` shadow root, so hiding the host took the dialog with it. Now reaches
-  into the shadow root for `#devtools-indicator` alone, just before the screenshot.
-  Verified broken-build state keeps the dialog at `display: flex`. `11e15de`
-- **P2, ENOBUFS.** A regression I introduced — see `lessons.md`. `ba9d44a`
-- **P2, legacy label.** An absent `commentKind` now keeps the old `Comment:` output.
-  `a9a8fe7`
-
-Pushed back on one point in-thread: Codex suggested an error overlay should make the
-capture fail. For Next it need not — a broken build answers 500, which `runTask` already
-records. Vite is the dangerous case because it stays at 200, and there the fix is simply
-not to hide the evidence.
-
-# Fix pass from the auth-gated monorepo field test
-
-Source: a real run against a turborepo whose app is auth-gated. Six routes, six
-"Could not capture", and a PR comment that opened by saying nothing had changed.
-
-- [x] Build the workspace's dependencies before the baseline's dev server.
-      The app imports sibling packages that ship compiled output, and a fresh
-      install in a throwaway worktree does not produce it, so the dev server
-      booted against packages with no `dist`. `baselineSetup` in
-      `.pre-post.json` is the general answer — any command, run in the app
-      directory between the install and the dev server. When it is absent and
-      the repo is a turborepo, `turbo run build --filter=<app>^...` is
-      inferred: dependencies of the app, not the app, which the dev server
-      owns. Inference only follows a fresh install — running a repo-wide build
-      over someone's own checkout to take a screenshot is not a trade this tool
-      gets to make. A failing step ends the baseline rather than serving an
-      error page as Pre.
-- [x] Point the copied env files at the baseline's real origin. The copies name
-      the developer's own port (3000) and the baseline answers on an ephemeral
-      one, so an auth library rejected its own callbacks: the page rendered,
-      the session never resolved, and every capture was a loading skeleton —
-      which reads as success, because a screenshot came back. `BETTER_AUTH_URL`,
-      `NEXTAUTH_URL`, `AUTH_URL`, `NEXT_PUBLIC_APP_URL` and their kin are
-      rewritten in the worktree; a name list rather than `*_URL`, so
-      `DATABASE_URL` and an API on a second port are left where they point.
-- [x] Stop claiming "No visual changes." when nothing was compared. The line
-      printed directly above six "Could not capture:" entries. Zero routes
-      compared is "**Nothing was compared**", which is a different fact.
-
-**Not touched.** The Post side served from the working tree has the same
-origin-mismatch problem, and the fix there cannot be a file rewrite — those env
-files belong to the reader. Its own change.
-
-
-# Fix pass from the 1.3.0 stress test (juangadm/pre-post-lab, #1–#15)
-
-Plan: docs/internal/stress-test-1.3.0-plan.md. Every root cause was re-measured on the
-lab before fixing; where the measurement disagreed with the plan, the
-measurement won (noted below).
-
-## 1. Broken pages published as changes
-- [x] Read the framework error overlay during capture (Next 16.0.7 measured:
-      a build error is pushed to every page, so `/about` is a 200 *with* the
-      dialog; a client throw in an effect is also a 200).
-- [x] A 5xx or overlay makes the route `broken`: never diffed, never
-      published. Any broken Post page is a `post-broken` verdict: one sentence
-      in the PR, no images, exit 4. A baseline broken everywhere is
-      `baseline-broken`, worded so it does not blame the branch.
-- [x] Warm each local route before capture; retry a 5xx, so a first-compile
-      flake heals before it is judged.
-
-## 2. Local runs fail where the site works
-- [x] Server output goes to a log file per side (it was `stdio: 'ignore'`).
-- [x] **Measured, not assumed:** the next/font 500 did not reproduce in 3
-      awake runs; it is a Google Fonts fetch failure. Area 1 now reports it.
-- [x] **Measured:** the 12–31s (once 300s) `cleanup` was a full system Chrome
-      taking its time to exit, not the worktree (its removal is ~3s). Browser
-      close is capped at 5s; servers stop on SIGTERM, awaited, before their
-      worktree is removed, all side by side. Cleanup ~30s → 3–5s.
-- [ ] Persistent baseline worktree (~9s more per run). Deferred: the evidence
-      showed cleanup was the browser, so this is now an optimisation, not a fix.
-
-## 3. Route selection
-- [x] Stylesheets are graph nodes; layouts, templates, `_app`, tailwind/postcss
-      config wrap the pages beneath them. globals.css now reaches all 7 pages.
-- [x] The cap selects one route per cause first and reports the rest in the
-      route list, `detect --json` and the PR. (Correction: the cap *was*
-      printed, but above the dev-server output and nowhere else.)
-- [x] A dynamic-only change captures nothing instead of `/`, in ~1s.
-
-## 4. Changed vs noisy
-- [x] **Measured:** repeated captures of one side are pixel-identical, so the
-      planned capture-twice noise mask would have found nothing. The noise was
-      a 1000ms reveal caught at a 600ms budget.
-- [x] One change rule for verdict and crop; crops cover the patches that count.
-- [x] The timeline runs until the page stops requesting frames (cap 3s).
-- [x] **Correction:** the banner (scenario 5) re-wraps every paragraph below
-      it, so "5.42%, full pages" was honest; no insertion model added.
-
-## 5. PR for reviewers
-- [x] "Pre = base `38d9f0b` · Post = this branch", never a port.
-- [x] The same change on several pages is one section and one image pair.
-- [x] (Correction: timings, hops and "once aligned" were terminal-only; the
-      skill now says not to paste the terminal into the PR.)
-
-## 6. Stale copies
-- [x] doctor and pr report skill copies, a shadowing command file and a
-      devDependency range from another release.
-- [x] The skill carries its version and pins every npx line (test-enforced).
+- One Moment: ~3.9s recording (3.25s is the clip) + ~1s composite. Three in parallel: 6.5s.
+- Clips: 100–220 KB for 2–3.5s. A step Pre cannot do costs up to 3s of searching.
