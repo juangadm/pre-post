@@ -1,9 +1,9 @@
 ---
 name: pre-post
 description: Before/after screenshots for the current PR. Use when the user says "take before and after", "pre-post", "screenshot comparison", "visual diff", "PR screenshots", or after making visual UI changes.
-version: 1.4.0
+version: 1.5.0
 allowed-tools:
-  - Bash(npx -y @juangadm/pre-post@1.4.0 *)
+  - Bash(npx -y @juangadm/pre-post@1.5.0 *)
   - Bash(npx pre-post *)
   - Bash(pre-post *)
 ---
@@ -40,7 +40,7 @@ the Post side. Pass `--no-local-baseline` to turn it off.
 ## Run
 
 ```bash
-npx -y @juangadm/pre-post@1.4.0 pr
+npx -y @juangadm/pre-post@1.5.0 pr
 ```
 
 The version is pinned on purpose: this file describes that release. If the run starts with
@@ -64,7 +64,7 @@ Moment; the screenshots cover them.
 Write the Moments to a file outside the repo (the scratchpad, or `/tmp`) and pass it:
 
 ```bash
-npx -y @juangadm/pre-post@1.4.0 pr --moments /tmp/moments.json
+npx -y @juangadm/pre-post@1.5.0 pr --moments /tmp/moments.json
 ```
 
 ```json
@@ -143,5 +143,5 @@ is printed as `Video: <path>`; send those too.
 To run on every PR without anyone invoking it, point the user to the GitHub Action guide
 (https://github.com/juangadm/pre-post/blob/main/docs/github-action.md). It posts with GitHub's own token, which also covers work done in cloud sessions.
 
-Login-protected sites: `npx -y @juangadm/pre-post@1.4.0 login https://site` opens a browser
+Login-protected sites: `npx -y @juangadm/pre-post@1.5.0 login https://site` opens a browser
 once; the saved session is reused automatically.
