@@ -29,11 +29,16 @@ describe('stopGroup', () => {
   });
 
   // The package manager is the child; the server it starts can outlive it.
-  it('waits for a grandchild, not just the child it spawned', async () => {
-    const child = detached('sh -c "trap \'sleep 0.3; exit 0\' TERM; sleep 30 & wait" & wait');
+  // Once the child is gone, whatever is left of the group is killed.
+  it('leaves nothing of the group running once the child has exited', async () => {
+    const child = detached('sh -c "trap \'\' TERM; sleep 30" & sleep 30');
     await new Promise(r => setTimeout(r, 150));
+    const started = Date.now();
     await stopGroup(child);
+    await new Promise(r => setTimeout(r, 100));
     expect(groupAlive(child.pid!)).toBe(false);
+    // The child exits on SIGTERM, so this never waits out the timeout.
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('kills a group that ignores SIGTERM once the timeout passes', async () => {

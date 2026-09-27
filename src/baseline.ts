@@ -659,22 +659,27 @@ function signalGroup(child: ChildProcess, signal: NodeJS.Signals | 0): boolean {
 export const SERVER_STOP_TIMEOUT_MS = 5_000;
 
 /**
- * SIGTERM the server's process group and wait until the group is gone.
+ * SIGTERM the server's process group, wait for it to exit, then make sure.
  *
- * The group, not the child: the child is the package manager, and the server
- * it started (`next-server`, `vite`) can outlive it. A group that ignores
- * SIGTERM is SIGKILLed after `SERVER_STOP_TIMEOUT_MS`.
+ * The wait is on the child itself — the package manager, which exits once the
+ * server under it has — because Node reaps it, so its exit is a fact. Asking
+ * the group with signal 0 was not: in a container whose PID 1 does not reap,
+ * dead members linger as zombies that still answer, and every stop waited out
+ * the full timeout. Once the child is gone, or `timeoutMs` has passed, the
+ * whole group is SIGKILLed, so nothing it started is left writing into a
+ * worktree about to be removed.
  */
 export async function stopGroup(child: ChildProcess, timeoutMs = SERVER_STOP_TIMEOUT_MS): Promise<void> {
-  if (!signalGroup(child, 'SIGTERM')) return;
-  const deadline = Date.now() + timeoutMs;
-  while (signalGroup(child, 0)) {
-    if (Date.now() >= deadline) {
-      signalGroup(child, 'SIGKILL');
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 50));
+  if (child.exitCode !== null || child.signalCode !== null) {
+    signalGroup(child, 'SIGKILL');
+    return;
   }
+  const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+  if (!signalGroup(child, 'SIGTERM')) return;
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([exited, new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); })]);
+  clearTimeout(timer);
+  signalGroup(child, 'SIGKILL');
 }
 
 async function waitForServer(url: string, timeoutMs: number, alive: () => boolean): Promise<boolean> {
