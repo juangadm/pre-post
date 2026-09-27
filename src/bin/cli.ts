@@ -11,6 +11,7 @@ import { runDetect } from '../commands/detect.js';
 import { EXIT_BROKEN_PAGE, NeedsHumanError } from '../errors.js';
 import { buildSummary } from '../report.js';
 import { ownVersion } from '../drift.js';
+import { loadMomentsFile, MomentError } from '../moments.js';
 
 const VERSION = ownVersion();
 
@@ -71,6 +72,8 @@ const OPTIONS = {
     output: { type: 'string', short: 'o' },
     'dry-run': { type: 'boolean' },
     'no-comment': { type: 'boolean' },
+    moments: { type: 'string' },
+    'no-video': { type: 'boolean' },
     'require-pr': { type: 'boolean' },
     local: { type: 'boolean' },
     pr: { type: 'string' },
@@ -116,6 +119,11 @@ OPTIONS
   --no-local-baseline       Do not rebuild the baseline from the base commit
   --dry-run                 Capture and diff only; publish nothing, leave the PR alone
   --no-comment              Publish images but leave the PR description alone
+  --moments <file>          Record these interactions as Pre | Post videos
+                            (JSON; default: "moments" in .pre-post.json).
+                            One interaction per Moment, aim for under 15s;
+                            the first 3 are recorded. See docs/video.md
+  --no-video                Record no video this run
   --require-pr              Do nothing, successfully, when no open PR is found
   --local                   Build both sides on this machine; ignore deployments
   --pr <number>             Target a specific PR
@@ -127,6 +135,7 @@ ENVIRONMENT
   VERCEL_AUTOMATION_BYPASS_SECRET       Bypass Vercel Deployment Protection
   PRE_POST_CONCURRENCY                  Parallel pages (default 6)
   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH   Use a specific Chromium binary
+  PRE_POST_FFMPEG                       Use a specific ffmpeg for Moments
 `);
 }
 
@@ -180,6 +189,7 @@ function output(result: Parameters<typeof buildSummary>[0]): void {
   console.log(buildSummary(result));
   if (result.outputDir) console.log(`Files: ${result.outputDir}`);
   if (result.sheetPath) console.log(`Sheet: ${result.sheetPath}`);
+  for (const m of result.moments ?? []) if (m.file) console.log(`Video: ${m.file}`);
   if (result.markdown && !result.commentUrl) console.log('\n' + result.markdown);
 }
 
@@ -238,6 +248,8 @@ async function main(): Promise<void> {
         requirePr: values['require-pr'],
         local: values.local,
         pr: num(values.pr, '--pr'),
+        moments: values.moments ? loadMomentsFile(values.moments) : undefined,
+        video: !values['no-video'],
         version: VERSION,
       });
       // Nothing ran, and the log already said why; a summary of zero routes adds nothing.
@@ -309,6 +321,12 @@ main()
     if (err instanceof NeedsHumanError) {
       console.error(`\n${err.message}`);
       process.exit(3);
+    }
+    // A Moment that does not parse is a usage error, and its message already
+    // names the Moment, the step and the fix.
+    if (err instanceof MomentError) {
+      console.error(`pre-post: ${err.message}`);
+      process.exit(2);
     }
     console.error(err?.stack && process.env.PRE_POST_DEBUG ? err.stack : `Error: ${err?.message || err}`);
     process.exit(1);
