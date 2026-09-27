@@ -12,7 +12,10 @@
  * are uploaded on their own first: a temporary comment carries them up, their
  * URLs are read back, and the comment is deleted — the flow vercel-labs'
  * before-and-after settled on. Anything that goes wrong leaves the caller to
- * fall back to the assets branch.
+ * fall back to the assets branch. The cost: PR subscribers are notified of a
+ * comment that is gone by the time they look. Passing `--attach` to the
+ * description edit itself would avoid it, but the sticky-comment fallback
+ * would still need this flow.
  */
 
 import fs from 'fs';
@@ -20,6 +23,7 @@ import os from 'os';
 import path from 'path';
 import { spawn, spawnSync } from 'child_process';
 import { GitHub } from './github.js';
+import { MomentOutcome } from './types.js';
 
 /** The first gh release whose `--attach` works on PRs and comments. */
 export const MIN_GH_FOR_ATTACH = [2, 99, 0] as const;
@@ -112,5 +116,39 @@ export async function uploadAttachments(
     return new Map(files.map((f, i) => [f, urls[i]]));
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+export interface AttachOptions {
+  gh: GitHub;
+  ownerRepo: string;
+  /** No PR yet means nowhere to attach to. */
+  pr?: number;
+  token?: string;
+  log?: (msg: string) => void;
+}
+
+/**
+ * Attach recorded clips to the PR where possible, marking each one inline.
+ * Returns the clips left for the assets branch, and the one sentence that
+ * would make them play when there are any.
+ */
+export async function attachClips(clips: MomentOutcome[], opts: AttachOptions): Promise<{ linked: MomentOutcome[]; hint?: string }> {
+  const log = opts.log ?? (() => undefined);
+  if (!opts.pr) return { linked: clips, hint: 'Open the PR and re-run to play the videos inline.' };
+  const support = ghAttachSupport();
+  if (!support.ok) {
+    log(`Videos will be linked, not inline: ${support.reason}`);
+    return { linked: clips, hint: support.reason };
+  }
+  try {
+    const urls = await uploadAttachments(opts.gh, opts.ownerRepo, opts.pr, clips.map(m => m.file!), opts.token);
+    for (const m of clips) { m.videoUrl = urls.get(m.file!); m.inline = true; }
+    log(`Attached ${clips.length} video(s) to PR #${opts.pr}.`);
+    return { linked: [] };
+  } catch (err) {
+    const hint = `GitHub did not take the videos as attachments (${err instanceof Error ? err.message : err}); they are linked instead. Inline video needs gh signed in as a person or with a classic token, not the Actions GITHUB_TOKEN.`;
+    log(hint);
+    return { linked: clips, hint };
   }
 }
