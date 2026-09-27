@@ -18,14 +18,29 @@ const groupAlive = (pid: number) => {
   }
 };
 
+/**
+ * Whether the group is gone within `ms`. Killed members answer signal 0 until
+ * they are reaped — on Linux that is a moment after the kill, not before it —
+ * so one immediate check races the reaper. That lag is also why stopGroup
+ * itself does not use signal 0 to decide.
+ */
+async function goneWithin(pid: number, ms = 2_000): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (groupAlive(pid)) {
+    if (Date.now() > deadline) return false;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  return true;
+}
+
 describe('stopGroup', () => {
   it('returns once the whole group has exited on SIGTERM', async () => {
     const child = detached('sleep 30');
     await new Promise(r => setTimeout(r, 100));
     const started = Date.now();
     await stopGroup(child);
-    expect(groupAlive(child.pid!)).toBe(false);
     expect(Date.now() - started).toBeLessThan(2_000);
+    expect(await goneWithin(child.pid!)).toBe(true);
   });
 
   // The package manager is the child; the server it starts can outlive it.
@@ -35,10 +50,9 @@ describe('stopGroup', () => {
     await new Promise(r => setTimeout(r, 150));
     const started = Date.now();
     await stopGroup(child);
-    await new Promise(r => setTimeout(r, 100));
-    expect(groupAlive(child.pid!)).toBe(false);
     // The child exits on SIGTERM, so this never waits out the timeout.
     expect(Date.now() - started).toBeLessThan(2_000);
+    expect(await goneWithin(child.pid!)).toBe(true);
   });
 
   it('kills a group that ignores SIGTERM once the timeout passes', async () => {
@@ -46,9 +60,8 @@ describe('stopGroup', () => {
     await new Promise(r => setTimeout(r, 100));
     const started = Date.now();
     await stopGroup(child, 300);
-    await new Promise(r => setTimeout(r, 100));
-    expect(groupAlive(child.pid!)).toBe(false);
     expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(await goneWithin(child.pid!)).toBe(true);
   });
 
   it('is a no-op for a process that is already gone', async () => {
