@@ -56,7 +56,7 @@ export const metadata: Metadata = {
     "pixel diff",
     "pre-post",
   ],
-  authors: [{ name: "Juan Gabriel", url: "https://juangabriel.xyz" }],
+  authors: [{ name: "Juan Gabriel", url: "https://juangabriel.org" }],
   creator: "Juan Gabriel",
   openGraph: {
     title: "pre-post — visual diff tool for PRs",
@@ -109,7 +109,7 @@ const jsonLd = {
       author: {
         "@type": "Person",
         name: "Juan Gabriel",
-        url: "https://juangabriel.xyz",
+        url: "https://juangabriel.org",
       },
     },
   ],
