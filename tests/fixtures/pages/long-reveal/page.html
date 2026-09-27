@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Long reveal</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #fff; }
+  .bar { position: absolute; left: 40px; top: 40px; height: 60px; background: #111; width: 0; }
+</style>
+</head>
+<body>
+<!--
+  A requestAnimationFrame reveal that lasts 1000ms, longer than the fixed
+  600ms timeline budget. Measured from the first frame's timestamp, the way
+  real reveal effects are written, so it only depends on page time.
+-->
+<div class="bar" id="bar"></div>
+<script>
+  const DURATION = 1000;
+  let start = null;
+  function frame(now) {
+    if (start === null) start = now;
+    const progress = Math.min((now - start) / DURATION, 1);
+    document.getElementById('bar').style.width = Math.round(progress * 600) + 'px';
+    if (progress < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>
