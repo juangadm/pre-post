@@ -354,9 +354,9 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     comparison.after.probe ?? probeUrl(after, headers),
   ]);
   if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
-  if (probe.status === 401 || probe.status === 403) await fail(authHint({ url: before, vercel: probe.vercel }));
+  if (probe.status === 401 || probe.status === 403 || probe.signIn) await fail(authHint({ url: before, vercel: probe.vercel }));
   if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
-  if (afterProbe.status === 401 || afterProbe.status === 403) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
+  if (afterProbe.status === 401 || afterProbe.status === 403 || afterProbe.signIn) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
 
   const auth = resolveAuth({ configHeaders: config.headers, headers: opts.headers, cookies: opts.cookies, cookieUrl: before, urls: [before, after] });
 
