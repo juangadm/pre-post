@@ -12,6 +12,7 @@ import { EXIT_BROKEN_PAGE, NeedsHumanError } from '../errors.js';
 import { buildSummary } from '../report.js';
 import { ownVersion } from '../drift.js';
 import { loadMomentsFile, MomentError } from '../moments.js';
+import { viewportsFromFlags } from '../viewport.js';
 
 const VERSION = ownVersion();
 
@@ -58,7 +59,7 @@ const OPTIONS = {
     viewports: { type: 'string' },
     mobile: { type: 'boolean', short: 'm' },
     tablet: { type: 'boolean', short: 't' },
-    responsive: { type: 'boolean', short: 'r' },
+    responsive: { type: 'boolean', short: 'r' }, // undocumented alias of --mobile
     size: { type: 'string' },
     full: { type: 'boolean', short: 'f' },
     'viewport-only': { type: 'boolean' },
@@ -102,8 +103,8 @@ OPTIONS
   --routes /a,/b            Explicit routes instead of detection
   --max-routes <n>          Cap on detected routes (default 6)
   --viewports desktop,mobile,1440x900   Viewports (default desktop)
-  -r, --responsive          Desktop and mobile
-  -m, --mobile  -t, --tablet  --size WxH   Single-viewport shorthands
+  --mobile                  Add mobile to desktop
+  -t, --tablet  --size WxH  Single-viewport shorthands
   -f, --full | --viewport-only          Full page (default for pr) or first screen only
   --scale <n>               Device scale factor (default 2)
   --threshold <0..1>        Changed share of the canvas that counts (default 0.001)
@@ -163,15 +164,6 @@ function kv(list: string[] | undefined): Record<string, string> | undefined {
   return out;
 }
 
-function viewportsFromFlags(): string[] | undefined {
-  if (values.viewports) return values.viewports.split(',').map(s => s.trim()).filter(Boolean);
-  if (values.responsive) return ['desktop', 'mobile'];
-  if (values.mobile) return ['mobile'];
-  if (values.tablet) return ['tablet'];
-  if (values.size) return [values.size];
-  return undefined;
-}
-
 /** `before`/`after` come from flags for `pr` and `compare`, from positionals otherwise. */
 function resolveTargets(): { before?: string; after?: string } {
   if (subcommand === 'pr' || subcommand === 'compare') return { before: values.before, after: values.after };
@@ -213,7 +205,7 @@ async function main(): Promise<void> {
 
   const common = {
     routes: values.routes ? values.routes.split(',').map(r => r.trim()).filter(Boolean) : undefined,
-    viewports: viewportsFromFlags(),
+    viewports: viewportsFromFlags(values),
     fullPage: values['viewport-only'] ? false : values.full ? true : undefined,
     scale: num(values.scale, '--scale'),
     threshold: num(values.threshold, '--threshold'),

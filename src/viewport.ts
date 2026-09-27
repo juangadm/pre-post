@@ -13,3 +13,24 @@ export function parseViewport(spec: ViewportConfig | string): { label: string; s
 export function resolveViewport(config?: ViewportConfig | string): ViewportSize {
   return config ? parseViewport(config).size : VIEWPORT_PRESETS.desktop;
 }
+
+export interface ViewportFlags {
+  viewports?: string;
+  mobile?: boolean;
+  responsive?: boolean;
+  tablet?: boolean;
+  size?: string;
+}
+
+/**
+ * Viewports from CLI flags, or undefined for the default (desktop).
+ * `--mobile` adds mobile on top of desktop; `-r`/`--responsive` are older aliases for it.
+ * Mobile only is `--viewports mobile`.
+ */
+export function viewportsFromFlags(flags: ViewportFlags): string[] | undefined {
+  if (flags.viewports) return flags.viewports.split(',').map(s => s.trim()).filter(Boolean);
+  if (flags.mobile || flags.responsive) return ['desktop', 'mobile'];
+  if (flags.tablet) return ['tablet'];
+  if (flags.size) return [flags.size];
+  return undefined;
+}
