@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Acme</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fafafa; color: #171717; }
+  nav { display: flex; align-items: center; gap: 24px; padding: 16px 32px; border-bottom: 1px solid #e5e5e5; background: #fff; }
+  nav .spacer { flex: 1; }
+  #account { font: inherit; padding: 6px 12px; border: 1px solid #d4d4d4; border-radius: 6px; background: #fff; cursor: pointer; }
+  #account:hover { background: #f5f5f5; }
+  [role=menu] { position: absolute; right: 32px; top: 60px; width: 220px; padding: 6px; background: #fff; border: 1px solid #e5e5e5;
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.12); opacity: 0; transform: translateY(-6px) scale(.98);
+    pointer-events: none;  }
+  [role=menu].open { opacity: 1; transform: none; pointer-events: auto; }
+  [role=menuitem] { display: block; width: 100%; text-align: left; font: inherit; padding: 8px 12px; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+  [role=menuitem]:hover { background: #f5f5f5; }
+  main { padding: 48px 32px; max-width: 720px; }
+  body.dark { background: #171717; color: #fafafa; }
+</style>
+</head>
+<body>
+<nav><strong>Acme</strong><a>Pricing</a><a>Docs</a><span class="spacer"></span>
+  <button id="account" aria-haspopup="menu">Account</button></nav>
+<div role="menu" id="menu">
+  <button role="menuitem">Profile</button>
+  <button role="menuitem">Billing</button>
+  <button role="menuitem">Sign out</button>
+</div>
+<main><h1>Dashboard</h1><p>Welcome back. Your workspace has three projects and two pending invites.</p></main>
+<script>
+  const menu = document.getElementById('menu');
+  document.getElementById('account').addEventListener('click', () => menu.classList.toggle('open'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') menu.classList.remove('open'); });
+  const theme = document.getElementById('theme');
+  if (theme) theme.addEventListener('click', () => { document.body.classList.toggle('dark'); menu.classList.remove('open'); });
+</script>
+</body>
+</html>
