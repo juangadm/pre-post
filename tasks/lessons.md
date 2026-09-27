@@ -78,3 +78,19 @@ idle-settle instead of chasing the last 68px of animation residue.
 
 **How to apply:** when a sub-problem turns into a research project, check it
 against the user's stated goal before going deeper.
+
+## Run what CI runs before saying it passes
+
+On #44 I reported "all tests pass" from `tests/unit` and `tests/browser`, and
+CI failed twice. Once on a race only Linux shows (killed processes answer
+signal 0 until reaped), once in `tests/integration`, which I never ran — its
+error-path tests used an empty repo, and an empty diff had just become a
+legitimate no-op.
+
+**Why:** "the tests" meant the suites I happened to know about, not the
+workflow file.
+
+**How to apply:** before pushing, read `.github/workflows/ci.yml` and run its
+steps in order (`tsc`, `test:unit`, `build`, `test:browser`, which includes
+integration). A test that checks process state once, right after a kill,
+must poll with a deadline instead.
