@@ -68,7 +68,8 @@ async function recordOne(moment: Moment, index: number, opts: RecordMomentsOptio
   if (post.value.failure) return { ...base, error: `${post.value.failure.message} on Post (step ${post.value.failure.step + 1}).` };
 
   const shown = preSide(pre, beforeUrl);
-  const stem = path.join(opts.outputDir, `moment-${routeSlug(moment.name.toLowerCase())}-${vp.label}`);
+  // Numbered, so two Moments whose names slug alike never write one file.
+  const stem = path.join(opts.outputDir, `moment-${index + 1}-${routeSlug(moment.name.toLowerCase())}-${vp.label}`);
   try {
     const clip = await composeMoment({
       name: moment.name,
