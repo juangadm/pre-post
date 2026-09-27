@@ -11,6 +11,7 @@ import { repoRoot, resolveOwnerRepo } from '../git.js';
 import { servableDir } from '../baseline.js';
 import { cannotPublishHint, checkWriteAccess, findToken, GitHub, loginHint } from '../github.js';
 import { closeBrowser } from '../browser.js';
+import { driftNotes, ownVersion } from '../drift.js';
 
 export interface DoctorCheck {
   name: string;
@@ -117,6 +118,12 @@ export async function runDoctor(cwd?: string): Promise<DoctorCheck[]> {
     const cfg = loadConfig(root);
     checks.push(cfg.before ? { name: 'before', ok: true, detail: cfg.before } : { name: 'before', ok: false, detail: 'not set — pass --before once and it is saved' });
     checks.push({ name: 'config', ok: true, detail: fs.existsSync(configPath(root)) ? CONFIG_FILENAME : 'none (defaults)' });
+    // Advisory: a stale skill copy or pinned range does not stop a run, but it
+    // is why an agent follows instructions for a CLI that no longer exists.
+    const drift = driftNotes({ repoRoot: root });
+    checks.push(drift.length
+      ? { name: 'version', ok: false, detail: drift.join(' ') }
+      : { name: 'version', ok: true, detail: `skill and project agree with ${ownVersion()}` });
     // The last-resort baseline serves the base commit itself, so knowing
     // whether anything here *can* be served is worth reporting before a run
     // needs it.

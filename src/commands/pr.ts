@@ -19,6 +19,7 @@ import { CaptureTask, routeSlug, runTasks } from '../run.js';
 import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison, sideLabel } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
+import { driftNotes } from '../drift.js';
 import { buildSheet } from '../sheet.js';
 
 export interface PrCommandOptions extends Partial<Settings> {
@@ -186,6 +187,10 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
   // the PR has no preview deployment.
   const explicitAfter = afterFor(opts, config);
   const devServer = explicitAfter ? Promise.resolve(explicitAfter) : detectDevServer();
+
+  // A skill copy or a pinned range from another release is why an agent
+  // follows instructions for a CLI that no longer exists. Say so up front.
+  for (const note of driftNotes({ version: opts.version, repoRoot: root })) log(`Note: ${note}`);
 
   // Detection is synchronous git + fs work, so run it while the PR lookup is in
   // flight rather than after it.
