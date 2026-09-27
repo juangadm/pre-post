@@ -99,6 +99,11 @@
     @apply border-border;
   }
 
+  /* Reserve the scrollbar's width so short and long pages line up. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
   body {
     @apply bg-background text-gray-600 antialiased;
     font-size: 15px;
