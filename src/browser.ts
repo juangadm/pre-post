@@ -351,7 +351,7 @@ const DEV_OVERLAY_SELECTORS = [
  * portal is mounted after hydration, so there is nothing to find at document
  * start.
  */
-async function hideDevIndicator(page: Page): Promise<void> {
+export async function hideDevIndicator(page: Page): Promise<void> {
   await page.evaluate(() => {
     const hosts = Array.prototype.slice.call(document.querySelectorAll('nextjs-portal')) as Element[];
     for (const host of hosts) {
@@ -454,12 +454,13 @@ const INIT_SCRIPT = `
  * paused instant — and keeps storage and caches from leaking between the two
  * sides of a comparison.
  */
-async function createContext(viewport: ViewportSize, scale: number, auth?: AuthOptions): Promise<BrowserContext> {
+async function createContext(viewport: ViewportSize, scale: number, auth?: AuthOptions, motion = false): Promise<BrowserContext> {
   const b = await getBrowser();
   const ctx = await b.newContext({
     viewport,
     deviceScaleFactor: scale,
-    reducedMotion: 'reduce',
+    // A recording exists to show motion, so it asks for the page's own.
+    reducedMotion: motion ? 'no-preference' : 'reduce',
     colorScheme: 'light',
     locale: 'en-US',
     timezoneId: 'UTC',
@@ -474,8 +475,13 @@ async function createContext(viewport: ViewportSize, scale: number, auth?: AuthO
   // land on whatever frame the network happened to deliver. With the clock
   // installed and paused, the page's timeline does not move until
   // `advanceTimeline` moves it — by the same amount on both sides.
-  await ctx.clock.install({ time: FIXED_TIME });
-  await ctx.clock.pauseAt(FIXED_TIME);
+  //
+  // A recording runs on the real clock instead: its whole point is time
+  // passing, and CSS transitions follow the compositor, not these timers.
+  if (!motion) {
+    await ctx.clock.install({ time: FIXED_TIME });
+    await ctx.clock.pauseAt(FIXED_TIME);
+  }
   await ctx.addInitScript(INIT_SCRIPT);
   if (auth?.cookies?.length) {
     await ctx.addCookies(auth.cookies.map(c => ({
@@ -656,6 +662,35 @@ async function primeLazyContent(page: Page, maxHeight: number): Promise<void> {
   }
   await page.evaluate(() => window.scrollTo(0, 0));
   await advanceTimeline(page, FRAME_MS);
+}
+
+/**
+ * Run `fn` on a fresh page whose clock runs in real time and whose motion
+ * preferences are left alone — what a recording needs, and the opposite of a
+ * screenshot. Shares the page pool with captures, so a run's recordings and
+ * screenshots together never open more pages than the pool allows.
+ */
+export async function withMotionPage<T>(
+  viewport: ViewportSize,
+  auth: AuthOptions | undefined,
+  fn: (page: Page, ctx: BrowserContext) => Promise<T>,
+): Promise<T> {
+  await acquireSlot();
+  let ctx: BrowserContext | undefined;
+  try {
+    ctx = await createContext(viewport, 1, auth, true);
+    const page = await ctx.newPage();
+    trackRequests(page);
+    return await fn(page, ctx);
+  } finally {
+    await ctx?.close().catch(() => undefined);
+    releaseSlot();
+  }
+}
+
+/** Fonts, images, network and layout settled, bounded by `timeout` ms. */
+export function settle(page: Page, timeout: number): Promise<void> {
+  return settlePage(page, timeout);
 }
 
 // ============================================================
