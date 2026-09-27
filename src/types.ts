@@ -213,6 +213,11 @@ export interface PrePostConfig {
   /** Skip paths (glob-ish prefixes) from route detection */
   ignore?: string[];
   /**
+   * Short interactions to record on Pre and Post, in priority order; the
+   * first three run. See docs/video.md. Validated by `parseMoments`.
+   */
+  moments?: unknown[];
+  /**
    * Command run in the app directory between the install and the dev server
    * when the baseline is built from source — a workspace build, a codegen
    * step. Inferred for a turborepo when omitted.
@@ -372,6 +377,36 @@ export interface PrRunResult {
   delivery?: Delivery;
   /** Set when the run found a side rendering errors instead of the page. */
   verdict?: RunVerdict;
+  /** One per Moment recorded, in priority order. */
+  moments?: MomentOutcome[];
+  /** Names of Moments over the per-run limit, listed but not recorded. */
+  momentsSkipped?: string[];
+  /** Why the clips link out instead of playing inline, when they do: the one thing to fix. */
+  momentsHint?: string;
+}
+
+/** What became of one Moment. */
+export interface MomentOutcome {
+  name: string;
+  route: string;
+  viewport: string;
+  status: 'recorded' | 'error';
+  /** Why there is no clip, in one plain sentence. */
+  error?: string;
+  /** Why the Pre pane shows a card instead of the interaction, when it does. */
+  preNote?: string;
+  durationMs?: number;
+  bytes?: number;
+  /** Local clip (`.webm`) and its last frame (`.jpg`). */
+  file?: string;
+  poster?: string;
+  /** Published clip and poster. */
+  videoUrl?: string;
+  posterUrl?: string;
+  /** True when `videoUrl` is a GitHub attachment, which plays inline in the PR. */
+  inline?: boolean;
+  /** The one-line nudge for a clip that ran long. */
+  note?: string;
 }
 
 /**
