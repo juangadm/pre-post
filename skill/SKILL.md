@@ -53,11 +53,49 @@ land somewhere they can see. Add `--routes /a,/b` when the user names pages expl
 `--before https://production-url` only if the run reports it cannot work out the baseline
 (it is then saved to `.pre-post.json` for next time).
 
+## Video: Moments
+
+Screenshots cannot show motion. When the diff changes something that **moves or reacts** —
+a menu, dialog or drawer opening, a hover or focus state, a transition or animation, form
+feedback, a toast, tabs — also record it as a **Moment**: one short interaction, played on
+Pre and Post side by side in one synced clip. Static changes (copy, colour, spacing) need no
+Moment; the screenshots cover them.
+
+Write the Moments to a file outside the repo (the scratchpad, or `/tmp`) and pass it:
+
+```bash
+npx -y @juangadm/pre-post@1.4.0 pr --moments /tmp/moments.json
+```
+
+```json
+{ "moments": [
+  { "name": "Open the account menu", "route": "/settings",
+    "steps": [{ "hover": "Account" }, { "click": "Account" }, { "wait": 400 }] }
+] }
+```
+
+- **Steps**: `click`, `hover`, `press` (a key), `type` (`["Email", "ada@example.com"]`),
+  `scroll` (text to scroll to, or pixels), `wait` (ms). Name targets by the text a person
+  sees — the button label, the field label — taken from the code you changed. Only if plain
+  words cannot say it, use `css=<selector>`. Add `"viewport": "mobile"` for mobile-only UI.
+- **One interaction per Moment, under 15 seconds.** A reviewer should get it on first play.
+  A flow is several Moments ("Open the menu", "Pick a plan"), not one long one.
+- **Most important first; three at most** are recorded: new interactions, then changed
+  ones, then pure motion. The rest are listed in the PR as not recorded.
+- A step Pre cannot do is expected for a new feature: that pane says "Not in the old
+  version" and the clip still ships. A step **Post** cannot do means the target text is
+  wrong — check the exact label in the code, fix that Moment, and re-run once.
+- Do not add Moments to `.pre-post.json` unless the user asks for them to run every time.
+
 ## What it posts
 
 The visual changes go at the **top of the PR description**, in a delimited block that
 re-runs replace in place — the author's own text is never touched. If the PR cannot be
 edited (a fork, a read-only token) it falls back to a single sticky comment.
+
+Moments come first, one clip each: they play inline when `gh` is 2.99 or newer and signed in
+as a person; otherwise the PR shows the clip's last frame linking to it, with one line saying
+how to make it play. Relay that line.
 
 Each changed route shows **Pre beside Post**, per viewport, full pages in a `<details>`. No
 overlay, no percentage. A page that moved says `Content shifted down 48px`; relay as written. A pure move
@@ -67,7 +105,8 @@ overlay, no percentage. A page that moved says `Content shifted down 48px`; rela
 
 When anything changed, the command prints `Sheet: <path>`: one image with Pre beside Post for
 every change. If you can send files to the user, send that one file, even when the PR was
-updated. Someone following you from a phone sees it there before they open GitHub.
+updated. Someone following you from a phone sees it there before they open GitHub. Each clip
+is printed as `Video: <path>`; send those too.
 
 ## Rules
 
@@ -97,6 +136,8 @@ updated. Someone following you from a phone sees it there before they open GitHu
 | `--viewport-only` | First screen only instead of full page |
 | `--pr <n>` | The branch has several PRs or the lookup fails |
 | `--dry-run` | Preview locally, post nothing |
+| `--moments <file>` | The change moves or reacts (see Video: Moments) |
+| `--no-video` | Skip the Moments in `.pre-post.json` this once |
 | `--header k=v` / `--cookie k=v` | The site needs auth headers or cookies |
 
 To run on every PR without anyone invoking it, point the user to the GitHub Action guide
