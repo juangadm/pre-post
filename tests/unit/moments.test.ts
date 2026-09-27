@@ -43,6 +43,7 @@ describe('parseMoment', () => {
     [{ name: 'x', route: '/', steps: [{ type: 'Email' }] }, /"type" needs \[field, text\]/],
     [{ name: 'x', route: '/', steps: [{ wait: 30 }, { wait: 30_000 }] }, /step 2: "wait" is in milliseconds/],
     [{ name: 'x', route: '/', steps: 'click Save' }, /"steps" is a list/],
+    [{ name: 'x', route: '/', viewport: 'wide' }, /"viewport" is desktop, tablet, mobile or WxH \(got "wide"\)/],
   ])('rejects %j with a sentence that names the fix', (raw, message) => {
     expect(() => parseMoment(raw as never, 'Moment 1')).toThrow(MomentError);
     expect(() => parseMoment(raw as never, 'Moment 1')).toThrow(message);

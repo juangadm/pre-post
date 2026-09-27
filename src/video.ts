@@ -50,7 +50,7 @@ function preSide(pre: PromiseSettledResult<SideRecording>, url: string): { pre: 
   return { pre: rec };
 }
 
-async function recordOne(moment: Moment, opts: RecordMomentsOptions): Promise<MomentOutcome> {
+async function recordOne(moment: Moment, index: number, opts: RecordMomentsOptions): Promise<MomentOutcome> {
   const vp = parseViewport(moment.viewport);
   const base: MomentOutcome = { name: moment.name, route: moment.route, viewport: vp.label, status: 'error' };
   const beforeUrl = joinUrl(opts.before, moment.route);
@@ -101,7 +101,12 @@ export async function recordMoments(moments: Moment[], opts: RecordMomentsOption
   log(`Recording ${moments.length} Moment(s) ...`);
   // All at once: the page pool bounds how many pages are open, so wall time
   // is about the longest clip, not the sum of them.
-  const outcomes = await Promise.all(moments.map(m => recordOne(m, opts)));
+  // Each Moment settles on its own: one that throws is one sentence in the PR,
+  // never the loss of the others.
+  const outcomes = await Promise.all(moments.map((m, i) => recordOne(m, i, opts).catch((err): MomentOutcome => ({
+    name: m.name, route: m.route, viewport: m.viewport, status: 'error',
+    error: `Couldn't record it: ${(err as Error)?.message?.split('\n')[0] ?? err}`,
+  }))));
   for (const o of outcomes) {
     log(o.status === 'recorded'
       ? `  ${quote(o.name)} ${(o.durationMs! / 1000).toFixed(1)}s, ${size(o.bytes!)}${o.preNote ? ` — ${o.preNote}` : ''}`

@@ -14,6 +14,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { parseViewport } from './viewport.js';
 
 const VERBS = ['click', 'hover', 'type', 'press', 'scroll', 'wait'] as const;
 export type StepVerb = typeof VERBS[number];
@@ -121,12 +122,17 @@ export function parseMoment(raw: MomentInput, where: string): Moment {
   const label = `${where} ("${name}")`;
   const route = typeof raw.route === 'string' ? raw.route.trim() : '';
   if (!route.startsWith('/')) fail(label, 'needs a "route" starting with /, e.g. "/settings"');
-  if (raw.viewport !== undefined && (typeof raw.viewport !== 'string' || !raw.viewport.trim())) {
-    fail(label, '"viewport" is desktop, tablet, mobile or WxH');
+  const viewport = raw.viewport === undefined ? 'desktop' : typeof raw.viewport === 'string' ? raw.viewport.trim() : '';
+  // Checked here, with the rest of the file, so a typo stops the run before
+  // any capture instead of costing one Moment after all of them were recorded.
+  try {
+    parseViewport(viewport);
+  } catch {
+    fail(label, `"viewport" is desktop, tablet, mobile or WxH (got ${JSON.stringify(raw.viewport)})`);
   }
   if (raw.steps !== undefined && !Array.isArray(raw.steps)) fail(label, '"steps" is a list');
   const steps = ((raw.steps as unknown[] | undefined) ?? []).map((s, i) => parseStep(s, `${label} step ${i + 1}`));
-  return { name, route, viewport: (raw.viewport as string | undefined)?.trim() || 'desktop', steps };
+  return { name, route, viewport, steps };
 }
 
 /** Validate a list of Moments, as found in config or a file. */
