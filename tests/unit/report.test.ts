@@ -85,8 +85,8 @@ describe('buildComment', () => {
     expect(allFailed).toContain('**Could not capture:**');
   });
 
-  it('still says nothing was compared when there were no captures at all', () => {
-    expect(buildComment({ ...base, outcomes: [], skippedDynamic: [] })).toContain('**Nothing was compared**');
+  it('says no pages were affected when the branch changed none', () => {
+    expect(buildComment({ ...base, outcomes: [], skippedDynamic: [] })).toContain('**No pages affected**');
   });
 
   it('says why nothing was compared when the only affected pages need a sample', () => {

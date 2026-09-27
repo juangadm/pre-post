@@ -143,9 +143,11 @@ export function buildComment(result: PrRunResult, options: CommentOptions = {}):
     const failed = errors.length + notCompared.length;
     lines.push(failed
       ? `**Nothing was compared** — ${failed === 1 ? 'the only capture' : `all ${failed} captures`} failed. See below.`
-      : result.skippedDynamic.length && result.outcomes.length === 0
-        ? '**Nothing was compared yet** — the only pages this branch affects need a sample URL. See below.'
-        : '**Nothing was compared** — no route produced a screenshot.', '');
+      : result.outcomes.length > 0
+        ? '**Nothing was compared** — no route produced a screenshot.'
+        : result.skippedDynamic.length
+          ? '**Nothing was compared yet** — the only pages this branch affects need a sample URL. See below.'
+          : '**No pages affected** — nothing this branch changed renders on a page.', '');
   } else if (changed.length === 0 && oneSided.length === 0) {
     lines.push('No visual changes.', '');
   }
