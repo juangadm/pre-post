@@ -16,7 +16,7 @@ import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, f
 import { buildComment, groupChanges, STICKY_MARKER } from '../report.js';
 import { cookiesForUrls, resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks, throwIfBlocked } from '../run.js';
-import { joinUrl } from '../url.js';
+import { hostOf, joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
 import { Stopwatch } from '../timings.js';
 import { driftNotes } from '../drift.js';
@@ -64,15 +64,21 @@ export interface PrCommandOptions extends Partial<Settings> {
  * that has one, a redirect to sign-in here says nothing about the capture —
  * rejecting it would send the user back to `pre-post login` in a loop. The
  * browser's landing check still stops the run if the cookies do not work.
+ *
+ * `--cookie` is only ever attached to Pre (`cookieUrl`), so it defers the
+ * verdict for that host alone; a protected preview must still be caught here
+ * so the run can fall back to local.
  */
 export function probeForCapture(
   headers: Record<string, string>,
   cliCookies: PrCommandOptions['cookies'],
+  cookieUrl: string | undefined,
   probe: (url: string, headers: Record<string, string>) => Promise<ProbeResult> = probeUrl,
 ): (url: string) => Promise<ProbeResult> {
   return async url => {
     const result = await probe(url, headers);
-    if (!result.signIn || (!cliCookies?.length && !cookiesForUrls([url]).length)) return result;
+    const cliCookiesApply = Boolean(cliCookies?.length && cookieUrl && hostOf(cookieUrl) === hostOf(url));
+    if (!result.signIn || (!cliCookiesApply && !cookiesForUrls([url]).length)) return result;
     const { signIn: _deferred, ...rest } = result;
     return rest;
   };
@@ -337,7 +343,8 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- What are we comparing? ---------------------------------------------------
   const headers = headersFor(config, opts);
-  const probe = probeForCapture(headers, opts.cookies);
+  // Only a baseline named up front is known before resolution picks one.
+  const probe = probeForCapture(headers, opts.cookies, opts.before ?? config.before);
   // Resolution can throw (no baseline, an install that failed): the browser was
   // launched before this and nothing else would close it, so its teardown has
   // to cover the throw as well as the happy path.
@@ -372,9 +379,11 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     await stopEverything();
     throw new NeedsHumanError(message);
   };
+  // Now Pre is known, `--cookie` goes to the URL `resolveAuth` will attach it to.
+  const probeResolved = probeForCapture(headers, opts.cookies, before);
   const [beforeProbe, afterProbe] = await Promise.all([
-    comparison.before.probe ?? probe(before),
-    comparison.after.probe ?? probe(after),
+    comparison.before.probe ?? probeResolved(before),
+    comparison.after.probe ?? probeResolved(after),
   ]);
   if (beforeProbe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
   if (beforeProbe.status === 401 || beforeProbe.status === 403 || beforeProbe.signIn) await fail(authHint({ url: before, vercel: beforeProbe.vercel }));
