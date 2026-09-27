@@ -11,10 +11,10 @@ import { currentBranch, headSha, repoRoot, resolveOwnerRepo } from '../git.js';
 import { capNotice, detectRoutesForRepo, resolveSample } from '../routes.js';
 import { closeBrowser } from '../browser.js';
 import { parseViewport } from '../viewport.js';
-import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, probeUrl } from '../doctor.js';
+import { authHint, detectDevServer, ensureBrowser, NeedsHumanError, ProbeResult, probeUrl } from '../doctor.js';
 import { API_BASE, AssetFile, cannotPublishHint, checkWriteAccess, findOpenPr, findOpenPrForCommit, findToken, getPr, GitHub, GitHubError, isPublicRepo, jsdelivrUrl, loginHint, publishAssets, upsertPrDescription, upsertStickyComment } from '../github.js';
 import { buildComment, groupChanges, STICKY_MARKER } from '../report.js';
-import { resolveAuth } from '../sessions.js';
+import { cookiesForUrls, resolveAuth } from '../sessions.js';
 import { CaptureTask, routeSlug, runTasks, throwIfBlocked } from '../run.js';
 import { joinUrl } from '../url.js';
 import { Comparison, describeComparison, resolveComparison } from '../comparison.js';
@@ -54,6 +54,28 @@ export interface PrCommandOptions extends Partial<Settings> {
   /** False to record no video this run. */
   video?: boolean;
   log?: (msg: string) => void;
+}
+
+/**
+ * Probe a URL, but leave a sign-in redirect to capture when cookies will be sent.
+ *
+ * The probe is a plain fetch with headers only. A saved `pre-post login`
+ * session or `--cookie` is what gets the browser past the wall, so for a URL
+ * that has one, a redirect to sign-in here says nothing about the capture —
+ * rejecting it would send the user back to `pre-post login` in a loop. The
+ * browser's landing check still stops the run if the cookies do not work.
+ */
+export function probeForCapture(
+  headers: Record<string, string>,
+  cliCookies: PrCommandOptions['cookies'],
+  probe: (url: string, headers: Record<string, string>) => Promise<ProbeResult> = probeUrl,
+): (url: string) => Promise<ProbeResult> {
+  return async url => {
+    const result = await probe(url, headers);
+    if (!result.signIn || (!cliCookies?.length && !cookiesForUrls([url]).length)) return result;
+    const { signIn: _deferred, ...rest } = result;
+    return rest;
+  };
 }
 
 /**
@@ -315,6 +337,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
 
   // --- What are we comparing? ---------------------------------------------------
   const headers = headersFor(config, opts);
+  const probe = probeForCapture(headers, opts.cookies);
   // Resolution can throw (no baseline, an install that failed): the browser was
   // launched before this and nothing else would close it, so its teardown has
   // to cover the throw as well as the happy path.
@@ -329,7 +352,7 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     // PR open yet — the host builds on push, not on PR.
     headSha: head ?? undefined,
     before: opts.before, after: explicitAfter,
-    devServer, probe: url => probeUrl(url, headers),
+    devServer, probe,
     allowLocalBaseline: opts.localBaseline, localOnly: opts.local, log, timings,
   }), { contains: ['pre', 'post'] }).catch(async err => { await stopEverything(); throw err; });
   cleanupComparison = comparison.stop;
@@ -349,12 +372,12 @@ export async function runPr(opts: PrCommandOptions = {}): Promise<PrRunResult> {
     await stopEverything();
     throw new NeedsHumanError(message);
   };
-  const [probe, afterProbe] = await Promise.all([
-    comparison.before.probe ?? probeUrl(before, headers),
-    comparison.after.probe ?? probeUrl(after, headers),
+  const [beforeProbe, afterProbe] = await Promise.all([
+    comparison.before.probe ?? probe(before),
+    comparison.after.probe ?? probe(after),
   ]);
-  if (probe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
-  if (probe.status === 401 || probe.status === 403 || probe.signIn) await fail(authHint({ url: before, vercel: probe.vercel }));
+  if (beforeProbe.status === null) await fail(`Cannot reach ${before} (Pre — ${comparison.before.detail}).`);
+  if (beforeProbe.status === 401 || beforeProbe.status === 403 || beforeProbe.signIn) await fail(authHint({ url: before, vercel: beforeProbe.vercel }));
   if (afterProbe.status === null) await fail(`Cannot reach ${after} (Post — ${comparison.after.detail}).`);
   if (afterProbe.status === 401 || afterProbe.status === 403 || afterProbe.signIn) await fail(authHint({ url: after, vercel: afterProbe.vercel }));
 
