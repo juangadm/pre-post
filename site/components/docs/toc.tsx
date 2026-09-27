@@ -28,7 +28,8 @@ export function Toc({ href, sections, open }: TocProps) {
       }
       const atBottom =
         window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2
-      if (atBottom) next = sections[sections.length - 1]?.id
+      // A page too short to scroll starts on its first section
+      if (atBottom && window.scrollY > 0) next = sections[sections.length - 1]?.id
       setCurrent(next)
     }
     const onScroll = () => {
