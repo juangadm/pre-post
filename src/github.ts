@@ -248,6 +248,25 @@ export function blobUrl(ownerRepo: string, sha: string, filePath: string): strin
   return `https://github.com/${ownerRepo}/blob/${sha}/${encoded}?raw=true`;
 }
 
+/**
+ * The same file through jsDelivr, which serves it with its real type. A video
+ * at a blob URL is a download; here the browser plays it. Public repos only.
+ */
+export function jsdelivrUrl(ownerRepo: string, sha: string, filePath: string): string {
+  const encoded = filePath.split('/').map(encodeURIComponent).join('/');
+  return `https://cdn.jsdelivr.net/gh/${ownerRepo}@${sha}/${encoded}`;
+}
+
+/** Whether anyone can read the repo, and so jsDelivr. A lookup that fails counts as no. */
+export async function isPublicRepo(gh: GitHub, ownerRepo: string): Promise<boolean> {
+  try {
+    const repo = await gh.request<{ visibility?: string; private?: boolean }>('GET', `/repos/${ownerRepo}`);
+    return repo.visibility ? repo.visibility === 'public' : repo.private === false;
+  } catch {
+    return false;
+  }
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;

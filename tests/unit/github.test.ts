@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken, loginHint, findOpenPrForCommit } from '../../src/github';
+import { GitHub, publishAssets, upsertStickyComment, findOpenPr, blobUrl, pruneAssets, runIdTime, checkWriteAccess, cannotPublishHint, findToken, loginHint, findOpenPrForCommit, jsdelivrUrl, isPublicRepo } from '../../src/github';
 import { NeedsHumanError } from '../../src/errors';
 
 /**
@@ -52,6 +52,30 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const gh = new GitHub('token');
+
+describe('jsdelivrUrl', () => {
+  it('serves an assets-branch file pinned to its commit, encoding path segments', () => {
+    expect(jsdelivrUrl('acme/web', 'abc', 'pr-1/x y/moment-1.webm')).toBe('https://cdn.jsdelivr.net/gh/acme/web@abc/pr-1/x%20y/moment-1.webm');
+  });
+});
+
+describe('isPublicRepo', () => {
+  it('is true only for a public repo', async () => {
+    route(/^\/repos\/acme\/web$/, 'GET', () => ({ private: false, visibility: 'public' }));
+    expect(await isPublicRepo(gh, 'acme/web')).toBe(true);
+  });
+
+  it('is false for private and internal repos', async () => {
+    route(/^\/repos\/acme\/priv$/, 'GET', () => ({ private: true, visibility: 'private' }));
+    route(/^\/repos\/acme\/corp$/, 'GET', () => ({ private: true, visibility: 'internal' }));
+    expect(await isPublicRepo(gh, 'acme/priv')).toBe(false);
+    expect(await isPublicRepo(gh, 'acme/corp')).toBe(false);
+  });
+
+  it('is false when the lookup fails', async () => {
+    expect(await isPublicRepo(gh, 'acme/missing')).toBe(false);
+  });
+});
 
 describe('blobUrl', () => {
   it('builds a raw-rendering blob URL and encodes path segments', () => {
