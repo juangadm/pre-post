@@ -27,7 +27,7 @@ function shifted(shift: { px: number; otherChange: boolean }, cropped: boolean):
   return {
     ...base,
     outcomes: [{
-      route: '/', resolvedRoute: '/', viewport: 'desktop', status: 'changed', changedRatio: 0.62, shift,
+      route: '/', resolvedRoute: '/', viewport: 'desktop', status: 'changed', changedRatio: 0.62, shift: { ...shift, residualRatio: 0 },
       urls: cropped
         ? { before: 'https://u/pre.png', after: 'https://u/post.png', cropBefore: 'https://u/pre-crop.png', cropAfter: 'https://u/post-crop.png' }
         : { before: 'https://u/pre.png', after: 'https://u/post.png' },
