@@ -199,7 +199,7 @@ describe('CLI', () => {
         // A commit, so there is a branch name for the lookup to ask GitHub about.
         execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: root });
         execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
-        const env = { ...process.env, GH_TOKEN: 'ok', GITHUB_API_URL: apiUrl };
+        const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: 'ok', GITHUB_API_URL: apiUrl };
         delete env.PRE_POST_GH_TOKEN;
         const { stdout, stderr, exitCode } = await runCli(
           ['pr', '--require-pr', '--before', before.url, '--after', after.url, '--routes', '/button-color', '--json', '-o', out], root, env);
@@ -255,7 +255,7 @@ describe('CLI', () => {
       try {
         execFileSync('git', ['init', '-q'], { cwd: root });
         execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/web.git'], { cwd: root });
-        const env = { ...process.env, GH_TOKEN: 'refused', GITHUB_API_URL: apiUrl };
+        const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: 'refused', GITHUB_API_URL: apiUrl };
         delete env.PRE_POST_GH_TOKEN;
         delete env.GITHUB_ACTIONS;
         const { stdout, stderr, exitCode } = await runCli(
