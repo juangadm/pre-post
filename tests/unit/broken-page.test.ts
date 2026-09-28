@@ -70,8 +70,8 @@ describe('pageErrorFrom', () => {
 });
 
 describe('verdictFor, broken pages', () => {
-  const brokenPost = outcome({ route: '/work', status: 'broken', broken: { side: 'after', status: 500, error: buildError } });
-  const brokenPre = (route: string) => outcome({ route, status: 'broken', broken: { side: 'before', status: 500, error: buildError } });
+  const brokenPost = outcome({ route: '/work', status: 'broken', broken: { side: 'after', error: buildError } });
+  const brokenPre = (route: string) => outcome({ route, status: 'broken', broken: { side: 'before', error: buildError } });
 
   it('stops the run when any Post page is broken', () => {
     const verdict = verdictFor([brokenPost, outcome({ route: '/', textOverlap: 0.9, titleOverlap: 1 })], sides);
@@ -99,7 +99,7 @@ describe('reporting a broken branch', () => {
     repo: 'acme/web', prNumber: 15, beforeBase: 'http://localhost:61497', afterBase: 'http://localhost:61460',
     skippedDynamic: [], durationMs: 40_000, markdown: '', outputDir: '/tmp/x',
     outcomes: [outcome({
-      route: '/work', status: 'broken', broken: { side: 'after', status: 500, error: buildError },
+      route: '/work', status: 'broken', broken: { side: 'after', error: buildError },
       files: { before: '/tmp/x/work-desktop-before.png', after: '/tmp/x/work-desktop-after.png' },
     })],
     verdict: { kind: 'post-broken', hint: "This branch doesn't render: `/work` shows Build Error." },
@@ -122,7 +122,7 @@ describe('reporting a broken branch', () => {
       ...result,
       verdict: undefined,
       outcomes: [
-        outcome({ route: '/old', status: 'broken', broken: { side: 'before', status: 500, error: { kind: 'HTTP 500' } } }),
+        outcome({ route: '/old', status: 'broken', broken: { side: 'before', error: { kind: 'HTTP 500' } } }),
         outcome({ route: '/', status: 'unchanged' }),
       ],
     });
