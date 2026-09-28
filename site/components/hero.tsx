@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { motion, AnimatePresence, useAnimationControls } from "motion/react"
-import { Browser, ContentA, ContentB, BrowserChrome } from "@/components/browser"
-import { PullRequest, DEFAULT_MARKDOWN, DEFAULT_TITLE } from "@/components/pull-request"
+import { motion, AnimatePresence, useReducedMotion } from "motion/react"
+import { ContentA, ContentB } from "@/components/browser"
+import { PullRequest } from "@/components/pull-request"
 import { Terminal, type TerminalLine } from "@/components/terminal"
 
 // ─── Phase definitions ───────────────────────────────────────────────
@@ -29,11 +29,11 @@ const PHASE_ORDER: Phase[] = [
 
 // Durations for timer-driven phases (coding/command use callbacks instead)
 const PHASE_DURATIONS: Partial<Record<Phase, number>> = {
-  idle: 1200,
+  idle: 500,
   output: 1000,
-  capture: 1000,
+  capture: 1500,
   upload: 1400,
-  pr_reveal: 2800,
+  pr_reveal: 4300,
 }
 
 function phaseIdx(phase: Phase) {
@@ -113,142 +113,61 @@ function buildLines(
 
 function AnimatedBrowser({
   showContentB,
-  url,
+  replay,
+  capture,
 }: {
   showContentB: boolean
-  url: string
+  replay: boolean
+  capture: boolean
 }) {
   return (
-    <div className="w-full rounded-lg overflow-hidden bg-white border border-neutral-200 relative">
-      <BrowserChrome url={url} />
-      <div className="bg-white relative" style={{ aspectRatio: "16 / 9" }}>
-        {/* ContentA always renders as base */}
-        <ContentA />
-        {/* ContentB crossfades on top */}
-        <motion.div
-          className="absolute inset-0"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: showContentB ? 1 : 0 }}
-          transition={{ duration: 0.6, ease: "easeInOut" }}
-        >
-          <ContentB />
-        </motion.div>
+    <div className="w-full bg-transparent relative">
+      <div className="aspect-square overflow-hidden border border-[#d7d7d2] bg-background relative">
+        <AnimatePresence>
+          {showContentB && (
+            <motion.div
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <ContentB animated replay={replay} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {capture && <CaptureFlash variant="post" delay={0.55} />}
       </div>
     </div>
   )
 }
 
-// ─── Capture ─────────────────────────────────────────────────────────
-
-interface CaptureProps {
-  variant: "A" | "B"
-  position: "browser" | "center"
-  opacity?: number
-  delay?: number
-  style?: React.CSSProperties
-}
-
-function Capture({ variant, position, opacity = 1, delay = 0, style }: CaptureProps) {
-  const isA = variant === "A"
-  const controls = useAnimationControls()
-
-  const browserPosition = {
-    left: isA ? "25%" : "75%",
-    top: 0,
-    x: "-50%",
-    y: 0,
-    scale: 1.02,
-    rotate: isA ? -1 : 1,
-  }
-
-  const centerPosition = {
-    left: "50%",
-    top: "50%",
-    x: isA ? "-60%" : "-40%",
-    y: isA ? "-50%" : "-55%",
-    scale: 0.65,
-    rotate: isA ? -5 : 3,
-  }
-
-  const positions = {
-    browser: browserPosition,
-    center: centerPosition,
-  }
-
-  const showFlash = position === "browser"
-
-  useEffect(() => {
-    controls.start({ ...positions[position], opacity })
-  }, [position, opacity, controls])
-
+function CaptureFlash({ variant, delay }: { variant: "pre" | "post"; delay: number }) {
   return (
     <motion.div
-      className="absolute"
-      style={{ ...style, width: "calc(50% - 2px)", willChange: "transform" }}
-      initial={{
-        left: isA ? "25%" : "75%",
-        top: 0,
-        x: "-50%",
-        y: 0,
-        scale: 1,
-        rotate: 0,
-        opacity: 1,
-      }}
-      animate={controls}
-      exit={{ opacity: 0, scale: 0, transition: { duration: 0.2 } }}
-      transition={{
-        type: "spring",
-        bounce: 0.2,
-        duration: 0.6,
-        delay,
-      }}
-    >
-      <div
-        className="relative rounded-lg border-[3px] border-white overflow-hidden"
-        style={{ boxShadow: "0 8px 30px rgba(0,0,0,0.25)" }}
-      >
-        <Browser variant={variant} url={variant === "A" ? "site.com" : "localhost"} />
-        {/* Camera flash overlay */}
-        <motion.div
-          className="absolute inset-0 bg-white rounded-lg pointer-events-none"
-          initial={{ opacity: 1 }}
-          animate={{ opacity: showFlash ? [1, 0] : 0 }}
-          transition={{ duration: 0.35, ease: "easeOut", delay: delay + 0.05 }}
-        />
-      </div>
-    </motion.div>
+      data-capture-flash={variant}
+      className="pointer-events-none absolute inset-0 bg-background"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: [0, 0.88, 0] }}
+      transition={{ duration: 0.5, delay }}
+      aria-hidden="true"
+    />
   )
 }
 
-// ─── Upload spinner ──────────────────────────────────────────────────
-
-function CenteredUploadSpinner() {
+function VideoBadge({ visible, reduceMotion }: { visible: boolean; reduceMotion: boolean | null }) {
   return (
-    <motion.div
-      className="absolute z-[60]"
-      style={{ left: "calc(50% - 12px)", top: "calc(50% - 20px)", transform: "translate(-50%, -50%)" }}
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.8 }}
-      transition={{ duration: 0.2 }}
+    <motion.span
+      aria-hidden="true"
+      className="pointer-events-none absolute right-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-sm border border-neutral-300 bg-white/90 text-neutral-600"
+      initial={false}
+      animate={{ opacity: visible ? 1 : 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.2, delay: visible && !reduceMotion ? 0.7 : 0 }}
     >
-      <svg width="32" height="32" viewBox="0 0 32 32">
-        <motion.circle
-          cx="16"
-          cy="16"
-          r="12"
-          fill="none"
-          stroke="white"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray="75"
-          initial={{ strokeDashoffset: 75 }}
-          animate={{ strokeDashoffset: [56, 19, 56], rotate: [0, 360, 720] }}
-          transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-          style={{ transformOrigin: "center", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.25))" }}
-        />
+      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden="true">
+        <path d="M5.5 3.5 12 8l-6.5 4.5v-9Z" fill="currentColor" />
       </svg>
-    </motion.div>
+    </motion.span>
   )
 }
 
@@ -263,18 +182,17 @@ interface HeroProps {
 export function Hero({ phase: controlledPhase, onPhaseChange, autoPlay = true }: HeroProps) {
   const phase = controlledPhase ?? "idle"
   const idx = phaseIdx(phase)
-
-  // PR tab: starts on "write", switches to "preview" after 1s during pr_reveal
-  const [prTab, setPrTab] = useState<"write" | "preview">("write")
+  const reduceMotion = useReducedMotion()
+  const [replayInPR, setReplayInPR] = useState(false)
 
   useEffect(() => {
-    if (phase !== "pr_reveal") {
-      setPrTab("write")
+    if (phase !== "pr_reveal" || reduceMotion) {
+      setReplayInPR(false)
       return
     }
-    const timer = setTimeout(() => setPrTab("preview"), 1000)
+    const timer = setTimeout(() => setReplayInPR(true), 750)
     return () => clearTimeout(timer)
-  }, [phase])
+  }, [phase, reduceMotion])
 
   // Advance phase helper
   const advance = useCallback(() => {
@@ -304,94 +222,79 @@ export function Hero({ phase: controlledPhase, onPhaseChange, autoPlay = true }:
   }, [autoPlay, onPhaseChange])
 
   // ─── Derived state ───────────────────────────────────────────────
-  const showContentB = idx >= 1 // diverge browser B during coding phase
-  const showTerminal = idx <= 5
-  const showCaptures = idx >= 4 && idx <= 5
-  const capturePosition: "browser" | "center" = phase === "capture" ? "browser" : "center"
-  const capturesOpacity = phase === "upload" ? 0.75 : 1
-  const showSpinner = phase === "upload"
-  const showPR = idx >= 6
+  const showContentB = idx >= 1
+  const showPR = phase === "pr_reveal"
 
   // Terminal lines
   const terminalLines = buildLines(phase, onCodingComplete, onCommandComplete)
 
-  // PR markdown
-  const showFullMarkdown = idx >= 5
-
   return (
     <div className="mx-auto w-full max-w-[540px] px-3 sm:px-4">
-      <div className="grid grid-cols-[1fr_1fr] gap-0.5 sm:gap-1 relative">
-        {/* Browser A — always ContentA */}
-        <Browser variant="A" url="site.com" />
+      <div className="relative h-[315px] sm:h-[385px]">
+        {/* The PR frame takes over the same canvas; its table leaves space for these exact panels. */}
+        <motion.div
+          data-pr-shell
+          className="absolute inset-0 z-0"
+          initial={false}
+          animate={{ opacity: showPR ? 1 : 0 }}
+          transition={{ duration: reduceMotion ? 0 : 0.25 }}
+          aria-hidden={!showPR}
+        >
+          <PullRequest tab="preview" interactive={false} artworkInHero />
+        </motion.div>
 
-        {/* Browser B — crossfades from ContentA to ContentB */}
-        <AnimatedBrowser showContentB={showContentB} url="localhost:3000" />
+        <div data-hero-source className="absolute inset-x-0 top-0 z-10 grid grid-cols-2 gap-0.5 sm:gap-1">
+          <motion.div
+            data-pr-art="pre"
+            className="relative origin-top"
+            animate={{ x: showPR ? 6 : 0, y: showPR ? 126 : 0, scale: showPR ? 0.88 : 1 }}
+            transition={{ type: "spring", bounce: 0.1, duration: reduceMotion ? 0 : 0.65 }}
+          >
+            <div className="relative aspect-square overflow-hidden border border-[#d7d7d2] bg-background">
+              <ContentA animated replay={replayInPR} />
+              {phase === "capture" && !reduceMotion && <CaptureFlash variant="pre" delay={0.12} />}
+            </div>
+            <VideoBadge visible={showPR} reduceMotion={reduceMotion} />
+          </motion.div>
 
-        {/* Row 2: Terminal ↔ PR swap — fixed height to prevent layout shift */}
-        <div className="col-span-2 relative overflow-hidden" style={{ minHeight: "290px" }}>
-          <AnimatePresence mode="wait">
-            {showTerminal && (
-              <motion.div
-                key="terminal"
-                className="absolute inset-0"
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{
-                  enter: { type: "spring", bounce: 0.1, duration: 0.35 },
-                  exit: { type: "spring", bounce: 0, duration: 0.25 },
-                }}
-              >
-                <Terminal
-                  lines={terminalLines}
-                  className="w-full h-full"
-                />
-              </motion.div>
-            )}
-            {showPR && (
-              <motion.div
-                key="pr"
-                className="absolute inset-0"
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
-              >
-                <PullRequest
-                  tab={prTab}
-                  markdown={showFullMarkdown ? DEFAULT_MARKDOWN : DEFAULT_TITLE}
-                  interactive={false}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <motion.div
+            data-pr-art="post"
+            className="relative origin-top"
+            animate={{ x: showPR ? -6 : 0, y: showPR ? 126 : 0, scale: showPR ? 0.88 : 1 }}
+            transition={{ type: "spring", bounce: 0.1, duration: reduceMotion ? 0 : 0.65, delay: reduceMotion ? 0 : 0.06 }}
+          >
+            <AnimatedBrowser showContentB={showContentB} replay={replayInPR} capture={phase === "capture" && !reduceMotion} />
+            <VideoBadge visible={showPR} reduceMotion={reduceMotion} />
+          </motion.div>
         </div>
 
-        {/* Animated captures */}
-        <AnimatePresence>
-          {showCaptures && (
-            <>
-              <Capture
-                variant="A"
-                position={capturePosition}
-                opacity={capturesOpacity}
-                style={{ zIndex: 35 }}
-              />
-              <Capture
-                variant="B"
-                position={capturePosition}
-                opacity={capturesOpacity}
-                delay={0.05}
-                style={{ zIndex: 38 }}
-              />
-            </>
-          )}
-        </AnimatePresence>
+        <motion.div
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 grid grid-cols-2 gap-0.5 sm:gap-1"
+          initial={false}
+          animate={{ opacity: showPR ? 0 : 1 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2 }}
+          aria-hidden={showPR}
+        >
+          <div className="flex h-6 items-center justify-between border border-[#d7d7d2] bg-background px-2 text-[10px] leading-none">
+            <span className="font-heading font-semibold text-neutral-800">pre</span>
+            <span className="font-mono text-neutral-500">main</span>
+          </div>
+          <div className="flex h-6 items-center justify-between border border-[#d7d7d2] bg-background px-2 text-[10px] leading-none">
+            <span className="font-heading font-semibold text-neutral-800">post</span>
+            <span className="font-mono text-neutral-500">feature/ui</span>
+          </div>
+        </motion.div>
 
-        {/* Upload spinner */}
-        <AnimatePresence>
-          {showSpinner && <CenteredUploadSpinner />}
-        </AnimatePresence>
+        <motion.div
+          className="absolute inset-x-0 bottom-0 z-20 h-[115px]"
+          initial={false}
+          animate={{ opacity: showPR ? 0 : 1, y: showPR ? 8 : 0 }}
+          transition={{ duration: reduceMotion ? 0 : 0.25 }}
+          style={{ pointerEvents: showPR ? "none" : "auto" }}
+          aria-hidden={showPR}
+        >
+          <Terminal lines={terminalLines} className="h-full w-full" compact />
+        </motion.div>
       </div>
     </div>
   )

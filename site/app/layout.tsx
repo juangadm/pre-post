@@ -1,35 +1,19 @@
 import React from "react"
 import type { Metadata } from "next"
-import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google"
-import localFont from "next/font/local"
+import { Courier_Prime, Space_Grotesk } from "next/font/google"
 
 import "./globals.css"
 
-const ibmPlexSans = IBM_Plex_Sans({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
-  variable: "--font-sans",
+  variable: "--font-heading",
 })
 
-const ibmPlexMono = IBM_Plex_Mono({
+const courierPrime = Courier_Prime({
   subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
-})
-
-const departureMono = localFont({
-  src: "./fonts/DepartureMono-Regular.woff2",
-  variable: "--font-departure",
-})
-
-const vanillaCream = localFont({
-  src: "./fonts/VanillaCreamOx-Regular.otf",
-  variable: "--font-vanilla-cream",
-})
-
-const biroScript = localFont({
-  src: "./fonts/Biro_Script_reduced.otf",
-  variable: "--font-biro-script",
+  weight: ["400", "700"],
+  variable: "--font-code",
 })
 
 const siteUrl = "https://prepost.juangabriel.org"
@@ -122,7 +106,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${departureMono.variable} ${vanillaCream.variable} ${biroScript.variable} font-sans antialiased`}>
+      <body className={`${spaceGrotesk.variable} ${courierPrime.variable} font-sans antialiased`}>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

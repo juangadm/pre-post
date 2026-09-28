@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { motion } from "motion/react"
 import { Browser } from "@/components/browser"
 
 // GitHub PR icon in green
@@ -26,6 +27,8 @@ interface PullRequestProps {
   markdown?: string
   className?: string
   interactive?: boolean
+  animateThumbnails?: boolean
+  artworkInHero?: boolean
 }
 
 export function PullRequest({
@@ -35,6 +38,8 @@ export function PullRequest({
   markdown = DEFAULT_MARKDOWN,
   className,
   interactive = true,
+  animateThumbnails = false,
+  artworkInHero = false,
 }: PullRequestProps) {
   const [internalTab, setInternalTab] = useState<"write" | "preview">(controlledTab ?? defaultTab)
   const [prevControlledTab, setPrevControlledTab] = useState(controlledTab)
@@ -101,7 +106,7 @@ export function PullRequest({
           </div>
           {/* Preview content - always in flow to control height */}
           <div className={tab === "preview" ? "" : "invisible"}>
-            <PreviewContent />
+            <PreviewContent animateThumbnails={animateThumbnails} ready={tab === "preview"} artworkInHero={artworkInHero} />
           </div>
         </div>
       </div>
@@ -119,28 +124,40 @@ export function WriteContent({ markdown = "" }: { markdown?: string }) {
 }
 
 // Preview tab content with title and before/after table using Browser components
-export function PreviewContent() {
+export function PreviewContent({ animateThumbnails = false, ready = true, artworkInHero = false }: { animateThumbnails?: boolean; ready?: boolean; artworkInHero?: boolean } = {}) {
   return (
     <div>
       <h1 className="text-[10px] font-semibold text-neutral-800 mb-2">Update the homepage</h1>
       <table className="w-full border-collapse text-[7px] table-fixed">
         <thead>
           <tr>
-            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">Pre</th>
-            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">Post</th>
+            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">pre</th>
+            <th className="w-1/2 py-1 px-1 text-center text-neutral-700 font-medium border border-neutral-200">post</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td className="p-1 border border-neutral-200 align-top">
-              <div className="w-full">
-                <Browser variant="A" url="site.com" />
-              </div>
+              {artworkInHero ? <div className="h-[205px] sm:h-[250px]" aria-hidden="true" /> : <motion.div
+                data-pr-art="pre"
+                className="mx-auto w-full max-w-[145px]"
+                initial={animateThumbnails ? { opacity: 0, x: -28, y: -36 } : false}
+                animate={animateThumbnails && ready ? { opacity: 1, x: 0, y: 0 } : undefined}
+                transition={{ type: "spring", bounce: 0.16, duration: 0.5 }}
+              >
+                <Browser variant="A" url="main" />
+              </motion.div>}
             </td>
             <td className="p-1 border border-neutral-200 align-top">
-              <div className="w-full">
-                <Browser variant="B" url="site.com" />
-              </div>
+              {artworkInHero ? <div className="h-[205px] sm:h-[250px]" aria-hidden="true" /> : <motion.div
+                data-pr-art="post"
+                className="mx-auto w-full max-w-[145px]"
+                initial={animateThumbnails ? { opacity: 0, x: 28, y: -36 } : false}
+                animate={animateThumbnails && ready ? { opacity: 1, x: 0, y: 0 } : undefined}
+                transition={{ type: "spring", bounce: 0.16, duration: 0.5, delay: 0.07 }}
+              >
+                <Browser variant="B" url="feature/ui" />
+              </motion.div>}
             </td>
           </tr>
         </tbody>

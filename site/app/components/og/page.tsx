@@ -119,14 +119,6 @@ function Browser({ variant, url }: { variant: "A" | "B"; url: string }) {
   )
 }
 
-function Sparkle({ size, color }: { size: number; color: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-      <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" />
-    </svg>
-  )
-}
-
 function TriangleLogo({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="9.3 -3.03 81.4 81.4">
@@ -153,38 +145,9 @@ function OgLogo() {
   return (
     <div className="flex items-center gap-4">
       <TriangleLogo size={56} />
-      <div className="flex items-center gap-3">
-        <span
-          className="font-[family-name:var(--font-biro-script)] text-[72px] leading-none tracking-wide"
-          style={{ color: colors.gray800, WebkitTextStroke: "0.5px #525252" }}
-        >
-          PRE
-        </span>
-        <span className="text-[32px] italic" style={{ color: colors.gray400 }}>vs</span>
-        <span className="relative text-[45px] font-medium font-[family-name:var(--font-departure)]" style={{ color: colors.gray800 }}>
-          {/* top-left, larger */}
-          <span className="absolute -left-3 -top-3">
-            <Sparkle size={18} color={colors.gray400} />
-          </span>
-          {/* top-right, small */}
-          <span className="absolute -right-1.5 -top-1.5">
-            <Sparkle size={9} color={colors.gray300} />
-          </span>
-          {/* right side, medium */}
-          <span className="absolute -right-4 top-2">
-            <Sparkle size={15} color={colors.gray400} />
-          </span>
-          {/* bottom-left, medium */}
-          <span className="absolute -left-1 -bottom-2">
-            <Sparkle size={15} color={colors.gray300} />
-          </span>
-          {/* bottom-right, tiny */}
-          <span className="absolute right-6 -bottom-3">
-            <Sparkle size={9} color={colors.gray400} />
-          </span>
-          Post
-        </span>
-      </div>
+      <span className="font-heading text-[68px] font-bold leading-none tracking-[-0.05em]" style={{ color: colors.gray800 }}>
+        pre<span style={{ color: colors.gray400 }}>/</span>post
+      </span>
     </div>
   )
 }
