@@ -34,7 +34,6 @@ export const pages: NavPage[] = [
 ]
 
 export const resources: NavLink[] = [
-  { href: "https://github.com/juangadm/pre-post/releases", label: "Changelog" },
   { href: "https://github.com/juangadm/pre-post", label: "GitHub" },
 ]
 
