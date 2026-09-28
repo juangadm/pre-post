@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveComparison, describeComparison, NoBaselineError, NoDeployedBaselineError, NoPostError, ResolveContext } from '../../src/comparison';
 import { GitHub } from '../../src/github';
 
-const PR = { number: 7, head: { sha: 'head1234567' }, base: { sha: 'base7654321' } };
+const PR = { number: 7, html_url: 'https://github.com/o/r/pull/7', title: 'PR', head: { sha: 'head1234567', ref: 'feature' }, base: { sha: 'base7654321', ref: 'main' } };
 
 /** GitHub stub: routes keyed by a fragment of the request path. */
 function gh(routes: Record<string, unknown>): GitHub {
@@ -337,7 +337,7 @@ describe('resolveComparison', () => {
   // resolveComparison as `baseSha`. An open PR used to override it, so the run
   // published images for a diff the route list never described.
   it('builds the local baseline from the base detection used, not the PR base', async () => {
-    const served: string[] = [];
+    const served: Array<string | undefined> = [];
     const c = await resolveComparison(ctx({
       gh: gh({ '/deployments?sha=': [] }),
       baseSha: 'explicit1234',
@@ -369,7 +369,7 @@ describe('resolveComparison', () => {
   // for, while the route list still describes the one they did -- so a named
   // base yields to the local strategy, which can build it from source.
   it('does not widen past a base the caller named when it was never deployed', async () => {
-    const served: string[] = [];
+    const served: Array<string | undefined> = [];
     const notes: string[] = [];
     const c = await resolveComparison(ctx({
       gh: gh({
@@ -410,7 +410,7 @@ describe('resolveComparison', () => {
 
   // The PR's base is still the answer when detection resolved none of its own.
   it('falls back to the PR base when detection resolved no commit', async () => {
-    const served: string[] = [];
+    const served: Array<string | undefined> = [];
     await resolveComparison(ctx({
       gh: gh({ '/deployments?sha=': [] }),
       devServer: Promise.resolve('http://localhost:3000'),
