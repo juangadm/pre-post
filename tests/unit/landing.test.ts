@@ -125,6 +125,6 @@ describe('the Vercel bypass headers', () => {
   it('leaves an explicit header alone', () => {
     process.env.VERCEL_AUTOMATION_BYPASS_SECRET = 'from-env';
     const auth = resolveAuth({ headers: { 'x-vercel-protection-bypass': 'explicit' }, urls: [] });
-    expect(auth?.headers['x-vercel-protection-bypass']).toBe('explicit');
+    expect(auth?.headers?.['x-vercel-protection-bypass']).toBe('explicit');
   });
 });
