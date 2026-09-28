@@ -27,7 +27,7 @@ export function SideNav() {
         <Logo />
       </Link>
 
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide font-[family-name:var(--font-departure)] text-[13px]">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide font-sans text-[13px]">
         <ul className="flex flex-col gap-0.5">
           {pages.map((page) => {
             const active = pathname === page.href

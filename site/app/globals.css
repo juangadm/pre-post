@@ -12,11 +12,6 @@
   }
 }
 
-@keyframes sparkle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.8); }
-}
-
 @layer base {
   /* Respect user preference for reduced motion */
   @media (prefers-reduced-motion: reduce) {
@@ -28,7 +23,7 @@
   }
 
   :root {
-    --background: 0 0% 98%;
+    --background: 45 12% 97%;
     --foreground: 0 0% 32%;
     --muted: 0 0% 20%;
     --border: 0 0% 88%;
@@ -111,11 +106,14 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading), Arial, sans-serif;
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: -0.03em;
   }
 
   code, pre {
+    font-family: var(--font-code), 'Courier New', monospace;
     font-size: 15px;
   }
 }

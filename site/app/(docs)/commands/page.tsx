@@ -26,7 +26,7 @@ export default function CommandsPage() {
             ["pre-post prune", "Deletes old visuals"],
           ]}
         />
-        <p className="text-[14px] text-neutral-400">
+        <p className="text-[14px] text-neutral-600">
           Your agent runs these for you. To run one yourself, start it with{" "}
           <InlineCode>npx -y @juangadm/pre-post@latest</InlineCode>.
         </p>
@@ -41,7 +41,7 @@ export default function CommandsPage() {
             ["--dry-run", "Try it without touching your PR"],
           ]}
         />
-        <p className="text-[14px] text-neutral-400">
+        <p className="text-[14px] text-neutral-600">
           Everything else is in the{" "}
           <a
             href="https://github.com/juangadm/pre-post/blob/main/docs/reference.md"

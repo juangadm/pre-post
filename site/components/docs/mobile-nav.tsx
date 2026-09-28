@@ -43,7 +43,7 @@ export function MobileNav() {
         className={`grid transition-[grid-template-rows] duration-200 ease-out ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
         inert={!open}
       >
-        <ul className="overflow-hidden flex flex-col font-[family-name:var(--font-departure)] text-[14px]">
+        <ul className="overflow-hidden flex flex-col font-sans text-[14px]">
           {pages.map((page) => (
             <li key={page.href}>
               <Link

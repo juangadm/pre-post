@@ -11,8 +11,9 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
+        sans: ['var(--font-heading)', 'Arial', 'sans-serif'],
+        mono: ['var(--font-code)', 'Courier New', 'monospace'],
+        heading: ['var(--font-heading)', 'Arial', 'sans-serif'],
       },
       colors: {
         background: 'hsl(var(--background))',

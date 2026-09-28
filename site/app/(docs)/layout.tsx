@@ -5,7 +5,7 @@ import { SideNav } from "@/components/docs/side-nav"
 // Shared by every page. Navigating swaps only <main>; the nav never remounts.
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex flex-col bg-[#FBFBFB] text-neutral-500">
+    <div className="min-h-screen flex flex-col bg-background text-neutral-700">
       <MobileNav />
       <SideNav />
       <div className="flex-1 flex min-[981px]:max-[1079px]:ml-[13rem]">

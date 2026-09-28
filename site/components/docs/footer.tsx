@@ -8,17 +8,6 @@ export function Footer() {
           Juan Gabriel
         </a>
       </span>
-      <span>
-        Originally forked from{" "}
-        <a
-          href="https://github.com/vercel-labs/before-and-after"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:underline"
-        >
-          before-and-after
-        </a>
-      </span>
     </footer>
   )
 }

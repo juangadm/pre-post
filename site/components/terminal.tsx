@@ -17,6 +17,7 @@ interface TerminalProps {
   lines: TerminalLine[]
   className?: string
   title?: string
+  compact?: boolean
 }
 
 function LineContent({ line }: { line: TerminalLine }) {
@@ -60,7 +61,7 @@ function ClaudeWelcomeSVG() {
     <svg
       viewBox="0 0 240 76"
       fill="none"
-      style={{ width: "70%", height: "auto", display: "block" }}
+      style={{ width: "100%", maxWidth: "370px", height: "auto", display: "block" }}
     >
       {/* Orange-bordered welcome box */}
       <rect x="4" y="4" width="148" height="68" rx="3" stroke="#D97757" strokeWidth="1.5" fill="none" />
@@ -93,7 +94,7 @@ function ClaudeWelcomeSVG() {
   )
 }
 
-export function Terminal({ lines, className, title = "Juan Gabriel's project" }: TerminalProps) {
+export function Terminal({ lines, className, title = "Juan Gabriel's project", compact = false }: TerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const visibleLines = lines.filter((l) => l.visible)
@@ -107,22 +108,19 @@ export function Terminal({ lines, className, title = "Juan Gabriel's project" }:
 
   return (
     <div
-      className={cn("overflow-hidden flex flex-col border border-neutral-200", className)}
+      className={cn("overflow-hidden flex flex-col rounded-md border border-neutral-200", className)}
       style={{
-        background: "#faf9f7",
-        borderRadius: "10px",
-        boxShadow:
-          "0 0 0 1px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.12), 0 12px 32px rgba(0,0,0,0.08)",
+        background: "#f8f8f5",
       }}
     >
       {/* Header */}
       <div
         className="flex items-center"
         style={{
-          background: "#fff",
+          background: "var(--geist-blue-300)",
           padding: "6px 12px",
           gap: "6px",
-          borderBottom: "1px solid rgba(0,0,0,0.06)",
+          borderBottom: "1px solid var(--geist-blue-500)",
         }}
       >
         <div className="flex items-center" style={{ gap: "6px" }}>
@@ -132,7 +130,7 @@ export function Terminal({ lines, className, title = "Juan Gabriel's project" }:
         </div>
         <span
           style={{
-            fontFamily: "system-ui, -apple-system, sans-serif",
+            fontFamily: "var(--font-heading), sans-serif",
             fontSize: "13px",
             fontWeight: 600,
             color: "rgba(0,0,0,0.85)",
@@ -144,31 +142,38 @@ export function Terminal({ lines, className, title = "Juan Gabriel's project" }:
       </div>
 
       {/* Body */}
-      <div
-        ref={scrollRef}
-        className="flex-1 scrollbar-hide"
-        style={{
-          padding: "12px 14px",
-          fontFamily: '"SF Mono", SFMono-Regular, ui-monospace, Consolas, monospace',
-          fontSize: "10px",
-          lineHeight: 1.6,
-          color: "rgba(0,0,0,0.7)",
-          overflowY: "auto",
-        }}
-      >
-        <ClaudeWelcomeSVG />
-        <AnimatePresence initial={false}>
-          {visibleLines.map((line, i) => (
-            <motion.div
-              key={`${i}-${line.text}`}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15 }}
-            >
-              <LineContent line={line} />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+      <div className={cn("min-h-0 flex-1", compact && "flex gap-3 p-2")}>
+        {compact && (
+          <div className="flex w-[36%] shrink-0 flex-col justify-center border-r border-neutral-300 pr-2">
+            <span className="font-heading text-xs font-bold text-neutral-900">Claude Code</span>
+            <span className="font-mono text-[9px] leading-tight text-neutral-500">~/code/pre-post</span>
+          </div>
+        )}
+        <div
+          ref={scrollRef}
+          className="min-w-0 flex-1 overflow-y-auto scrollbar-hide"
+          style={{
+            padding: compact ? 0 : "12px 14px",
+            fontFamily: "var(--font-code), ui-monospace, monospace",
+            fontSize: compact ? "10px" : "11px",
+            lineHeight: compact ? 1.35 : 1.6,
+            color: "rgba(0,0,0,0.7)",
+          }}
+        >
+          {!compact && <ClaudeWelcomeSVG />}
+          <AnimatePresence initial={false}>
+            {visibleLines.map((line, i) => (
+              <motion.div
+                key={`${i}-${line.text}`}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <LineContent line={line} />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   )

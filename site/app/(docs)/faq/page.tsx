@@ -24,6 +24,10 @@ const faqs = [
     q: "Does it cost anything?",
     a: "No. Free and open source.",
   },
+  {
+    q: "What inspired pre-post?",
+    a: "The original idea was inspired by vercel-labs/before-and-after. Pre-post has since grown into a different product, with its own route detection, capture workflow, and PR integration.",
+  },
 ]
 
 const faqJsonLd = {
