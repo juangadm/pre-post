@@ -15,7 +15,7 @@ function runner(answers: Array<{ ok: boolean; output: string }>): InstallRunner 
     calls.push(argv);
     const a = answers[Math.min(i++, answers.length - 1)];
     return { argv, ok: a.ok, output: a.output };
-  }) as InstallRunner & { calls: string[][] };
+  }) as unknown as InstallRunner & { calls: string[][] };
   fn.calls = calls;
   return fn;
 }
