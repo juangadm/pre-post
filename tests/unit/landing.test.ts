@@ -51,8 +51,8 @@ describe('checkLanding', () => {
   });
 
   it('passes a canonical-domain redirect', () => {
-    // The project's own .xyz → .org redirect must not read as a wall.
-    const l = checkLanding('https://prepost.juangabriel.xyz/', 'https://prepost.juangabriel.org/', 'pre-post');
+    // A move to the project's canonical domain must not read as a wall.
+    const l = checkLanding('https://old.example.com/', 'https://new.example.org/', 'pre-post');
     expect(l.blocked).toBe(false);
     expect(l.offSite).toBe(true);
   });
